@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 692829e1611aedb88976445292f8c5789a517d2e -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob c9f00d2ff1c22a5f74061ed0a82c8372ed67eeff -->
 
 # Internal Structure of cuno Itself
 
@@ -48,9 +48,13 @@ cuno/
 ## Rust
 
 - edition 2024.
+- **The MSRV (minimum supported Rust version) is 1.88.**
+  - Reason: it is the first version where `let` chains (`if let Some(x) = a && b`) are available in edition 2024. cuno is full of code with stacked conditions, such as settings resolution, and they make it much easier to read.
+  - cuno is distributed as prebuilt binaries, so the MSRV only affects users who build from source. Choosing a version newer than the edition 2024 minimum (1.85) therefore costs little.
+  - Raising the MSRV is a deliberate change, and this specification is updated when it happens.
+- The toolchain is not pinned (no `rust-toolchain.toml`). CI checks both the MSRV and stable.
 
 ## Open questions
 
-- Minimum supported Rust version (MSRV)
 - Parallel execution approach (thread pool / async)
 - Error type design
