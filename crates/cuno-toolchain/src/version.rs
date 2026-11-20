@@ -87,11 +87,24 @@ mod tests {
         assert_eq!(Version::find_in("no version here 1.2"), None);
     }
 
-    /// Mutation: compare as strings; this test fails (`19.9` would sort after
-    /// `19.10`).
+    /// Mutation: drop the check that a version starts at a digit boundary;
+    /// this test fails (the tail of a number too large to be a version part,
+    /// `9.2.3` in `99999999999.2.3`, would be read).
     #[test]
-    fn versions_compare_numerically() {
+    fn a_version_starts_where_a_number_starts() {
+        assert_eq!(Version::find_in("x119.2.3"), Some(v(119, 2, 3)));
+        assert_eq!(Version::find_in("1.2.3.4"), Some(v(1, 2, 3)));
+        // Too large to be a version part: not read from its middle instead.
+        assert_eq!(Version::find_in("99999999999.2.3"), None);
+    }
+
+    /// Mutation: compare as strings, or reorder the fields (the derived
+    /// ordering compares them in declaration order); this test fails.
+    #[test]
+    fn versions_compare_numerically_major_first() {
         assert!(v(19, 9, 0) < v(19, 10, 0));
+        assert!(v(20, 0, 0) > v(19, 99, 99));
+        assert!(v(19, 5, 0) > v(19, 4, 99));
         assert_eq!(v(19, 52, 37029).to_string(), "19.52.37029");
     }
 }

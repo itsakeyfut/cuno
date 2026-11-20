@@ -86,11 +86,44 @@ mod tests {
         }
     }
 
-    /// Mutation: drop the workload from the help, which is what the spec
-    /// says the guidance names; this test fails.
+    /// Mutation: drop what was looked for from any message, or give a
+    /// missing Visual Studio the repair advice instead of the Build Tools
+    /// workload; this test fails.
     #[test]
-    fn missing_visual_studio_names_the_workload() {
-        let help = ToolchainError::NoVisualStudio.help().unwrap();
-        assert!(help.contains("Desktop development with C++"), "{help}");
+    fn messages_name_what_was_looked_for_and_how_to_fix_it() {
+        let cases = [
+            (
+                ToolchainError::VswhereMissing {
+                    path: "Z:/x/vswhere.exe".into(),
+                },
+                "Z:/x/vswhere.exe",
+                "Desktop development with C++",
+            ),
+            (
+                ToolchainError::VswhereFailed {
+                    detail: "access denied".into(),
+                },
+                "access denied",
+                "Visual Studio Installer",
+            ),
+            (
+                ToolchainError::NoVisualStudio,
+                "C++ x64 tools",
+                "Desktop development with C++",
+            ),
+            (
+                ToolchainError::ClVersionUnknown {
+                    path: "Z:/t/cl.exe".into(),
+                },
+                "Z:/t/cl.exe",
+                "Visual Studio Installer",
+            ),
+        ];
+        for (error, in_message, in_help) in cases {
+            let message = error.to_string();
+            let help = error.help().unwrap();
+            assert!(message.contains(in_message), "{message}");
+            assert!(help.contains(in_help), "{help}");
+        }
     }
 }
