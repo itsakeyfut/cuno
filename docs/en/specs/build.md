@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 6f98be2484075a987fdc05aaf7d80ebe38ff271b -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 0dc682bb490f67768a8bcc31ac7e766fe36c82e0 -->
 
 # Build
 
@@ -85,7 +85,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - It is placed **at the project root** (`<project>/compile_commands.json`). `cuno new` adds it to `.gitignore`.
   - Reason: clangd only searches automatically in "the parent directories of the source" and their `build/` subdirectories, not inside `target/`. Placing it at the root lets clangd work with no configuration (the same experience as Rust's rust-analyzer). It is a generated artifact, not a configuration file users write, so it does not conflict with the "don't add configuration files" policy.
   - Other approaches considered: placing it inside `target/` and having cuno generate `.clangd` (adds a configuration file); having users configure the location in their editor (shifts the effort to users).
-  - **Generation is independent of compilation**: cuno generates it from the build graph (the compile commands scheduled to run). Regardless of whether compilation succeeds, running any of `build` / `run` / `check` / `test` / `lint` updates it to the latest content. `cuno lint` works even if nothing has been built yet.
+  - **Generation is independent of compilation**: cuno generates it from the build graph (the compile commands scheduled to run). Regardless of whether compilation succeeds, running any of `build` / `run` / `check` / `test` / `lint` updates it to the latest content. `fmt` does not generate it (because it works without a compiler; [dev-tools.md](dev-tools.md#target-files)). `cuno lint` works even if nothing has been built yet.
   - **Self-contained content**: MSVC / Windows SDK include paths (`/imsvc` etc. for clang-cl style) are written explicitly, so that clangd running outside a Developer Command Prompt can still find the standard headers and Windows headers.
   - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built.
     - Reason: editor completion and clang-tidy can analyze in-source test code as well (just as rust-analyzer analyzes test code). If the content changed with every build, the editor's analysis results would fluctuate.
@@ -102,8 +102,9 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   1. Command-line argument `--target-dir`
   2. Environment variable `CUNO_TARGET_DIR`
   3. Project-level `.cuno/config.toml`
-  4. User-level `<cuno home>/config.toml`
-  5. Default value `target/`
+  4. `[build] target-dir` in `cuno.toml`
+  5. User-level `<cuno home>/config.toml`
+  6. Default value `target/`
 - `cuno new` adds the output directory to `.gitignore`.
 
 ## Profiles

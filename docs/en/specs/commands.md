@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 50287230a33d3d14572a84012cfbdabbe713ddc8 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob d9777b7224afa808501cbb3cd8ae1bf99eb33dde -->
 
 # Commands
 
@@ -162,14 +162,21 @@ Common options only.
 
 ### `cuno doctor`
 
-No options. Diagnoses the environment and shows a fix for each problem.
+Diagnoses the environment and shows a fix for each problem.
 
-- Can be run outside a project (where no `cuno.toml` is found). In that case, the diagnosis targets the compiler chosen by the selection precedence without the project layers ([toolchain.md](toolchain.md#selection)).
+| Option | Description |
+|---|---|
+| `--compiler <name>` | The compiler to diagnose. Same as `--compiler` of the build commands. If not specified, diagnoses the compiler chosen by the same selection precedence as the build commands ([toolchain.md](toolchain.md#selection)) |
+
+- Can be run outside a project (where no `cuno.toml` is found). In that case, the compiler is chosen by the precedence without the project layers ([toolchain.md](toolchain.md#selection)).
+- Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported in the MVP (`gcc` / `safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
+  - Rationale: `doctor` is what users run when the environment or settings are wrong, so stopping at a configuration error would make it useless.
 
 | Result | Condition | Exit code |
 |---|---|---|
 | Problem | Cannot build with the selected compiler (not found, does not satisfy the version requirement, Visual Studio environment cannot be resolved, etc.) | `1` |
 | Problem | clang-format / clang-tidy not found | `1` |
+| Problem | An error in a configuration file, or an unsupported compiler selected | `1` |
 | Info | A compiler that is not used is not found (e.g. no Clang in an environment that uses MSVC) | No effect |
 
 If there are no problems, the exit code is `0`.

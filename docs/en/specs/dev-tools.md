@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob e7de5f64765e53021ef20ff43aaf24c8e33a6035 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 4532f168252fe5d9af1af0a48a70fcb8d62ac879 -->
 
 # Development Tools
 
@@ -15,8 +15,7 @@
 - **Generated files for editors**: cuno generates `.clang-format` / `.clang-tidy` from `[fmt]` / `[lint]` in `cuno.toml` and places them in the project root (`cuno new` adds them to `.gitignore`).
   - Reason: when an editor formats or analyzes code through clangd etc., without these files it runs with LLVM defaults (indent 2, etc.), and the results diverge from `cuno fmt` / `cuno lint`.
   - The source of truth is always `cuno.toml`. Even if users edit the generated files, they are overwritten on the next generation. Since these are not configuration files written by users, they do not conflict with the "don't add more configuration files" policy (treated the same as compile_commands.json; see [build.md](build.md)).
-  - They are generated when running `build` / `run` / `check` / `test` / `lint` / `fmt`. The only difference from compile_commands.json (which `fmt` does not generate; [build.md](build.md#output)) is whether `fmt` generates them.
-    - Rationale: generating compile_commands.json needs compiler detection and environment resolution, whereas `fmt` runs with clang-format alone and should work where no compiler is installed (such as a CI job that only checks formatting).
+  - They are generated when running `build` / `run` / `check` / `test` / `lint` / `fmt` (`fmt --check` writes nothing, so it does not generate them). The commands that generate compile_commands.json are decided by [build.md](build.md#output), and `fmt` is not among them.
 
 ## Implementation approach
 
@@ -27,16 +26,17 @@
 
 | Command | Targets |
 |---|---|
-| `cuno fmt` | The sources cuno builds (entry files and package body in [project-layout.md](project-layout.md)), the sources under `tests/`, `examples/`, and `benches/`, and the headers under those directories and `include-dirs` (excluding `[fmt] exclude`) |
-| `cuno lint` | Files listed in compile_commands.json, and headers in the project (excluding the output directory and `[lint] exclude`). Test code (with `CUNO_TEST` enabled) is also analyzed |
+| `cuno fmt` | C/C++ files in the places where the package's code lives ([project-layout.md](project-layout.md#where-the-packages-code-lives)) (excluding `[fmt] exclude`) |
+| `cuno lint` | C/C++ files in the places where the package's code lives (excluding `[lint] exclude`). Sources are analyzed with their commands from compile_commands.json, and headers through the sources that include them. Test code (with `CUNO_TEST` enabled) is also analyzed |
 
 - Target extensions: `.c` / `.h` / `.cpp` / `.cc` / `.cxx` / `.hpp` / `.hh` / `.hxx` / `.inl`.
 - `.h` is treated as the language given by `[package] lang` (because pointer placement in the cuno default style differs between C and C++).
-- What `cuno fmt` acts on follows the classification of sources ([project-layout.md](project-layout.md)). A file placed outside `src/` with `[[bin]] path` is formatted too, as long as it is built. The cuno binary builds the list from the classification of sources and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
-  - Rationale: looking only at fixed directories, a file placed outside `src/` would be used by `build` and `lint` yet pass `fmt --check` unformatted. It would also go against not enforcing a layout (design principle 3 in [concept.md](../concept.md)).
-- The "output directory" that `cuno lint` excludes means the actual output directory, including when it is changed with `--target-dir` and the like ([build.md](build.md#output-directory)).
-- `cuno lint` does not accept `--release` / `--profile` (the contents of compile_commands.json are always fixed to dev, so specifying them would have no effect). Specifying one is an unknown option, exit code 2. It accepts `--compiler` and analyzes using commands for that compiler.
-  - Rationale: if they were accepted and did nothing, users would believe the analysis used the release settings. Rejecting them is noticed at once.
+- `cuno fmt` and `cuno lint` decide what they act on from the same "places where the package's code lives". A file placed outside `src/` with `[[bin]] path`, and the headers next to it, are included. The cuno binary builds the list and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
+  - Rationale: if fmt and lint decided their targets differently, the same file could be analyzed by one and not formatted by the other. Looking only at fixed directories, a file placed outside `src/` would be used by `build` and `lint` yet pass `fmt --check` unformatted. It would also go against not enforcing a layout (design principle 3 in [concept.md](../concept.md)).
+- `cuno fmt` works without a compiler. Deciding its targets uses neither compiler detection nor selection.
+  - Rationale: `fmt` runs with clang-format alone and should work where no compiler is installed (such as a CI job that only checks formatting). The same reason is why `fmt` does not generate compile_commands.json.
+- `cuno lint` does not accept `--release` / `--profile`. Specifying one is an unknown option, exit code 2. It accepts `--compiler` and analyzes using commands for that compiler.
+  - Rationale: the contents of compile_commands.json are always fixed to dev ([build.md](build.md#output)), so they would have no effect. If they were accepted and did nothing, users would believe the analysis used the release settings. Rejecting them is noticed at once.
 
 ## `[fmt]` / `[lint]` keys
 

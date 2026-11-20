@@ -13,8 +13,7 @@
 - **エディタ用の生成物**: cuno は `cuno.toml` の `[fmt]` / `[lint]` から `.clang-format` / `.clang-tidy` を生成し、プロジェクト直下に置く（`cuno new` が `.gitignore` に追加する）。
   - 理由: エディタが clangd 等で整形・解析すると、これらのファイルがない場合は LLVM の既定（インデント 2 等）で動き、`cuno fmt` / `cuno lint` と結果が食い違うため。
   - 正は常に `cuno.toml`。生成物を利用者が編集しても、次の生成で上書きされる。利用者が書く設定ファイルではないため、「設定ファイルを増やさない」方針には触れない（compile_commands.json と同じ扱い。[build.md](build.md)）。
-  - `build` / `run` / `check` / `test` / `lint` / `fmt` の実行時に生成する。compile_commands.json（`fmt` では生成しない。[build.md](build.md#出力)）とは、`fmt` で生成するかどうかだけが違う。
-    - 理由: compile_commands.json の生成にはコンパイラの検出と環境解決が必要だが、`fmt` は clang-format だけで動き、コンパイラが入っていない環境（整形だけを確かめる CI など）でも使えるべきため。
+  - `build` / `run` / `check` / `test` / `lint` / `fmt` の実行時に生成する（`fmt --check` は何も書き込まないので生成しない）。compile_commands.json を生成するコマンドは [build.md](build.md#出力) が決め、`fmt` は含まない。
 
 ## 実装方針
 
@@ -25,16 +24,17 @@
 
 | コマンド | 対象 |
 |---|---|
-| `cuno fmt` | cuno がビルドするソース（[project-layout.md](project-layout.md) のエントリファイルとパッケージ本体）、`tests/`・`examples/`・`benches/` 以下のソース、それらのディレクトリと `include-dirs` 以下のヘッダ（`[fmt] exclude` を除く） |
-| `cuno lint` | compile_commands.json に載っているファイルと、プロジェクト内のヘッダ（出力先と `[lint] exclude` を除く）。テストコード（`CUNO_TEST` を有効にした状態）も解析する |
+| `cuno fmt` | パッケージのコードの置き場（[project-layout.md](project-layout.md#パッケージのコードの置き場)）にある C/C++ ファイル（`[fmt] exclude` を除く） |
+| `cuno lint` | パッケージのコードの置き場にある C/C++ ファイル（`[lint] exclude` を除く）。ソースは compile_commands.json のコマンドで、ヘッダはそれを含むソースを通して解析する。テストコード（`CUNO_TEST` を有効にした状態）も解析する |
 
 - 対象の拡張子: `.c` / `.h` / `.cpp` / `.cc` / `.cxx` / `.hpp` / `.hh` / `.hxx` / `.inl`。
 - `.h` は `[package] lang` の言語として扱う（cuno 既定スタイルのポインタ位置が C と C++ で異なるため）。
-- `cuno fmt` の対象は、ソースの分類（[project-layout.md](project-layout.md)）に従う。`[[bin]] path` で `src/` の外に置いたファイルも、ビルドされるなら整形する。対象の一覧は cuno 本体がソースの分類から作り、fmt / lint の実装に渡す（[architecture.md](architecture.md#クレート間の依存)）。
-  - 理由: 固定のディレクトリだけを見ると、`src/` の外に置いたファイルが `build` と `lint` では使われるのに、未整形のまま `fmt --check` を通る。配置を強制しない方針（[concept.md](../concept.md) の設計原則 3）とも合わない。
-- `cuno lint` が除外する「出力先」は、`--target-dir` などで変えた場合も含めて実際の出力先を指す（[build.md](build.md#出力先ディレクトリ)）。
-- `cuno lint` は `--release` / `--profile` を受け付けない（compile_commands.json の内容は常に dev 固定のため、指定しても効かない）。指定すると不明なオプションとして終了コード 2。`--compiler` は受け付け、そのコンパイラ向けのコマンドで解析する。
-  - 理由: 受け付けて何もしないと、利用者は release の設定で解析したと思い込む。拒否すればすぐ気づく。
+- `cuno fmt` と `cuno lint` は、同じ「パッケージのコードの置き場」から対象を決める。`[[bin]] path` で `src/` の外に置いたファイルとその隣のヘッダも対象になる。対象の一覧は cuno 本体が作り、fmt / lint の実装に渡す（[architecture.md](architecture.md#クレート間の依存)）。
+  - 理由: fmt と lint で対象の決め方が違うと、同じファイルが一方では解析され他方では整形されない。固定のディレクトリだけを見ると、`src/` の外に置いたファイルが `build` と `lint` では使われるのに、未整形のまま `fmt --check` を通る。配置を強制しない方針（[concept.md](../concept.md) の設計原則 3）とも合わない。
+- `cuno fmt` はコンパイラなしで動く。対象を決めるのにコンパイラの検出も選択も使わない。
+  - 理由: `fmt` は clang-format だけで動き、コンパイラが入っていない環境（整形だけを確かめる CI など）でも使えるべきため。compile_commands.json を `fmt` で生成しないのも同じ理由。
+- `cuno lint` は `--release` / `--profile` を受け付けない。指定すると不明なオプションとして終了コード 2。`--compiler` は受け付け、そのコンパイラ向けのコマンドで解析する。
+  - 理由: compile_commands.json の内容は常に dev 固定なので（[build.md](build.md#出力)）、受け付けても効かない。受け付けて何もしないと、利用者は release の設定で解析したと思い込む。拒否すればすぐ気づく。
 
 ## `[fmt]` / `[lint]` の項目
 

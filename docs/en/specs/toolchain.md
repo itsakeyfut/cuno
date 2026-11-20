@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob e2de9fd9a92a0806eb49f012cd91e1822bc0f9a5 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob d368df5f158b887f404135803d26b74f500438f9 -->
 
 # Toolchain
 
@@ -100,7 +100,7 @@ Precedence (higher wins):
 6. Automatic selection
 
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
-- Outside a project (for example when `cuno doctor` runs outside one), the compiler is chosen in the order without 3 and 4 (`--compiler` → `CUNO_COMPILER` → user-level config → automatic selection).
+- Outside a project (for example when `cuno doctor` runs outside one), there are no project layers (`.cuno/config.toml` and `[toolchain]` in `cuno.toml`), so the compiler is chosen in the order `--compiler` → `CUNO_COMPILER` → user-level config → automatic selection.
   - Rationale: to match the compiler a `cuno build` in a new project would use. Looking only at automatic selection could diagnose MSVC for a user whose user-level config selects clang, answer "no problem", and leave the following build to fail.
 - If a compiler not supported in MVP (`gcc` / `safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
 

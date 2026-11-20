@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 4bed53b259d475cc227c3db4e47aa24f8bef4018 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 69c19d3e3ce6100699384356c68aa14c04226b41 -->
 
 # Internal Structure of cuno Itself
 
@@ -56,7 +56,7 @@ The allowed directions of dependency are limited to the following. `tests/archit
   - Rationale: to keep the structure of TOML out of the compiler abstraction. Adding a compiler then takes a change to `cuno-toolchain` alone (design principle 5 in [concept.md](../concept.md)).
 - `cuno-test` holds only running tests and displaying their results. Building tests is one mode of `cuno-build`.
   - Rationale: it only runs the executables it is given and collects the results, so it needs no knowledge of settings or compilers.
-- `cuno-tools` is given the path of compile_commands.json. It does not depend on `cuno-build`.
+- `cuno-tools` is given the list of target files the cuno binary built from "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. What lint acts on is decided by the list; compile_commands.json only supplies each source's command. It does not depend on `cuno-build`.
 - `cuno-build` does not depend on `cuno-deps` / `cuno-script`. Resolved dependencies and script results are passed by the cuno binary as data.
 - **Library crates do not read the process's environment variables or command-line arguments directly.** The cuno binary collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
   - Likewise, the OS cuno runs on (the host) is received as a value rather than decided directly with `cfg!` and the like. The OS being built for (the target) is distinguished from the host, as in [manifest.md](manifest.md). In the MVP, the binary passes target = host.
