@@ -55,37 +55,44 @@ fn selected(kind: CompilerKind) -> Option<(Selected, Env)> {
     Some((selected, resolved.apply(&env)))
 }
 
-fn probe(selected: &Selected, env: &Env, defines: &[&str]) -> Result<(), ToolchainError> {
+fn probe(selected: &Selected, env: &Env, flags: &[&str]) -> Result<(), ToolchainError> {
     let scratch = tempfile::tempdir().unwrap();
-    let defines: Vec<String> = defines.iter().map(|d| (*d).to_owned()).collect();
+    let flags: Vec<std::ffi::OsString> = flags.iter().map(Into::into).collect();
     select::check(
         selected,
         env,
         ProbeInputs {
             scratch: scratch.path(),
-            include_dirs: &[],
-            defines: &defines,
+            flags: &flags,
         },
         &SystemRunner,
     )
 }
 
 /// The Clang the test support uses (on CI the pinned LLVM) is accepted by
-/// the installed MSVC standard library, through clang and clang-cl alike;
-/// one pretending to be Clang 1 is rejected with the version the library
-/// asks for, unless the project allows the mismatch as the library permits.
+/// the installed MSVC standard library, through clang and clang-cl alike,
+/// including for a project built without RTTI; one pretending to be Clang 1
+/// is rejected with the version the library asks for, unless the project
+/// allows the mismatch as the library permits.
 ///
-/// Mutation: treat the probe's failure as passing, or drop the project's
-/// defines from the probe; this test fails.
+/// Mutation: treat the probe's failure as passing, or drop the build's flags
+/// from the probe; this test fails.
 #[test]
 fn the_standard_library_decides_which_clang_it_accepts() {
     for kind in [CompilerKind::Clang, CompilerKind::ClangCl] {
         let Some((selected, env)) = selected(kind) else {
             continue;
         };
+        let (define, no_rtti) = match kind {
+            CompilerKind::ClangCl => ("/D", "/GR-"),
+            _ => ("-D", "-fno-rtti"),
+        };
+        let d = |macro_: &str| format!("{define}{macro_}");
         probe(&selected, &env, &[]).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+        probe(&selected, &env, &[no_rtti, &d("_HAS_STATIC_RTTI=0")])
+            .unwrap_or_else(|e| panic!("{kind:?} without RTTI: {e}"));
 
-        let err = probe(&selected, &env, &["__clang_major__=1"]).unwrap_err();
+        let err = probe(&selected, &env, &[&d("__clang_major__=1")]).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -100,8 +107,8 @@ fn the_standard_library_decides_which_clang_it_accepts() {
             &selected,
             &env,
             &[
-                "__clang_major__=1",
-                "_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
+                &d("__clang_major__=1"),
+                &d("_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"),
             ],
         )
         .unwrap_or_else(|e| panic!("{kind:?}: {e}"));

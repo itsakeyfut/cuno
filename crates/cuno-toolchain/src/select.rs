@@ -3,9 +3,10 @@
 //! MSVC standard library. See `docs/en/specs/toolchain.md`, "Selection",
 //! "Version pinning" and "Minimum compiler versions".
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
@@ -302,17 +303,21 @@ pub fn select(
         HostOs::Windows => usable_toolsets(found)?,
         HostOs::Other => Vec::new(),
     };
-    let newest_toolset = toolsets.iter().max_by_key(|t| t.cl_version).cloned();
+    let newest_toolset = first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned();
 
-    let candidates: Vec<(PathBuf, Version, Option<MsvcToolset>)> = match kind {
+    let mut candidates: Vec<(PathBuf, Version, Option<MsvcToolset>)> = Vec::new();
+    // Copies found but not eligible, with why, for the error.
+    let mut excluded: Vec<String> = Vec::new();
+    match kind {
         CompilerKind::Msvc => {
             if host != HostOs::Windows {
                 return Err(ToolchainError::NoVisualStudio);
             }
-            toolsets
-                .iter()
-                .map(|t| (t.cl(), t.cl_version, Some(t.clone())))
-                .collect()
+            candidates.extend(
+                toolsets
+                    .iter()
+                    .map(|t| (t.cl(), t.cl_version, Some(t.clone()))),
+            );
         }
         CompilerKind::Clang | CompilerKind::ClangCl => {
             let tool = if kind == CompilerKind::Clang {
@@ -320,27 +325,34 @@ pub fn select(
             } else {
                 Tool::ClangCl
             };
-            found
-                .llvm
-                .iter()
-                .filter(|t| t.tool == tool)
-                .filter_map(|t| release_for(t, host))
-                .map(|(path, version)| (path, version, newest_toolset.clone()))
-                .collect()
+            for t in found.llvm.iter().filter(|t| t.tool == tool) {
+                match release_for(t, host) {
+                    Ok(version) => {
+                        candidates.push((t.path.clone(), version, newest_toolset.clone()))
+                    }
+                    Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
+                }
+            }
         }
-    };
+    }
     if candidates.is_empty() {
-        return Err(ToolchainError::CompilerNotFound {
-            compiler: kind.name(),
+        return Err(if excluded.is_empty() {
+            ToolchainError::CompilerNotFound {
+                compiler: kind.name(),
+            }
+        } else {
+            ToolchainError::NoUsableCompiler {
+                compiler: kind.name(),
+                excluded,
+            }
         });
     }
-    // The newest acceptable one; among equals, the first in search order.
-    let mut best: Option<&(PathBuf, Version, Option<MsvcToolset>)> = None;
-    for candidate in candidates.iter().filter(|c| acceptable(&c.1)) {
-        if best.is_none_or(|b| candidate.1 > b.1) {
-            best = Some(candidate);
-        }
-    }
+    let best = first_newest(
+        candidates
+            .iter()
+            .filter(|c| acceptable(&c.1))
+            .map(|c| (c, c.1)),
+    );
     let Some((executable, version, msvc)) = best.cloned() else {
         let mut requirements = vec![format!(">={} (cuno's minimum)", kind.minimum())];
         if let Some(r) = requirement {
@@ -359,6 +371,18 @@ pub fn select(
         msvc,
         source,
     })
+}
+
+/// The item with the highest version; among equals, the first, so that
+/// search order decides and every compiler picks the same toolset.
+fn first_newest<T>(items: impl Iterator<Item = (T, Version)>) -> Option<T> {
+    let mut best: Option<(T, Version)> = None;
+    for (item, version) in items {
+        if best.as_ref().is_none_or(|(_, b)| version > *b) {
+            best = Some((item, version));
+        }
+    }
+    best.map(|(item, _)| item)
 }
 
 /// The toolsets of the complete, non-preview installations (only the one in
@@ -389,26 +413,30 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     canonical(a) == canonical(b)
 }
 
-/// The path and version of a tool that ran, is a release, and on Windows
-/// targets MSVC (a MinGW Clang cannot be linked with MSVC; `toolchain.md`,
-/// "LLVM").
-fn release_for(tool: &LlvmTool, host: HostOs) -> Option<(PathBuf, Version)> {
-    let Probe::Ran {
-        version,
-        prerelease: false,
-        target,
-    } = &tool.probe
-    else {
-        return None;
+/// The version of a tool that ran, is a release, and on Windows targets MSVC
+/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
+/// it is not eligible.
+fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
+    let (version, target) = match &tool.probe {
+        Probe::Failed => return Err("it did not run".to_owned()),
+        Probe::NoVersion => return Err("it printed no version".to_owned()),
+        Probe::Ran {
+            version,
+            prerelease: true,
+            ..
+        } => return Err(format!("{version} is a preview")),
+        Probe::Ran {
+            version, target, ..
+        } => (*version, target),
     };
-    if host == HostOs::Windows
-        && !target
-            .as_deref()
-            .is_some_and(|t| t.ends_with("-windows-msvc"))
-    {
-        return None;
+    if host == HostOs::Windows {
+        match target.as_deref() {
+            Some(t) if t.ends_with("-windows-msvc") => {}
+            Some(t) => return Err(format!("it targets {t}, not MSVC")),
+            None => return Err("it reports no target".to_owned()),
+        }
     }
-    Some((tool.path.clone(), *version))
+    Ok(version)
 }
 
 /// What the build's compile command would also get, for the standard library
@@ -417,10 +445,11 @@ fn release_for(tool: &LlvmTool, host: HostOs) -> Option<(PathBuf, Version)> {
 pub struct ProbeInputs<'a> {
     /// A directory outside the project to write the probe file in.
     pub scratch: &'a Path,
-    /// The build's include directories.
-    pub include_dirs: &'a [PathBuf],
-    /// The project's `defines` (`NAME` or `NAME=value`).
-    pub defines: &'a [String],
+    /// The build's compile flags in this compiler's syntax, except those
+    /// naming inputs and outputs: the language standard, RTTI and exceptions,
+    /// include directories, defines and the user's `flags`. Paths must be
+    /// absolute: the probe does not run in the project directory.
+    pub flags: &'a [OsString],
 }
 
 /// Whether the selected compiler can build here: on Windows a Clang must be
@@ -437,36 +466,31 @@ pub fn check(
     if selected.kind == CompilerKind::Msvc || selected.msvc.is_none() {
         return Ok(());
     }
-    let probe = inputs.scratch.join("cuno-stl-probe.cpp");
-    std::fs::write(&probe, "#include <yvals_core.h>\n").map_err(|e| {
-        ToolchainError::ProbeFailed {
-            compiler: selected.kind.name(),
-            output: format!("could not write {}: {e}", probe.display()),
-        }
-    })?;
-    let mut args: Vec<std::ffi::OsString> = match selected.kind {
+    let failed = |output: String| ToolchainError::ProbeFailed {
+        compiler: selected.kind.name(),
+        output,
+    };
+    // A name of its own, so that two cuno processes sharing `scratch` do not
+    // write or remove each other's file.
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let probe = inputs.scratch.join(format!(
+        "cuno-stl-probe-{}-{}.cpp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&probe, "#include <yvals_core.h>\n")
+        .map_err(|e| failed(format!("could not write {}: {e}", probe.display())))?;
+    let mut args: Vec<OsString> = match selected.kind {
         CompilerKind::ClangCl => vec!["/nologo".into(), "/TP".into(), "/Zs".into()],
         _ => vec!["-x".into(), "c++".into(), "-fsyntax-only".into()],
     };
     args.push("--target=x86_64-pc-windows-msvc".into());
-    let (define, include) = match selected.kind {
-        CompilerKind::ClangCl => ("/D", "/I"),
-        _ => ("-D", "-I"),
-    };
-    args.extend(inputs.defines.iter().map(|d| format!("{define}{d}").into()));
-    for dir in inputs.include_dirs {
-        let mut arg = std::ffi::OsString::from(include);
-        arg.push(dir);
-        args.push(arg);
-    }
+    args.extend(inputs.flags.iter().cloned());
     args.push(probe.clone().into());
     let args: Vec<&OsStr> = args.iter().map(|a| a.as_os_str()).collect();
     let output = run.run(&selected.executable, &args, env);
     let _ = std::fs::remove_file(&probe);
-    let output = output.map_err(|e| ToolchainError::ProbeFailed {
-        compiler: selected.kind.name(),
-        output: e.to_string(),
-    })?;
+    let output = output.map_err(|e| failed(e.to_string()))?;
     if output.success {
         return Ok(());
     }
@@ -482,10 +506,7 @@ pub fn check(
             needed: needed_clang(line),
             message: line.trim().to_owned(),
         }),
-        None => Err(ToolchainError::ProbeFailed {
-            compiler: selected.kind.name(),
-            output: text.trim().to_owned(),
-        }),
+        None => Err(failed(text.trim().to_owned())),
     }
 }
 
@@ -502,6 +523,7 @@ mod tests {
     use super::*;
     use crate::Output;
     use crate::llvm::Origin;
+    use std::cell::RefCell;
 
     fn v(major: u32, minor: u32, patch: u32) -> Version {
         Version {
@@ -511,35 +533,42 @@ mod tests {
         }
     }
 
-    fn toolset(version: Version) -> MsvcToolset {
-        MsvcToolset {
-            dir: format!("VS/VC/Tools/MSVC/{version}").into(),
-            cl_version: version,
-        }
-    }
-
     fn install(path: &str, toolsets: &[Version]) -> VsInstallation {
         VsInstallation {
             path: path.into(),
             prerelease: false,
             complete: true,
-            toolsets: toolsets.iter().map(|v| toolset(*v)).collect(),
+            toolsets: toolsets
+                .iter()
+                .map(|v| MsvcToolset {
+                    dir: Path::new(path).join(format!("VC/Tools/MSVC/{v}")),
+                    cl_version: *v,
+                })
+                .collect(),
             unusable_toolsets: Vec::new(),
             default_toolset: None,
         }
     }
 
-    fn clang(tool: Tool, path: &str, version: Version, prerelease: bool, target: &str) -> LlvmTool {
+    fn tool(tool: Tool, path: &str, probe: Probe) -> LlvmTool {
         LlvmTool {
             tool,
             path: path.into(),
-            probe: Probe::Ran {
-                version,
-                prerelease,
-                target: Some(target.into()),
-            },
+            probe,
             origin: Origin::Path,
         }
+    }
+
+    fn ran(version: Version, prerelease: bool, target: Option<&str>) -> Probe {
+        Probe::Ran {
+            version,
+            prerelease,
+            target: target.map(Into::into),
+        }
+    }
+
+    fn clang(kind: Tool, path: &str, version: Version) -> LlvmTool {
+        tool(kind, path, ran(version, false, Some(MSVC_TARGET)))
     }
 
     const MSVC_TARGET: &str = "x86_64-pc-windows-msvc";
@@ -552,8 +581,19 @@ mod tests {
         }
     }
 
-    fn some(name: &str) -> Option<String> {
-        Some(name.to_owned())
+    fn asking(name: &str) -> Choices {
+        Choices {
+            cli: Some(name.to_owned()),
+            ..Default::default()
+        }
+    }
+
+    fn pick(
+        choices: &Choices,
+        found: Found<'_>,
+        constraints: &Constraints,
+    ) -> Result<Selected, ToolchainError> {
+        select(choices, found, constraints, HostOs::Windows)
     }
 
     /// Mutation: swap any two levels of the precedence; this test fails.
@@ -561,10 +601,10 @@ mod tests {
     fn each_level_beats_every_level_below_it() {
         let installs = [install("VS", &[v(19, 52, 1)])];
         let llvm = [
-            clang(Tool::Clang, "clang", v(22, 1, 8), false, MSVC_TARGET),
-            clang(Tool::ClangCl, "clang-cl", v(22, 1, 8), false, MSVC_TARGET),
+            clang(Tool::Clang, "clang", v(22, 1, 8)),
+            clang(Tool::ClangCl, "clang-cl", v(22, 1, 8)),
         ];
-        // Each level names a different compiler than every level below it;
+        // Each level names a different compiler than the level below it;
         // whichever wins tells which level won.
         let levels = ["clang", "clang-cl", "msvc", "clang", "clang-cl"];
         let sources = [
@@ -585,16 +625,19 @@ mod tests {
                 }),
                 user: given(4),
             };
-            let selected = select(
-                &choices,
-                found(&installs, &llvm),
-                &Constraints::default(),
-                HostOs::Windows,
-            )
-            .unwrap();
+            let selected =
+                pick(&choices, found(&installs, &llvm), &Constraints::default()).unwrap();
             if top < levels.len() {
                 assert_eq!(selected.source, sources[top]);
                 assert_eq!(selected.kind.name(), levels[top]);
+                assert_eq!(
+                    selected.executable.file_name().unwrap(),
+                    if levels[top] == "msvc" {
+                        "cl.exe"
+                    } else {
+                        levels[top]
+                    }
+                );
             } else {
                 assert_eq!(selected.source, Source::Automatic);
                 assert_eq!(selected.kind, CompilerKind::Msvc);
@@ -602,183 +645,180 @@ mod tests {
         }
     }
 
-    /// Mutation: read the project's layers outside a project; this test
-    /// fails. Outside a project they are not even representable, so this
-    /// checks the user-level choice is the one taken.
+    /// Outside a project the project's layers cannot be given (`Choices`
+    /// has no place for them), so the user-level choice comes right after
+    /// `CUNO_COMPILER`.
+    ///
+    /// Mutation: drop the user-level layer; this test fails.
     #[test]
     fn outside_a_project_the_user_config_is_next_after_the_environment() {
         let installs = [install("VS", &[v(19, 52, 1)])];
-        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8), false, MSVC_TARGET)];
+        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8))];
         let choices = Choices {
-            user: some("clang"),
+            user: Some("clang".to_owned()),
             ..Default::default()
         };
-        let selected = select(
-            &choices,
-            found(&installs, &llvm),
-            &Constraints::default(),
-            HostOs::Windows,
-        )
-        .unwrap();
+        let selected = pick(&choices, found(&installs, &llvm), &Constraints::default()).unwrap();
         assert_eq!(
             (selected.kind, selected.source),
             (CompilerKind::Clang, Source::UserConfig)
         );
     }
 
-    /// Mutation: fall back to automatic selection for `gcc`, `safec` or an
-    /// unknown name, or lose where the name came from; this test fails.
+    /// Mutation: change what any source is called, or fall back to
+    /// automatic selection for `gcc`, `safec` or an unknown name, or report
+    /// another source than the one that named it; this test fails.
     #[test]
     fn unsupported_and_unknown_names_are_errors_naming_their_source() {
         let installs = [install("VS", &[v(19, 52, 1)])];
-        for (name, unsupported) in [("gcc", true), ("safec", true), ("nope", false)] {
-            let choices = Choices {
-                env: some(name),
-                ..Default::default()
-            };
-            let err = select(
-                &choices,
-                found(&installs, &[]),
-                &Constraints::default(),
-                HostOs::Windows,
-            )
-            .unwrap_err();
-            match (&err, unsupported) {
-                (ToolchainError::UnsupportedCompiler { source, .. }, true)
-                | (ToolchainError::UnknownCompiler { source, .. }, false) => {
-                    assert_eq!(source, "CUNO_COMPILER")
-                }
-                _ => panic!("{name}: {err:?}"),
+        let names = [
+            (Source::CommandLine, "--compiler"),
+            (Source::Environment, "CUNO_COMPILER"),
+            (Source::ProjectConfig, "compiler in .cuno/config.toml"),
+            (Source::Manifest, "[toolchain] compiler in cuno.toml"),
+            (Source::UserConfig, "compiler in the user-level config.toml"),
+            (Source::Automatic, "automatic selection"),
+        ];
+        for (source, text) in names {
+            assert_eq!(source.to_string(), text);
+        }
+        for (choices, text) in [
+            (asking("gcc"), "--compiler"),
+            (
+                Choices {
+                    env: Some("safec".into()),
+                    ..Default::default()
+                },
+                "CUNO_COMPILER",
+            ),
+            (
+                Choices {
+                    project: Some(ProjectChoices {
+                        config: None,
+                        manifest: Some("nope".into()),
+                    }),
+                    ..Default::default()
+                },
+                "[toolchain] compiler in cuno.toml",
+            ),
+        ] {
+            let err = pick(&choices, found(&installs, &[]), &Constraints::default()).unwrap_err();
+            match &err {
+                ToolchainError::UnsupportedCompiler { source, .. }
+                | ToolchainError::UnknownCompiler { source, .. } => assert_eq!(source, text),
+                _ => panic!("{err:?}"),
             }
+            assert_eq!(
+                matches!(err, ToolchainError::UnknownCompiler { .. }),
+                text.contains("cuno.toml")
+            );
         }
     }
 
-    /// Mutation: include previews, take the oldest, or ignore the upper
-    /// bound; this test fails.
+    /// Mutation: include previews or incomplete installations, take the
+    /// oldest, or ignore the upper bound; this test fails.
     #[test]
     fn the_newest_satisfying_release_is_chosen() {
         let mut preview = install("Preview", &[v(19, 44, 1)]);
         preview.prerelease = true;
-        let installs = [install("VS", &[v(19, 40, 1), v(19, 52, 1)]), preview];
+        let mut incomplete = install("Incomplete", &[v(19, 45, 1)]);
+        incomplete.complete = false;
+        let installs = [
+            install("VS", &[v(19, 40, 1), v(19, 52, 1)]),
+            preview,
+            incomplete,
+        ];
         let constraints = Constraints {
             msvc: Some(VersionReq::parse("msvc", ">=19.29, <19.50").unwrap()),
             ..Default::default()
         };
-        let selected = select(
-            &Choices::default(),
-            found(&installs, &[]),
-            &constraints,
-            HostOs::Windows,
-        )
-        .unwrap();
+        let selected = pick(&Choices::default(), found(&installs, &[]), &constraints).unwrap();
         assert_eq!(selected.version, v(19, 40, 1));
+        let selected = pick(
+            &Choices::default(),
+            found(&installs[1..], &[]),
+            &Constraints::default(),
+        );
+        assert!(
+            matches!(selected, Err(ToolchainError::NoVisualStudio)),
+            "{selected:?}"
+        );
+    }
 
+    /// Mutation: accept a preview, a MinGW Clang or one that reports no
+    /// target, take the last of equal versions, or give Clang another
+    /// toolset than MSVC would use; this test fails.
+    #[test]
+    fn only_msvc_targeting_clang_releases_are_eligible() {
+        let installs = [install("A", &[v(19, 52, 1)]), install("B", &[v(19, 52, 1)])];
         let llvm = [
-            clang(Tool::Clang, "old", v(18, 1, 0), false, MSVC_TARGET),
-            clang(Tool::Clang, "rc", v(23, 0, 0), true, MSVC_TARGET),
-            clang(
+            clang(Tool::Clang, "old", v(18, 1, 0)),
+            tool(Tool::Clang, "rc", ran(v(23, 0, 0), true, Some(MSVC_TARGET))),
+            tool(
                 Tool::Clang,
                 "mingw",
-                v(22, 5, 0),
-                false,
-                "x86_64-w64-windows-gnu",
+                ran(v(22, 5, 0), false, Some("x86_64-w64-windows-gnu")),
             ),
-            clang(Tool::Clang, "new", v(22, 1, 8), false, MSVC_TARGET),
-            clang(Tool::Clang, "same", v(22, 1, 8), false, MSVC_TARGET),
+            tool(Tool::Clang, "untargeted", ran(v(22, 4, 0), false, None)),
+            clang(Tool::Clang, "new", v(22, 1, 8)),
+            clang(Tool::Clang, "same", v(22, 1, 8)),
         ];
-        let choices = Choices {
-            cli: some("clang"),
-            ..Default::default()
-        };
-        let selected = select(
-            &choices,
+        let selected = pick(
+            &asking("clang"),
             found(&installs, &llvm),
             &Constraints::default(),
-            HostOs::Windows,
         )
         .unwrap();
         assert_eq!(selected.executable, PathBuf::from("new"));
-        // Clang uses the newest MSVC toolset; the MSVC constraint is not
-        // Clang's.
-        assert_eq!(selected.msvc.unwrap().cl_version, v(19, 52, 1));
-    }
-
-    /// Mutation: drop cuno's minimum, or report a failure without the versions
-    /// found; this test fails.
-    #[test]
-    fn below_the_minimum_is_an_error_listing_what_was_found() {
-        let installs = [install("VS", &[v(19, 28, 1)])];
-        let err = select(
-            &Choices::default(),
-            found(&installs, &[]),
+        let msvc = pick(
+            &asking("msvc"),
+            found(&installs, &llvm),
             &Constraints::default(),
-            HostOs::Windows,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, ToolchainError::NoMatchingVersion { found, .. } if *found == [v(19, 28, 1)]),
-            "{err:?}"
-        );
-    }
-
-    /// Mutation: choose Clang without a Visual Studio, ignore `[toolchain.paths]
-    /// msvc`, or report a missing Clang as a version problem; this test fails.
-    #[test]
-    fn visual_studio_is_required_and_paths_msvc_limits_it() {
-        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8), false, MSVC_TARGET)];
-        let clang_choice = Choices {
-            cli: some("clang"),
-            ..Default::default()
-        };
-        let err = select(
-            &clang_choice,
-            found(&[], &llvm),
-            &Constraints::default(),
-            HostOs::Windows,
-        )
-        .unwrap_err();
-        assert!(matches!(err, ToolchainError::NoVisualStudio), "{err:?}");
-
-        let root = tempfile::tempdir().unwrap();
-        let installs = [
-            install(root.path().join("A").to_str().unwrap(), &[v(19, 52, 1)]),
-            install(root.path().join("B").to_str().unwrap(), &[v(19, 40, 1)]),
-        ];
-        let explicit = root.path().join("B");
-        let selected = select(
-            &Choices::default(),
-            Found {
-                installs: &installs,
-                llvm: &[],
-                explicit_msvc: Some(&explicit),
-            },
-            &Constraints::default(),
-            HostOs::Windows,
         )
         .unwrap();
-        assert_eq!(selected.version, v(19, 40, 1));
-        let elsewhere = root.path().join("C");
-        let err = select(
-            &Choices::default(),
-            Found {
-                installs: &installs,
-                llvm: &[],
-                explicit_msvc: Some(&elsewhere),
-            },
+        assert_eq!(selected.msvc, msvc.msvc);
+        assert!(msvc.msvc.unwrap().dir.starts_with("A"));
+    }
+
+    /// Mutation: report "not found" when copies were found but none is
+    /// eligible, or drop why each was left out; this test fails.
+    #[test]
+    fn ineligible_copies_are_named_with_why() {
+        let installs = [install("VS", &[v(19, 52, 1)])];
+        let llvm = [
+            tool(Tool::Clang, "rc", ran(v(23, 0, 0), true, Some(MSVC_TARGET))),
+            tool(
+                Tool::Clang,
+                "mingw",
+                ran(v(22, 5, 0), false, Some("x86_64-w64-windows-gnu")),
+            ),
+            tool(Tool::Clang, "untargeted", ran(v(22, 4, 0), false, None)),
+            tool(Tool::Clang, "broken", Probe::Failed),
+            tool(Tool::Clang, "silent", Probe::NoVersion),
+        ];
+        let err = pick(
+            &asking("clang"),
+            found(&installs, &llvm),
             &Constraints::default(),
-            HostOs::Windows,
         )
         .unwrap_err();
-        assert!(
-            matches!(err, ToolchainError::VisualStudioNotAt { .. }),
-            "{err:?}"
+        let ToolchainError::NoUsableCompiler { excluded, .. } = &err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(
+            *excluded,
+            [
+                "rc (23.0.0 is a preview)",
+                "mingw (it targets x86_64-w64-windows-gnu, not MSVC)",
+                "untargeted (it reports no target)",
+                "broken (it did not run)",
+                "silent (it printed no version)",
+            ]
         );
-
-        let err = select(
-            &clang_choice,
+        let err = pick(
+            &asking("clang"),
             found(&installs, &[]),
             &Constraints::default(),
-            HostOs::Windows,
         )
         .unwrap_err();
         assert!(
@@ -787,18 +827,182 @@ mod tests {
         );
     }
 
+    /// Mutation: change or drop any compiler's minimum, accept below it, or
+    /// reject the minimum itself; this test fails.
+    #[test]
+    fn each_compiler_starts_at_its_minimum() {
+        for (kind, below, at) in [
+            ("msvc", v(19, 28, 99), v(19, 29, 0)),
+            ("clang", v(16, 9, 9), v(17, 0, 0)),
+            ("clang-cl", v(16, 9, 9), v(17, 0, 0)),
+        ] {
+            for (version, ok) in [(below, false), (at, true)] {
+                let installs = [install(
+                    "VS",
+                    &[if kind == "msvc" {
+                        version
+                    } else {
+                        v(19, 52, 1)
+                    }],
+                )];
+                let llvm = [
+                    clang(Tool::Clang, "clang", version),
+                    clang(Tool::ClangCl, "clang-cl", version),
+                ];
+                let result = pick(
+                    &asking(kind),
+                    found(&installs, &llvm),
+                    &Constraints::default(),
+                );
+                match result {
+                    Ok(_) => assert!(ok, "{kind} {version} accepted"),
+                    Err(ToolchainError::NoMatchingVersion { found, .. }) => {
+                        assert!(!ok, "{kind} {version} rejected");
+                        assert_eq!(found, [version]);
+                    }
+                    Err(e) => panic!("{kind} {version}: {e:?}"),
+                }
+            }
+        }
+    }
+
+    /// Mutation: apply one compiler's `[toolchain.version]` to another, or
+    /// leave the user's requirement out of the error; this test fails.
+    #[test]
+    fn each_requirement_is_its_own_compilers() {
+        let installs = [install("VS", &[v(19, 52, 1)])];
+        let llvm = [
+            clang(Tool::Clang, "clang-old", v(18, 1, 0)),
+            clang(Tool::Clang, "clang-new", v(22, 1, 8)),
+            clang(Tool::ClangCl, "cl-old", v(18, 1, 0)),
+            clang(Tool::ClangCl, "cl-new", v(22, 1, 8)),
+        ];
+        let below_22 = || Some(VersionReq::parse("x", "<22").unwrap());
+        for (kind, constraints) in [
+            (
+                "clang",
+                Constraints {
+                    clang: below_22(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "clang-cl",
+                Constraints {
+                    clang_cl: below_22(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "msvc",
+                Constraints {
+                    msvc: Some(VersionReq::parse("msvc", "<19.50").unwrap()),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let constrained = pick(&asking(kind), found(&installs, &llvm), &constraints);
+            let others: Vec<_> = ["clang", "clang-cl"]
+                .into_iter()
+                .filter(|other| *other != kind)
+                .map(|other| pick(&asking(other), found(&installs, &llvm), &constraints).unwrap())
+                .collect();
+            for other in others {
+                assert_eq!(other.version, v(22, 1, 8), "{kind} constrained {other:?}");
+            }
+            if kind == "msvc" {
+                let err = constrained.unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    "no msvc found satisfies >=19.29.0 (cuno's minimum) and <19.50 ([toolchain.version] msvc); found 19.52.1"
+                );
+            } else {
+                assert_eq!(constrained.unwrap().version, v(18, 1, 0), "{kind}");
+            }
+        }
+    }
+
+    /// Mutation: choose Clang without a Visual Studio, ignore
+    /// `[toolchain.paths] msvc`, or compare it as written rather than as the
+    /// same directory; this test fails.
+    #[test]
+    fn visual_studio_is_required_and_paths_msvc_limits_it() {
+        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8))];
+        let err = pick(&asking("clang"), found(&[], &llvm), &Constraints::default()).unwrap_err();
+        assert!(matches!(err, ToolchainError::NoVisualStudio), "{err:?}");
+
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["A", "B"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        let installs = [
+            install(root.path().join("A").to_str().unwrap(), &[v(19, 52, 1)]),
+            install(root.path().join("B").to_str().unwrap(), &[v(19, 40, 1)]),
+        ];
+        let with = |dir: &Path| {
+            pick(
+                &Choices::default(),
+                Found {
+                    installs: &installs,
+                    llvm: &[],
+                    explicit_msvc: Some(dir),
+                },
+                &Constraints::default(),
+            )
+        };
+        let spelled_otherwise = root.path().join("A").join("..").join("B");
+        assert_eq!(with(&spelled_otherwise).unwrap().version, v(19, 40, 1));
+        let err = with(&root.path().join("C")).unwrap_err();
+        assert!(
+            matches!(err, ToolchainError::VisualStudioNotAt { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Mutation: elsewhere than on Windows, select a default other than the
+    /// unsupported GCC, accept MSVC, or require Visual Studio or an MSVC
+    /// target for Clang; this test fails.
+    #[test]
+    fn other_hosts_need_no_visual_studio_and_have_no_msvc() {
+        let other = |choices: &Choices, llvm: &[LlvmTool]| {
+            select(
+                choices,
+                found(&[], llvm),
+                &Constraints::default(),
+                HostOs::Other,
+            )
+        };
+        let err = other(&Choices::default(), &[]).unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::UnsupportedCompiler { name, source } if name == "gcc" && source == "automatic selection"),
+            "{err:?}"
+        );
+        let err = other(&asking("msvc"), &[]).unwrap_err();
+        assert!(matches!(err, ToolchainError::NoVisualStudio), "{err:?}");
+        let llvm = [tool(
+            Tool::Clang,
+            "clang",
+            ran(v(22, 1, 8), false, Some("x86_64-pc-linux-gnu")),
+        )];
+        let selected = other(&asking("clang"), &llvm).unwrap();
+        assert_eq!((selected.version, selected.msvc), (v(22, 1, 8), None));
+    }
+
     /// Mutation: compare every component instead of only those written, or
-    /// treat `>` as `>=`; this test fails.
+    /// treat `>` as `>=` or `=` as `>=`; this test fails.
     #[test]
     fn requirements_compare_only_the_components_written() {
         let req = |text| VersionReq::parse("msvc", text).unwrap();
         assert!(req("=19.40").matches(&v(19, 40, 33811)));
+        assert!(!req("=19.40").matches(&v(19, 41, 0)));
+        assert!(!req("=19.40").matches(&v(19, 39, 9)));
         assert!(req(">=17").matches(&v(17, 0, 6)));
         assert!(!req("<19").matches(&v(19, 1, 0)));
         assert!(!req(">19.40").matches(&v(19, 40, 9)));
         assert!(req(">19.40").matches(&v(19, 41, 0)));
         assert!(req("<= 19.40, >=19.29").matches(&v(19, 40, 99)));
-        for bad in ["19", "~19", ">=", ">=a.b", ">=1.2.3.4"] {
+        assert_eq!(req(">=17, <19").to_string(), ">=17, <19");
+        for bad in ["19", "~19", ">=", ">=a.b", ">=1.2.3.4", ">=17,", ""] {
             assert!(
                 matches!(
                     VersionReq::parse("msvc", bad),
@@ -809,18 +1013,44 @@ mod tests {
         }
     }
 
-    struct Answers(bool, &'static str, std::cell::RefCell<Vec<String>>);
+    /// A runner that answers the probe and records the arguments.
+    struct Answers {
+        ok: bool,
+        stdout: &'static str,
+        stderr: &'static str,
+        args: RefCell<Vec<String>>,
+        calls: RefCell<u32>,
+    }
+
+    fn answers(ok: bool, stdout: &'static str, stderr: &'static str) -> Answers {
+        Answers {
+            ok,
+            stdout,
+            stderr,
+            args: Default::default(),
+            calls: Default::default(),
+        }
+    }
+
     impl Runner for Answers {
         fn run(&self, _p: &Path, args: &[&OsStr], _e: &Env) -> std::io::Result<Output> {
-            *self.2.borrow_mut() = args
+            *self.calls.borrow_mut() += 1;
+            *self.args.borrow_mut() = args
                 .iter()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect();
             Ok(Output {
-                success: self.0,
-                stdout: self.1.as_bytes().to_vec(),
-                stderr: Vec::new(),
+                success: self.ok,
+                stdout: self.stdout.as_bytes().to_vec(),
+                stderr: self.stderr.as_bytes().to_vec(),
             })
+        }
+    }
+
+    struct CannotStart;
+    impl Runner for CannotStart {
+        fn run(&self, _p: &Path, _a: &[&OsStr], _e: &Env) -> std::io::Result<Output> {
+            Err(std::io::Error::other("cannot start"))
         }
     }
 
@@ -829,106 +1059,120 @@ mod tests {
             kind,
             executable: "clang".into(),
             version: v(20, 1, 8),
-            msvc: Some(toolset(v(19, 52, 1))),
+            msvc: Some(install("VS", &[v(19, 52, 1)]).toolsets.remove(0)),
             source: Source::CommandLine,
         }
     }
 
-    /// Mutation: treat a failed probe as passing, lose the version the
-    /// library asks for, or call any failure STL1000; this test fails.
+    /// Mutation: treat a failed probe as passing, call any failure STL1000,
+    /// read only stdout, lose the version the library asks for, the
+    /// compiler, its version or the library's message, keep the probe file,
+    /// or swallow why it could not run; this test fails.
     #[test]
     fn the_probe_verdict_follows_the_standard_library() {
         let root = tempfile::tempdir().unwrap();
         let inputs = ProbeInputs {
             scratch: root.path(),
-            include_dirs: &[],
-            defines: &[],
+            flags: &[],
         };
+        let clang = selected(CompilerKind::Clang);
         let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer.\n";
-        let run = Answers(false, stl, Default::default());
+        let err = check(&clang, &Env::default(), inputs, &answers(false, "", stl)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "clang 20.1.8 is not accepted by the MSVC standard library in use (STL1000)"
+        );
+        let ToolchainError::RejectedByStl {
+            needed, message, ..
+        } = &err
+        else {
+            panic!("{err:?}");
+        };
+        assert_eq!(
+            (needed.as_deref(), message.as_str()),
+            (Some("22"), stl.trim())
+        );
+
         let err = check(
-            &selected(CompilerKind::Clang),
+            &clang,
             &Env::default(),
             inputs,
-            &run,
+            &answers(false, "fatal error: 'yvals_core.h' file not found", ""),
         )
         .unwrap_err();
         assert!(
-            matches!(&err, ToolchainError::RejectedByStl { needed: Some(n), .. } if n == "22"),
+            matches!(&err, ToolchainError::ProbeFailed { compiler: "clang", output } if output == "fatal error: 'yvals_core.h' file not found"),
             "{err:?}"
         );
-        let other = Answers(
-            false,
-            "fatal error: 'yvals_core.h' file not found",
-            Default::default(),
+        let err = check(&clang, &Env::default(), inputs, &CannotStart).unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::ProbeFailed { output, .. } if output == "cannot start"),
+            "{err:?}"
         );
-        let err = check(
-            &selected(CompilerKind::Clang),
-            &Env::default(),
-            inputs,
-            &other,
-        )
-        .unwrap_err();
-        assert!(matches!(err, ToolchainError::ProbeFailed { .. }), "{err:?}");
-        let ok = Answers(true, "", Default::default());
-        check(&selected(CompilerKind::Clang), &Env::default(), inputs, &ok).unwrap();
+        check(&clang, &Env::default(), inputs, &answers(true, "", "")).unwrap();
+        assert_eq!(
+            std::fs::read_dir(root.path()).unwrap().count(),
+            0,
+            "probe file left behind"
+        );
+
         assert_eq!(
             needed_clang("expected Clang 17.0.0 or newer."),
             Some("17.0.0".into())
         );
+        assert_eq!(needed_clang("expected Clang  or newer."), None);
         assert_eq!(needed_clang("STL1000: Unexpected compiler version"), None);
     }
 
-    /// Mutation: probe as C, without the target, or without the project's
-    /// defines and include directories, or with the other driver's flags;
-    /// this test fails.
+    /// Mutation: probe as C, without the target, without the build's flags
+    /// or with the other driver's mode, probe MSVC or a Clang without an
+    /// MSVC toolset, or name every probe file alike; this test fails.
     #[test]
-    fn the_probe_compiles_as_cpp_under_the_builds_conditions() {
+    fn the_probe_compiles_as_cpp_under_the_builds_flags() {
         let root = tempfile::tempdir().unwrap();
-        let include_dirs = [PathBuf::from("inc")];
-        let defines = ["_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH".to_owned()];
+        let flags: Vec<OsString> = vec!["-fno-rtti".into(), "-D_HAS_STATIC_RTTI=0".into()];
         let inputs = ProbeInputs {
             scratch: root.path(),
-            include_dirs: &include_dirs,
-            defines: &defines,
+            flags: &flags,
         };
-        let probe = root
-            .path()
-            .join("cuno-stl-probe.cpp")
-            .to_string_lossy()
-            .into_owned();
-        for (kind, expected) in [
-            (
-                CompilerKind::Clang,
-                vec![
-                    "-x",
-                    "c++",
-                    "-fsyntax-only",
-                    "--target=x86_64-pc-windows-msvc",
-                    "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
-                    "-Iinc",
-                    &probe,
-                ],
-            ),
-            (
-                CompilerKind::ClangCl,
-                vec![
-                    "/nologo",
-                    "/TP",
-                    "/Zs",
-                    "--target=x86_64-pc-windows-msvc",
-                    "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
-                    "/Iinc",
-                    &probe,
-                ],
-            ),
+        let mut probes = Vec::new();
+        for (kind, mode) in [
+            (CompilerKind::Clang, ["-x", "c++", "-fsyntax-only"]),
+            (CompilerKind::ClangCl, ["/nologo", "/TP", "/Zs"]),
         ] {
-            let run = Answers(true, "", Default::default());
+            let run = answers(true, "", "");
             check(&selected(kind), &Env::default(), inputs, &run).unwrap();
-            assert_eq!(*run.2.borrow(), expected, "{kind:?}");
+            let args = run.args.borrow().clone();
+            let (probe, rest) = args.split_last().unwrap();
+            assert_eq!(
+                rest,
+                [
+                    &mode[..],
+                    &[
+                        "--target=x86_64-pc-windows-msvc",
+                        "-fno-rtti",
+                        "-D_HAS_STATIC_RTTI=0"
+                    ]
+                ]
+                .concat(),
+                "{kind:?}"
+            );
+            assert!(probe.ends_with(".cpp"), "{probe}");
+            probes.push(probe.clone());
         }
-        // MSVC is its own standard library's compiler: nothing to ask.
-        let run = Answers(false, "STL1000:", Default::default());
-        check(&selected(CompilerKind::Msvc), &Env::default(), inputs, &run).unwrap();
+        assert_ne!(probes[0], probes[1]);
+
+        let never = answers(false, "STL1000:", "");
+        check(
+            &selected(CompilerKind::Msvc),
+            &Env::default(),
+            inputs,
+            &never,
+        )
+        .unwrap();
+        let mut elsewhere = selected(CompilerKind::Clang);
+        elsewhere.msvc = None;
+        check(&elsewhere, &Env::default(), inputs, &never).unwrap();
+        assert_eq!(*never.calls.borrow(), 0);
     }
 }

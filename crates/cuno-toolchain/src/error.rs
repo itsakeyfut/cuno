@@ -54,6 +54,14 @@ pub enum ToolchainError {
         /// The compiler (`clang`).
         compiler: &'static str,
     },
+    /// Copies were found, but none is eligible (a preview, a MinGW build, one
+    /// that does not run).
+    NoUsableCompiler {
+        /// The compiler.
+        compiler: &'static str,
+        /// Each copy found, with why it was left out.
+        excluded: Vec<String>,
+    },
     /// Copies were found, but none satisfies the requirements.
     NoMatchingVersion {
         /// The compiler.
@@ -136,6 +144,11 @@ impl fmt::Display for ToolchainError {
                 write!(f, "{name} is not supported yet (chosen by {source})")
             }
             ToolchainError::CompilerNotFound { compiler } => write!(f, "no {compiler} was found"),
+            ToolchainError::NoUsableCompiler { compiler, excluded } => write!(
+                f,
+                "no usable {compiler} was found; left out: {}",
+                excluded.join("; ")
+            ),
             ToolchainError::NoMatchingVersion {
                 compiler,
                 requirements,
@@ -193,6 +206,9 @@ impl CunoError for ToolchainError {
             }
             ToolchainError::CompilerNotFound { compiler } => Some(format!(
                 "install LLVM (https://github.com/llvm/llvm-project/releases), or write where {compiler} is in [toolchain.paths] {compiler}"
+            )),
+            ToolchainError::NoUsableCompiler { compiler, .. } => Some(format!(
+                "install a release of LLVM for Windows (https://github.com/llvm/llvm-project/releases), or write where a usable {compiler} is in [toolchain.paths] {compiler}"
             )),
             ToolchainError::NoMatchingVersion { compiler, .. } => Some(format!(
                 "install a {compiler} that satisfies it, or change [toolchain.version] {compiler}"
@@ -259,6 +275,10 @@ mod tests {
                 source: "x".into(),
             },
             ToolchainError::CompilerNotFound { compiler: "x" },
+            ToolchainError::NoUsableCompiler {
+                compiler: "x",
+                excluded: vec![],
+            },
             ToolchainError::NoMatchingVersion {
                 compiler: "x",
                 requirements: vec![],
@@ -384,6 +404,50 @@ mod tests {
                 },
                 "(STL1000)",
                 "STL1000: odd wording",
+            ),
+            (
+                ToolchainError::UnknownCompiler {
+                    name: "nope".into(),
+                    source: "--compiler".into(),
+                },
+                "--compiler names `nope`, which is not a compiler cuno knows",
+                "msvc, clang or clang-cl",
+            ),
+            (
+                ToolchainError::CompilerNotFound { compiler: "clang" },
+                "no clang was found",
+                "[toolchain.paths] clang",
+            ),
+            (
+                ToolchainError::NoUsableCompiler {
+                    compiler: "clang",
+                    excluded: vec!["a (x)".into(), "b (y)".into()],
+                },
+                "no usable clang was found; left out: a (x); b (y)",
+                "release of LLVM",
+            ),
+            (
+                ToolchainError::InvalidVersionRequirement {
+                    compiler: "clang".into(),
+                    text: "~17".into(),
+                },
+                "[toolchain.version] clang = \"~17\" is not a version requirement",
+                "\">=19.29, <19.50\"",
+            ),
+            (
+                ToolchainError::VisualStudioNotAt {
+                    path: "Z:/VS".into(),
+                },
+                "[toolchain.paths] msvc is Z:/VS, but no Visual Studio",
+                "correct [toolchain.paths] msvc",
+            ),
+            (
+                ToolchainError::ProbeFailed {
+                    compiler: "clang-cl",
+                    output: "fatal error: x".into(),
+                },
+                "whether clang-cl works with the MSVC standard library:\nfatal error: x",
+                "cuno doctor",
             ),
         ];
         for (error, in_message, in_help) in cases {
