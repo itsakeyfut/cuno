@@ -19,7 +19,7 @@ fn resolved() -> Option<(PathBuf, msvc::MsvcToolset, MsvcEnvironment)> {
     let reference = require(Compiler::Msvc, Language::C, "x.c", "x.exe")?;
     let reference_cl = PathBuf::from(reference.get_program());
     let env = Env::from_process();
-    let installs = msvc::find_installations(&env, &cuno_toolchain::SystemRunner).unwrap();
+    let installs = msvc::find_installations(&env, &cuno_toolchain::SystemRunner::new()).unwrap();
     let (install, toolset) = installs
         .iter()
         .flat_map(|i| i.toolsets.iter().map(move |t| (i, t)))

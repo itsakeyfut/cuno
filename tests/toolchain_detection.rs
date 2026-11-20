@@ -24,8 +24,9 @@ fn finds_the_visual_studio_the_reference_uses() {
     let reference_version = banner_version(&reference_cl);
 
     let env = cuno_core::Env::from_process();
-    let found = cuno_toolchain::msvc::find_installations(&env, &cuno_toolchain::SystemRunner)
-        .expect("cuno should find Visual Studio where the reference does");
+    let found =
+        cuno_toolchain::msvc::find_installations(&env, &cuno_toolchain::SystemRunner::new())
+            .expect("cuno should find Visual Studio where the reference does");
 
     let toolset = found
         .iter()
@@ -103,7 +104,7 @@ fn finds_the_clang_the_reference_uses() {
         cuno_toolchain::HostOs::current(),
         &cuno_toolchain::llvm::ExplicitPaths::default(),
         &[],
-        &cuno_toolchain::SystemRunner,
+        &cuno_toolchain::SystemRunner::new(),
     )
     .expect("finding LLVM tools should not fail without configured paths");
     let first_clang = found
