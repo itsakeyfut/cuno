@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 69c19d3e3ce6100699384356c68aa14c04226b41 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob d8a6f84d2c2f29bd96b8b63bdf9cbcbc76e49438 -->
 
 # Internal Structure of cuno Itself
 
@@ -9,7 +9,7 @@ A Rust workspace, with crates split by role.
 | Crate | Role | Timeline |
 |---|---|---|
 | `cuno` | CLI. Interprets commands and calls each crate. The main body of the single binary | MVP |
-| `cuno-core` | Only the three things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), and resolving the cuno home | MVP |
+| `cuno-core` | Only the four things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), resolving the cuno home, and the list of environment variables | MVP |
 | `cuno-manifest` | Loading and validating `cuno.toml` / `config.toml` ([manifest.md](manifest.md)) | MVP |
 | `cuno-toolchain` | Compiler abstraction (interface), detection, per-compiler implementations, flag translation ([toolchain.md](toolchain.md)) | MVP |
 | `cuno-build` | Building and executing the build graph, change detection, outputting compile_commands.json ([build.md](build.md)) | MVP |
@@ -24,14 +24,16 @@ A Rust workspace, with crates split by role.
 
 ### What goes in `cuno-core`
 
-Only the following three. To add anything else, change this specification first.
+Only the following four. To add anything else, change this specification first.
 
 | Item | Contents |
 |---|---|
 | Error classification | The classification of exit codes (1: a problem with the user's code or build artifacts, 2: incorrect usage, 3: a configuration or environment problem, 101: an internal cuno error; [commands.md](commands.md#exit-codes)), and a common trait that every crate's error type implements (returning the classification and an optional `help:`). Displaying the error and exiting is done in one place, in the cuno binary |
 | Output | Cargo-style progress lines (`Compiling` / `Finished` / `Running`), warnings and errors, color and verbosity (`[term]`, `NO_COLOR`). Crates do not print directly; they write through this |
 | cuno home | Deciding where the cuno home is (as in [distribution.md](distribution.md#cuno-home-directory)) |
+| List of environment variables | The type through which the environment variables the cuno binary collected are passed to libraries as a value. On Windows, names are looked up without distinguishing upper and lower case |
 
+- Reason for the list of environment variables: compiler detection, cuno home resolution and reading the configuration all need environment variables, and libraries receive them as values ([Dependencies between crates](#dependencies-between-crates)). It keeps the case-insensitive lookup on Windows from being written again in each crate.
 - Rationale: library crates cannot depend on the cuno binary. Without a shared place, either each crate decides exit codes and display on its own, or the binary must know every crate's errors and map them to exit codes. In the latter case, an error whose mapping was forgotten silently becomes exit code 1.
 
 ## Dependencies between crates
@@ -69,7 +71,7 @@ A rule used by several commands is held in one place, by the crate below. Each c
 | Rule | Owner |
 |---|---|
 | Interpreting command-line arguments, calling each part, displaying errors and deciding the exit code | `cuno` (using `cuno-core`'s classification) |
-| Error classification, output, cuno home | `cuno-core` |
+| Error classification, output, cuno home, list of environment variables | `cuno-core` |
 | Finding the project, resolving paths the user wrote (in configuration files and command-line arguments), reading and validating `cuno.toml` and the configuration files, the precedence of each value, layering the settings for the selected compiler, target and profile | `cuno-manifest` |
 | Kinds of compiler, detection, selection precedence, environment resolution on Windows, version conditions, flag translation, how the target and the host are represented | `cuno-toolchain` |
 | Classifying sources (entry files, package body, tests), the output paths cuno decides, the build graph, building tests, compile_commands.json, bundled headers | `cuno-build` |
