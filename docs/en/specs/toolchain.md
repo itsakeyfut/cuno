@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 2ecadd6bf37ef0baf9bbe5b7e97e080e013fe1ec -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 638d1993525a3a69e268dacc6ebc2d1afd42aa18 -->
 
 # Toolchain
 
@@ -102,17 +102,21 @@ A compiler must accept a C++20 specification.
 
 - **cuno builds the environment from the toolset and Windows SDK directories.** `vcvars64.bat` is not run.
   - Rationale: running `vcvars64.bat` takes about 1.75 seconds each time, and its output is in the console code page (CP932 on Japanese Windows), which silently breaks Japanese paths unless decoded correctly. Building it takes around 10 milliseconds and has no encoding problem. The directory layout has not changed since Visual Studio 2017, and cuno's tests compare the result with `vcvars64.bat`'s, so a change of layout is caught on CI.
-- Where the Windows SDK is: `KitsRoot10` under `HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` in the registry; otherwise `%ProgramFiles(x86)%\Windows Kits\10`.
-- Which Windows SDK version: the newest `Include\<version>` that has `um\windows.h` and a matching `Lib\<version>\um\x64` (versions are compared as numbers).
+- Where the Windows SDK is: `KitsRoot10` under `HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` in the registry, then `%ProgramFiles(x86)%\Windows Kits\10`, in that order; the first that holds a usable version is used (the registry value can be stale, with no SDK left there). A location that is not an absolute path is not searched.
+- Which Windows SDK version: the newest `Include\<version>` for which `um\windows.h`, `ucrt\stdio.h`, `Lib\<version>\um\x64` and `Lib\<version>\ucrt\x64` all exist (versions are compared as numbers, and a directory whose name is not numeric is not a version). Choosing a partly installed version would fail later with headers or libraries not found.
 - The values built (`<MSVC>` is the MSVC toolset directory, `<SDK>` the SDK location, `<version>` the SDK version):
 
   | Variable | Value |
   |---|---|
-  | `INCLUDE` | `<MSVC>\include`, and `ucrt` / `um` / `shared` / `winrt` / `cppwinrt` under `<SDK>\Include\<version>\` |
+  | `INCLUDE` | `<MSVC>\include`, Visual Studio's `VC\Auxiliary\VS\include` (if present), and `ucrt` / `um` / `shared` / `winrt` / `cppwinrt` under `<SDK>\Include\<version>\` |
   | `LIB` | `<MSVC>\lib\x64`, `<SDK>\Lib\<version>\ucrt\x64`, `<SDK>\Lib\<version>\um\x64` |
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH` (prepended) | `<MSVC>\bin\Hostx64\x64`, `<SDK>\bin\<version>\x64` |
 
+- **Developer Command Prompt variables are removed**: `VSINSTALLDIR`, `VCINSTALLDIR`, `VCToolsInstallDir`, `EXTERNAL_INCLUDE`, `WindowsSdkDir`, `WindowsSDKVersion`, `UniversalCRTSdkDir`, `UCRTVersion`. clang / clang-cl look for the toolset and linker through them, so running cuno from another Visual Studio's Developer Command Prompt would succeed with a toolset other than the one cuno chose.
+- Of what `vcvars64.bat` sets, the following is not set (using it fails with an error):
+  - The headers and libraries of the .NET Framework SDK (`NETFXSDK`), such as `metahost.h` and `mscoree.lib`.
+  - The `LIBPATH` entries for C++/CLI (`/clr`) and C++/CX (`/ZW`).
 - If no Windows SDK is found, it is an error (exit code 3) with guidance on installing the Windows SDK of Build Tools.
 
 ### Clang on Windows runs in MSVC-compatible mode
