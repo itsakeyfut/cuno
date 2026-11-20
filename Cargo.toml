@@ -14,6 +14,9 @@ publish.workspace = true
 [dependencies]
 clap.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
 
@@ -38,6 +41,8 @@ publish = false
 [workspace.dependencies]
 # See docs/en/specs/architecture.md, "Main external libraries".
 clap = { version = "4.6.9", features = ["derive"] }
+# Temporary project directories in tests (tests/support).
+tempfile = "3.27"
 
 [workspace.lints.rust]
 # `deny` rather than `forbid`: a small Windows integration module may need an
