@@ -1,0 +1,47 @@
+# Installs a pinned LLVM release and points the compiler tests at it through
+# CUNO_TEST_LLVM_BIN (see tests/support/compilers.rs).
+#
+# The runner image's own LLVM changes with the image, and an image whose MSVC
+# standard library requires a newer Clang than the preinstalled one fails the
+# C++ tests (error STL1000). Pinning LLVM here makes the clang under test change
+# only when this file does.
+#
+# To upgrade: change `version` and `sha256` together. The hash is the asset's
+# `digest` on the GitHub release:
+#   gh api repos/llvm/llvm-project/releases/tags/llvmorg-<version> \
+#     -q '.assets[] | select(.name=="LLVM-<version>-win64.exe") | .digest'
+name: Pinned LLVM
+description: Install a pinned LLVM release for the compiler tests.
+inputs:
+  version:
+    description: LLVM release to install.
+    default: "22.1.8"
+  sha256:
+    description: SHA-256 of LLVM-<version>-win64.exe.
+    default: "16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c"
+runs:
+  using: composite
+  steps:
+    # PowerShell rather than bash: Git Bash would rewrite the installer's
+    # `/S` and `/D=` switches into paths.
+    - shell: pwsh
+      env:
+        LLVM_VERSION: ${{ inputs.version }}
+        LLVM_SHA256: ${{ inputs.sha256 }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $name = "LLVM-$env:LLVM_VERSION-win64.exe"
+        $installer = Join-Path $env:RUNNER_TEMP $name
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$name"
+        Invoke-WebRequest -Uri $url -OutFile $installer
+        $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+        if ($actual -ne $env:LLVM_SHA256) {
+          throw "$name has SHA-256 $actual, expected $env:LLVM_SHA256"
+        }
+        $dir = Join-Path $env:RUNNER_TEMP "llvm-$env:LLVM_VERSION"
+        # /D= must come last and must not be quoted (NSIS).
+        $p = Start-Process -FilePath $installer -ArgumentList "/S", "/D=$dir" -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "$name exited with $($p.ExitCode)" }
+        $bin = Join-Path $dir "bin"
+        & (Join-Path $bin "clang.exe") --version
+        "CUNO_TEST_LLVM_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
