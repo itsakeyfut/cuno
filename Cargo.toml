@@ -16,6 +16,7 @@ clap.workspace = true
 cuno-core.workspace = true
 
 [dev-dependencies]
+cuno-toolchain.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
@@ -45,9 +46,10 @@ publish = false
 
 [workspace.dependencies]
 cuno-core = { path = "crates/cuno-core" }
+cuno-toolchain = { path = "crates/cuno-toolchain" }
 # See docs/en/specs/architecture.md, "Main external libraries".
 clap = { version = "4.6.9", features = ["derive"] }
-# Reading `cargo metadata` in tests (tests/architecture.rs).
+# Reading JSON: vswhere output (cuno-toolchain) and `cargo metadata` in tests.
 serde_json = "1.0.154"
 # Temporary project directories in tests (tests/support).
 tempfile = "3.27"

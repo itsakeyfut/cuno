@@ -116,6 +116,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "cuno-core",
+ "cuno-toolchain",
  "serde_json",
  "tempfile",
 ]
@@ -139,6 +140,11 @@ version = "0.0.0"
 [[package]]
 name = "cuno-toolchain"
 version = "0.0.0"
+dependencies = [
+ "cuno-core",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "cuno-tools"

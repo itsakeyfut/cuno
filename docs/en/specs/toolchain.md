@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 42221d37701a115f9a49bb22cc09222caf0a58c8 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob a549ce2d597d8b0de75ac289c514ed92aac1fa80 -->
 
 # Toolchain
 
@@ -114,6 +114,17 @@ A compiler must accept a C++20 specification.
 
 - Searches PATH, Visual Studio installation locations (vswhere), LLVM's standard installation location, and environment variables.
 - `cuno toolchain list` lists the detected compilers.
+
+### Visual Studio / Build Tools
+
+- **Found through vswhere only.** `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` is run with `-all -products * -prerelease -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -utf8 -format json`, which gives every installation that contains the C++ x64 tools.
+  - Rationale: vswhere always comes with Visual Studio 2017 and later and with Build Tools, and is the one way that knows the installations correctly. `-utf8 -format json` makes the output readable regardless of the console code page (CP932 on Japanese Windows).
+- An installation's MSVC toolsets are the directories `VC\Tools\MSVC\<version>` that contain `bin\Hostx64\x64\cl.exe`. The default toolset is the version written in `VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt`.
+- **The cl.exe version is read from the first `<n>.<n>.<n>` in what cl.exe prints when run with no arguments.** The digits are the same whatever the display language (including the Japanese edition of Visual Studio). The toolset directory name (e.g. `14.52.37025`) does not match the cl.exe version (e.g. `19.52.37029`), so it is not used.
+  - The environment variables `CL` / `_CL_` are not passed to it then. cl.exe reads options from them, and a user's `CL=/nologo` would stop the banner from being printed.
+  - A toolset whose cl.exe does not tell its version is left out as unusable, and detecting the other toolsets continues. If no usable toolset remains, it is an error.
+- Preview installations and incomplete installations (those vswhere does not report as complete and launchable: an error in setup, or a reboot pending) are detected too (so `cuno doctor` can show them). Whether to choose one is decided by "Selection", which chooses neither. When vswhere does not report this information, the installation is treated as a preview and incomplete.
+- If there is no installation with the C++ x64 tools, or no vswhere, it is an error (exit code 3) with guidance on installing the "Desktop development with C++" workload of Build Tools.
 
 ## Selection
 

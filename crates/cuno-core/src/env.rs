@@ -19,8 +19,9 @@ pub enum NameCase {
 #[derive(Clone, Debug)]
 pub struct Env {
     case: NameCase,
-    /// Keyed by the name as compared (see `key`).
-    vars: BTreeMap<OsString, OsString>,
+    /// Keyed by the name as compared (see `key`); the value keeps the name
+    /// as it was spelled, for passing the environment on to a child process.
+    vars: BTreeMap<OsString, (OsString, OsString)>,
 }
 
 impl Default for Env {
@@ -59,7 +60,7 @@ impl Env {
     ) -> Env {
         let vars = pairs
             .into_iter()
-            .map(|(name, value)| (key(&name, case), value))
+            .map(|(name, value)| (key(&name, case), (name, value)))
             .collect();
         Env { case, vars }
     }
@@ -68,7 +69,25 @@ impl Env {
     pub fn get(&self, name: &str) -> Option<&OsStr> {
         self.vars
             .get(&key(OsStr::new(name), self.case))
-            .map(OsString::as_os_str)
+            .map(|(_, value)| value.as_os_str())
+    }
+
+    /// Every variable, as (name as spelled, value), for giving a child
+    /// process exactly this environment.
+    pub fn vars(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
+        self.vars
+            .values()
+            .map(|(name, value)| (name.as_os_str(), value.as_os_str()))
+    }
+
+    /// This environment without the variables named in `names`, compared as
+    /// this environment compares names.
+    pub fn without(&self, names: &[&str]) -> Env {
+        let mut env = self.clone();
+        for name in names {
+            env.vars.remove(&key(OsStr::new(name), self.case));
+        }
+        env
     }
 }
 
@@ -120,6 +139,20 @@ mod tests {
         let e = env(&[("STRAßE", "1")], NameCase::Insensitive);
         assert_eq!(e.get("straße"), Some(OsStr::new("1")));
         assert_eq!(e.get("STRASSE"), None);
+    }
+
+    /// Mutation: make `without` compare names case-sensitively, or make `vars`
+    /// return the folded key instead of the spelling; this test fails.
+    #[test]
+    fn without_removes_by_name_and_vars_keeps_the_spelling() {
+        let e = env(
+            &[("Path", "C:\\bin"), ("cl", "/nologo")],
+            NameCase::Insensitive,
+        );
+        let rest = e.without(&["CL"]);
+        assert_eq!(rest.get("cl"), None);
+        let vars: Vec<_> = rest.vars().collect();
+        assert_eq!(vars, [(OsStr::new("Path"), OsStr::new("C:\\bin"))]);
     }
 
     /// Mutation: keep the first of two pairs with the same name; this test
