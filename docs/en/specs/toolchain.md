@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 7325cd3b4d1f7fad30f2b661c54cdf254d494c98 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 2ecadd6bf37ef0baf9bbe5b7e97e080e013fe1ec -->
 
 # Toolchain
 
@@ -98,6 +98,23 @@ A compiler must accept a C++20 specification.
 - **The same resolution also applies to Clang (`clang` / `clang-cl`)**, because Clang on Windows also uses the MSVC headers, libraries, and Windows SDK.
 - If Visual Studio / Build Tools is not found, it is an error even if Clang is selected, and cuno shows the same guidance as `cuno doctor`.
 
+### How it is resolved
+
+- **cuno builds the environment from the toolset and Windows SDK directories.** `vcvars64.bat` is not run.
+  - Rationale: running `vcvars64.bat` takes about 1.75 seconds each time, and its output is in the console code page (CP932 on Japanese Windows), which silently breaks Japanese paths unless decoded correctly. Building it takes around 10 milliseconds and has no encoding problem. The directory layout has not changed since Visual Studio 2017, and cuno's tests compare the result with `vcvars64.bat`'s, so a change of layout is caught on CI.
+- Where the Windows SDK is: `KitsRoot10` under `HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` in the registry; otherwise `%ProgramFiles(x86)%\Windows Kits\10`.
+- Which Windows SDK version: the newest `Include\<version>` that has `um\windows.h` and a matching `Lib\<version>\um\x64` (versions are compared as numbers).
+- The values built (`<MSVC>` is the MSVC toolset directory, `<SDK>` the SDK location, `<version>` the SDK version):
+
+  | Variable | Value |
+  |---|---|
+  | `INCLUDE` | `<MSVC>\include`, and `ucrt` / `um` / `shared` / `winrt` / `cppwinrt` under `<SDK>\Include\<version>\` |
+  | `LIB` | `<MSVC>\lib\x64`, `<SDK>\Lib\<version>\ucrt\x64`, `<SDK>\Lib\<version>\um\x64` |
+  | `LIBPATH` | `<MSVC>\lib\x64` |
+  | `PATH` (prepended) | `<MSVC>\bin\Hostx64\x64`, `<SDK>\bin\<version>\x64` |
+
+- If no Windows SDK is found, it is an error (exit code 3) with guidance on installing the Windows SDK of Build Tools.
+
 ### Clang on Windows runs in MSVC-compatible mode
 
 - For both `clang` / `clang-cl`, the target is `x86_64-pc-windows-msvc` (same ABI as MSVC). Libraries built with MSVC can be mixed and linked.
@@ -187,6 +204,5 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 
 ## Open questions
 
-- Concrete method for resolving the MSVC environment (use of vswhere, etc.)
 - The search order for detecting other compilers such as GCC (Visual Studio and LLVM are settled above)
 - List of supported targets, and how to detect each target's tools

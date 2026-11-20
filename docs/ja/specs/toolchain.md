@@ -96,6 +96,23 @@ C++20 の指定を受け付けるものとする。
 - **Clang（`clang` / `clang-cl`）にも同じ解決を適用する**。Windows の Clang も MSVC のヘッダ・ライブラリ・Windows SDK を使うため。
 - Visual Studio / Build Tools が見つからない場合は、Clang を選んでいてもエラーにし、`cuno doctor` と同じ案内を出す。
 
+### 解決の方法
+
+- **環境は、ツールセットと Windows SDK のディレクトリから cuno が組み立てる。** `vcvars64.bat` は実行しない。
+  - 理由: `vcvars64.bat` の実行は 1 回あたり約 1.75 秒かかり、その出力はコンソールのコードページ（日本語版 Windows では CP932）で、正しく復号しないと日本語のパスで黙って壊れる。組み立ては 10 ミリ秒程度で、文字コードの問題がない。ディレクトリの構成は Visual Studio 2017 から変わっておらず、cuno のテストが `vcvars64.bat` の結果と照合して、構成の変化を CI で検出する。
+- Windows SDK の場所: レジストリの `HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` の `KitsRoot10`。なければ `%ProgramFiles(x86)%\Windows Kits\10`。
+- Windows SDK の版: `Include\<バージョン>` のうち `um\windows.h` があり、対応する `Lib\<バージョン>\um\x64` もあるものの最新（版は数値として比べる）。
+- 組み立てる値（`<MSVC>` は MSVC のツールセットのディレクトリ、`<SDK>` は SDK の場所、`<バージョン>` は SDK の版）:
+
+  | 変数 | 値 |
+  |---|---|
+  | `INCLUDE` | `<MSVC>\include`、`<SDK>\Include\<バージョン>\` の `ucrt` / `um` / `shared` / `winrt` / `cppwinrt` |
+  | `LIB` | `<MSVC>\lib\x64`、`<SDK>\Lib\<バージョン>\ucrt\x64`、`<SDK>\Lib\<バージョン>\um\x64` |
+  | `LIBPATH` | `<MSVC>\lib\x64` |
+  | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
+
+- Windows SDK が見つからない場合はエラー（終了コード 3）にし、Build Tools の Windows SDK の入れ方を案内する。
+
 ### Windows の Clang は MSVC 互換で動かす
 
 - `clang` / `clang-cl` とも、ビルド対象は `x86_64-pc-windows-msvc`（MSVC と同じ ABI）。MSVC でビルドしたライブラリと混ぜてリンクできる。
@@ -185,6 +202,5 @@ C++20 の指定を受け付けるものとする。
 
 ## 未決
 
-- MSVC 環境の具体的な解決方法（vswhere の利用など）
 - GCC など、ほかのコンパイラの検出の探索順序（Visual Studio と LLVM は上で決めた）
 - 対応するビルド対象環境の一覧と、各環境のツールの検出方法
