@@ -52,7 +52,7 @@ The Japanese documents are the source of truth. The English version is a transla
 
 Licensed under either of
 
-- Apache License, Version 2.0
-- MIT License
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
