@@ -7,9 +7,9 @@ body:
     attributes:
       value: |
         Issues are filed a milestone at a time, as one coherent batch taken from
-        the roadmap (`docs/ja/roadmap.md`, English translation in
-        `docs/en/roadmap.md`). More get filed as implementing the milestone turns
-        up work that was not foreseen. Milestones are worked strictly in order.
+        the roadmap (`docs/en/roadmap.md`). More get filed as implementing the
+        milestone turns up work that was not foreseen. Milestones are worked
+        strictly in order.
 
         That is what keeps an issue from becoming a second, drifting copy of the
         roadmap: the batch's lifetime is the milestone's. A backlog with no such
@@ -80,7 +80,7 @@ body:
       label: What to build
       description: >
         The shape of it. Which crate and files, which existing pattern to
-        follow, and which section of the spec (`docs/ja/specs/`) it implements.
+        follow, and which section of the spec (`docs/en/specs/`) it implements.
     validations:
       required: true
 
