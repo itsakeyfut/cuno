@@ -13,8 +13,21 @@ cuno test
 cuno run
 ```
 
-> **Status:** Specification phase. Nothing is implemented yet.
-> The first milestone (MVP) targets Windows 11 with MSVC and Clang / clang-cl.
+## Concept
+
+- **Cargo as the model**
+  - Commands, configuration, and output follow Cargo.
+  - If you have used Cargo, you already know your way around.
+  - cuno departs from Cargo only where C/C++ needs something different.
+- **One config file, zero setup**
+  - Everything lives in `cuno.toml`.
+  - A project created with `cuno new` builds without writing a single line of config.
+  - Directory layout and coding rules are never forced on you.
+- **Every major compiler, on equal terms**
+  - GCC, Clang, and MSVC are all first-class. Windows is not an afterthought.
+  - Settings like `warnings-as-errors = true` become each compiler's own flags.
+
+See [docs/en/concept.md](docs/en/concept.md) for the full concept and design principles.
 
 ## Why
 
