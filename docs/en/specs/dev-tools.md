@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 4532f168252fe5d9af1af0a48a70fcb8d62ac879 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 2f5a3f98e75e2e210e98a0955537969b07066e97 -->
 
 # Development Tools
 
@@ -172,13 +172,13 @@ Example: with `warn = ["modernize-*"]` and `allow = ["modernize-use-auto"]`, onl
 |---|---|
 | No findings, or only warnings (preset checks / `warn`) | `0` |
 | There are findings for `deny` checks | `1` |
-| A compile error in clang-tidy itself (`clang-diagnostic-error`) | `1` |
+| A compile error in clang-tidy itself (`clang-diagnostic-error`; a mismatch with the standard library (STL1000) is caught by the check before analysis with exit code 3, so it does not reach here) | `1` |
 
 - Checks included in the preset are treated as **warnings** unless written in `deny`.
 
 ## Tool versions
 
-- The minimum version of clang-format / clang-tidy is **17** (same as Clang; [toolchain.md](toolchain.md)). This prevents formatting results from changing across versions and `fmt --check` results from diverging between local machines and CI.
+- The minimum version of clang-format / clang-tidy is **17**. clang-tidy reads the MSVC standard headers, so on Windows it must also, like Clang, be accepted by the MSVC standard library in use ([toolchain.md](toolchain.md#minimum-compiler-versions)). clang-format does not read the standard library, so its only condition is the fixed 17. This prevents formatting results from changing across versions and `fmt --check` results from diverging between local machines and CI.
 - Checked by `cuno doctor`.
 
 ## When a tool is not found

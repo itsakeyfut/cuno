@@ -170,13 +170,13 @@ exclude = []           # 解析しないファイル
 |---|---|
 | 指摘なし、または警告（preset のチェック・`warn`）のみ | `0` |
 | `deny` のチェックに該当する指摘がある | `1` |
-| clang-tidy 自身のコンパイルエラー（`clang-diagnostic-error`） | `1` |
+| clang-tidy 自身のコンパイルエラー（`clang-diagnostic-error`。標準ライブラリとの不一致（STL1000）は解析の前の確認で終了コード 3 になるので、ここには来ない） | `1` |
 
 - preset に含まれるチェックは、`deny` に書かない限り**警告**扱い。
 
 ## ツールのバージョン
 
-- clang-format / clang-tidy の最低バージョンは **17**（Clang と同じ。[toolchain.md](toolchain.md)）。バージョンによって整形結果が変わり、手元と CI で `fmt --check` の結果が食い違うのを防ぐため。
+- clang-format / clang-tidy の最低バージョンは **17**。clang-tidy は MSVC の標準ヘッダを読むので、Windows ではさらに Clang と同じく、使用する MSVC 標準ライブラリが受け付けることを条件とする（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。clang-format は標準ライブラリを読まないので、固定の 17 だけを条件とする。バージョンによって整形結果が変わり、手元と CI で `fmt --check` の結果が食い違うのを防ぐため。
 - `cuno doctor` で確認する。
 
 ## ツールが見つからない場合
