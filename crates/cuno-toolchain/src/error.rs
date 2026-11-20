@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use cuno_core::{CunoError, ExitClass};
 
+use crate::Version;
+
 const BUILD_TOOLS_HELP: &str = "install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/";
 
 /// A toolchain problem.
@@ -32,6 +34,64 @@ pub enum ToolchainError {
     NoWindowsSdk {
         /// The SDK directories looked in, in order.
         looked_in: Vec<PathBuf>,
+    },
+    /// A compiler name cuno does not know.
+    UnknownCompiler {
+        /// The name.
+        name: String,
+        /// Where it was given (`CUNO_COMPILER`, ...).
+        source: String,
+    },
+    /// A compiler cuno does not support yet (`gcc`, `safec`).
+    UnsupportedCompiler {
+        /// The name.
+        name: String,
+        /// Where it was chosen.
+        source: String,
+    },
+    /// No copy of the chosen compiler was found.
+    CompilerNotFound {
+        /// The compiler (`clang`).
+        compiler: &'static str,
+    },
+    /// Copies were found, but none satisfies the requirements.
+    NoMatchingVersion {
+        /// The compiler.
+        compiler: &'static str,
+        /// Each requirement, with where it comes from.
+        requirements: Vec<String>,
+        /// The versions found.
+        found: Vec<Version>,
+    },
+    /// A `[toolchain.version]` value that is not a requirement.
+    InvalidVersionRequirement {
+        /// The compiler it is for.
+        compiler: String,
+        /// The value as written.
+        text: String,
+    },
+    /// `[toolchain.paths] msvc` names a directory with no usable Visual Studio.
+    VisualStudioNotAt {
+        /// The directory.
+        path: PathBuf,
+    },
+    /// The MSVC standard library rejects this Clang (STL1000).
+    RejectedByStl {
+        /// The compiler (`clang`, `clang-cl`).
+        compiler: &'static str,
+        /// Its version.
+        version: Version,
+        /// The Clang version the library asks for, as written, if it says.
+        needed: Option<String>,
+        /// The library's message.
+        message: String,
+    },
+    /// The standard library probe failed for another reason, so no verdict.
+    ProbeFailed {
+        /// The compiler.
+        compiler: &'static str,
+        /// What it printed, or why it could not run.
+        output: String,
     },
     /// A tool path the user configured has no file.
     ConfiguredToolMissing {
@@ -66,6 +126,48 @@ impl fmt::Display for ToolchainError {
                     places.join(" or ")
                 )
             }
+            ToolchainError::UnknownCompiler { name, source } => {
+                write!(
+                    f,
+                    "{source} names `{name}`, which is not a compiler cuno knows"
+                )
+            }
+            ToolchainError::UnsupportedCompiler { name, source } => {
+                write!(f, "{name} is not supported yet (chosen by {source})")
+            }
+            ToolchainError::CompilerNotFound { compiler } => write!(f, "no {compiler} was found"),
+            ToolchainError::NoMatchingVersion {
+                compiler,
+                requirements,
+                found,
+            } => {
+                let found: Vec<String> = found.iter().map(Version::to_string).collect();
+                write!(
+                    f,
+                    "no {compiler} found satisfies {}; found {}",
+                    requirements.join(" and "),
+                    found.join(", ")
+                )
+            }
+            ToolchainError::InvalidVersionRequirement { compiler, text } => write!(
+                f,
+                "[toolchain.version] {compiler} = \"{text}\" is not a version requirement"
+            ),
+            ToolchainError::VisualStudioNotAt { path } => write!(
+                f,
+                "[toolchain.paths] msvc is {}, but no Visual Studio with the C++ x64 tools is installed there",
+                path.display()
+            ),
+            ToolchainError::RejectedByStl {
+                compiler, version, ..
+            } => write!(
+                f,
+                "{compiler} {version} is not accepted by the MSVC standard library in use (STL1000)"
+            ),
+            ToolchainError::ProbeFailed { compiler, output } => write!(
+                f,
+                "could not tell whether {compiler} works with the MSVC standard library:\n{output}"
+            ),
             ToolchainError::ConfiguredToolMissing { setting, path } => {
                 write!(
                     f,
@@ -86,6 +188,33 @@ impl CunoError for ToolchainError {
 
     fn help(&self) -> Option<String> {
         match self {
+            ToolchainError::UnknownCompiler { .. } | ToolchainError::UnsupportedCompiler { .. } => {
+                Some("choose msvc, clang or clang-cl".to_owned())
+            }
+            ToolchainError::CompilerNotFound { compiler } => Some(format!(
+                "install LLVM (https://github.com/llvm/llvm-project/releases), or write where {compiler} is in [toolchain.paths] {compiler}"
+            )),
+            ToolchainError::NoMatchingVersion { compiler, .. } => Some(format!(
+                "install a {compiler} that satisfies it, or change [toolchain.version] {compiler}"
+            )),
+            ToolchainError::InvalidVersionRequirement { .. } => Some(
+                "write conditions such as \">=17\" or \">=19.29, <19.50\"".to_owned(),
+            ),
+            ToolchainError::VisualStudioNotAt { .. } => Some(
+                "correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio"
+                    .to_owned(),
+            ),
+            ToolchainError::RejectedByStl {
+                needed, message, ..
+            } => Some(match needed {
+                Some(needed) => {
+                    format!("install Clang {needed} or newer, or select another compiler")
+                }
+                None => format!("the standard library says: {message}"),
+            }),
+            ToolchainError::ProbeFailed { .. } => Some(
+                "check the Visual Studio and LLVM installations with `cuno doctor`".to_owned(),
+            ),
             ToolchainError::ConfiguredToolMissing { setting, .. } => Some(format!(
                 "correct {setting}, or remove it to let cuno find the tool"
             )),
@@ -120,6 +249,39 @@ mod tests {
             },
             ToolchainError::NoWindowsSdk {
                 looked_in: vec!["x".into()],
+            },
+            ToolchainError::UnknownCompiler {
+                name: "x".into(),
+                source: "x".into(),
+            },
+            ToolchainError::UnsupportedCompiler {
+                name: "x".into(),
+                source: "x".into(),
+            },
+            ToolchainError::CompilerNotFound { compiler: "x" },
+            ToolchainError::NoMatchingVersion {
+                compiler: "x",
+                requirements: vec![],
+                found: vec![],
+            },
+            ToolchainError::InvalidVersionRequirement {
+                compiler: "x".into(),
+                text: "x".into(),
+            },
+            ToolchainError::VisualStudioNotAt { path: "x".into() },
+            ToolchainError::RejectedByStl {
+                compiler: "x",
+                version: Version {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                },
+                needed: None,
+                message: "x".into(),
+            },
+            ToolchainError::ProbeFailed {
+                compiler: "x",
+                output: "x".into(),
             },
         ] {
             assert_eq!(e.exit_class(), ExitClass::Setup, "{e}");
@@ -173,6 +335,55 @@ mod tests {
                 },
                 "Y:/Kits or Z:/Windows Kits/10",
                 "Windows 11 SDK",
+            ),
+            (
+                ToolchainError::UnsupportedCompiler {
+                    name: "gcc".into(),
+                    source: "CUNO_COMPILER".into(),
+                },
+                "gcc is not supported yet (chosen by CUNO_COMPILER)",
+                "msvc, clang or clang-cl",
+            ),
+            (
+                ToolchainError::NoMatchingVersion {
+                    compiler: "msvc",
+                    requirements: vec![">=19.29 (cuno's minimum)".into()],
+                    found: vec![Version {
+                        major: 19,
+                        minor: 28,
+                        patch: 1,
+                    }],
+                },
+                "satisfies >=19.29 (cuno's minimum); found 19.28.1",
+                "[toolchain.version] msvc",
+            ),
+            (
+                ToolchainError::RejectedByStl {
+                    compiler: "clang",
+                    version: Version {
+                        major: 20,
+                        minor: 1,
+                        patch: 8,
+                    },
+                    needed: Some("22".into()),
+                    message: "STL1000: ...".into(),
+                },
+                "clang 20.1.8 is not accepted by the MSVC standard library in use (STL1000)",
+                "install Clang 22 or newer, or select another compiler",
+            ),
+            (
+                ToolchainError::RejectedByStl {
+                    compiler: "clang",
+                    version: Version {
+                        major: 20,
+                        minor: 1,
+                        patch: 8,
+                    },
+                    needed: None,
+                    message: "STL1000: odd wording".into(),
+                },
+                "(STL1000)",
+                "STL1000: odd wording",
             ),
         ];
         for (error, in_message, in_help) in cases {
