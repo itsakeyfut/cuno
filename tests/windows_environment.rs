@@ -33,24 +33,32 @@ fn resolved() -> Option<(PathBuf, msvc::MsvcToolset, MsvcEnvironment)> {
     ))
 }
 
-/// Every `INCLUDE` and `LIB` directory cuno builds is one `vcvars64.bat`
-/// sets: a change of layout in a new Visual Studio or SDK shows up here.
+/// Every directory cuno puts in `INCLUDE`, `LIB`, `LIBPATH` and in front of
+/// `PATH` exists and is one `vcvars64.bat` sets, and the SDK tools are found
+/// on that `PATH`: a change of layout in a new Visual Studio or SDK shows up
+/// here.
 ///
-/// Mutation: name an `INCLUDE` or `LIB` directory wrongly (`um` as `UM2`);
-/// this test fails.
+/// Mutation: name any directory wrongly (`um` as `UM2`), or leave the SDK's
+/// `bin` out of `PATH` (`rc.exe` is then not found); this test fails.
 #[test]
-fn every_directory_is_one_vcvars64_sets() {
+fn every_directory_exists_and_is_one_vcvars64_sets() {
     let Some((install, _, resolved)) = resolved() else {
         return;
     };
     let vcvars = vcvars_environment(&install).unwrap_or_else(|m| panic!("{}", m.detail));
-    for (name, dirs) in [("INCLUDE", &resolved.include), ("LIB", &resolved.lib)] {
+    for (name, dirs) in [
+        ("INCLUDE", &resolved.include),
+        ("LIB", &resolved.lib),
+        ("LIBPATH", &resolved.libpath),
+        ("PATH", &resolved.path),
+    ] {
         let expected: Vec<String> = vcvars
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| std::env::split_paths(v).map(|d| normalized(&d)).collect())
             .unwrap_or_default();
         for dir in dirs {
+            assert!(dir.is_dir(), "{name}: {} does not exist", dir.display());
             assert!(
                 expected.contains(&normalized(dir)),
                 "{name}: {} is not among {expected:#?}",
@@ -58,37 +66,45 @@ fn every_directory_is_one_vcvars64_sets() {
             );
         }
     }
+    for tool in ["cl.exe", "link.exe", "rc.exe", "mt.exe"] {
+        assert!(
+            resolved.path.iter().any(|dir| dir.join(tool).is_file()),
+            "{tool} is not in {:#?}",
+            resolved.path
+        );
+    }
 }
 
 /// A program using `<windows.h>` compiles, links and runs with MSVC, clang
-/// and clang-cl given only cuno's environment on top of a shell without any
-/// Developer Command Prompt variable, from a directory named in Japanese.
+/// and clang-cl given only cuno's environment, from a directory named in
+/// Japanese, and every compiler sees the toolset cuno chose even when cuno
+/// runs from the Developer Command Prompt of another toolset.
 ///
-/// Mutation: drop `um` from `INCLUDE` or `ucrt` from `LIB`; this test fails.
+/// Mutation: drop `um` from `INCLUDE` or `ucrt` from `LIB`, or keep the
+/// Developer Command Prompt's `VCToolsInstallDir` (clang then takes the stale
+/// toolset and reports another `_MSC_VER`); this test fails.
 #[test]
-fn hello_world_builds_with_every_compiler_from_a_plain_shell() {
+fn hello_world_builds_with_every_compiler_and_the_chosen_toolset() {
     let Some((_, toolset, resolved)) = resolved() else {
         return;
     };
-    let plain = Env::from_process().without(&[
-        "INCLUDE",
-        "LIB",
-        "LIBPATH",
-        "CL",
-        "_CL_",
-        "VSINSTALLDIR",
-        "VCINSTALLDIR",
-        "VCToolsInstallDir",
-        "WindowsSdkDir",
-    ]);
-    let env = resolved.apply(&plain);
     let dir = tempfile::Builder::new()
         .prefix("ソース ")
         .tempdir()
         .unwrap();
+    // A Developer Command Prompt for a toolset that is not the one chosen.
+    let stale = dir.path().join("stale").join("VC");
+    let stale_toolset = stale.join("Tools").join("MSVC").join("14.29.30133");
+    std::fs::create_dir_all(stale_toolset.join("include")).unwrap();
+    let shell = Env::from_process()
+        .without(&["INCLUDE", "LIB", "LIBPATH", "CL", "_CL_"])
+        .with("VCINSTALLDIR", stale.clone().into())
+        .with("VCToolsInstallDir", stale_toolset.clone().into())
+        .with("EXTERNAL_INCLUDE", stale_toolset.join("include").into());
+    let env = resolved.apply(&shell);
     std::fs::write(
         dir.path().join("main.c"),
-        "#include <windows.h>\n#include <stdio.h>\nint main(void) { printf(\"hello %lu\\n\", (unsigned long)GetCurrentProcessId() * 0); return 0; }\n",
+        "#include <windows.h>\n#include <stdio.h>\nint main(void) { printf(\"hello %lu %d\\n\", (unsigned long)GetCurrentProcessId() * 0, _MSC_VER); return 0; }\n",
     )
     .unwrap();
 
@@ -109,6 +125,10 @@ fn hello_world_builds_with_every_compiler_from_a_plain_shell() {
             compilers.push((name, PathBuf::from(reference.get_program()), args));
         }
     }
+    let expected = format!(
+        "hello 0 {}{:02}",
+        toolset.cl_version.major, toolset.cl_version.minor
+    );
     for (name, program, args) in compilers {
         let output = Command::new(&program)
             .args(&args)
@@ -128,7 +148,7 @@ fn hello_world_builds_with_every_compiler_from_a_plain_shell() {
             .unwrap();
         assert_eq!(
             String::from_utf8_lossy(&run.stdout).trim(),
-            "hello 0",
+            expected,
             "{name}"
         );
     }

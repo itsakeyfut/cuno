@@ -49,61 +49,75 @@ pub struct WindowsSdk {
     pub version: String,
 }
 
-/// The Windows SDK to build with: the newest version under the registered
-/// SDK directory (or `%ProgramFiles(x86)%\Windows Kits\10`) whose x64 headers
-/// and libraries are both there.
+/// The Windows SDK to build with: the newest complete version in the first
+/// place that has one, of the registered SDK directory and
+/// `%ProgramFiles(x86)%\Windows Kits\10`.
 pub fn find_windows_sdk(env: &Env, registry: &dyn Registry) -> Result<WindowsSdk, ToolchainError> {
-    let Some(dir) = sdk_root(env, registry) else {
-        return Err(ToolchainError::NoWindowsSdk {
-            looked_in: Path::new("%ProgramFiles(x86)%")
+    let roots = sdk_roots(env, registry);
+    for dir in &roots {
+        if let Some(version) = newest_complete_version(dir) {
+            return Ok(WindowsSdk {
+                dir: dir.clone(),
+                version,
+            });
+        }
+    }
+    let looked_in = if roots.is_empty() {
+        vec![
+            Path::new("%ProgramFiles(x86)%")
                 .join("Windows Kits")
                 .join("10"),
-        });
+        ]
+    } else {
+        roots
     };
+    Err(ToolchainError::NoWindowsSdk { looked_in })
+}
+
+/// Where the SDK may be, in order: the registered directory, then the one
+/// under `%ProgramFiles(x86)%`, taking only absolute ones. An empty or
+/// relative directory would be read from cuno's working directory (often the
+/// project).
+fn sdk_roots(env: &Env, registry: &dyn Registry) -> Vec<PathBuf> {
+    let registered = registry
+        .local_machine_string(KITS_KEY, KITS_VALUE)
+        .map(PathBuf::from);
+    let program_files = env
+        .get("ProgramFiles(x86)")
+        .map(|pf| Path::new(pf).join("Windows Kits").join("10"));
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for dir in [registered, program_files].into_iter().flatten() {
+        if dir.is_absolute() && !roots.contains(&dir) {
+            roots.push(dir);
+        }
+    }
+    roots
+}
+
+/// The newest version under `dir` that is complete, compared as numbers.
+fn newest_complete_version(dir: &Path) -> Option<String> {
     let mut versions: Vec<(Vec<u32>, String)> = std::fs::read_dir(dir.join("Include"))
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|version| complete(&dir, version))
+        .filter(|version| complete(dir, version))
         .filter_map(|version| Some((numeric(&version)?, version)))
         .collect();
     versions.sort();
-    match versions.pop() {
-        Some((_, version)) => Ok(WindowsSdk { dir, version }),
-        None => Err(ToolchainError::NoWindowsSdk { looked_in: dir }),
-    }
+    versions.pop().map(|(_, version)| version)
 }
 
-/// Where the SDK is: the registered directory, else the one under
-/// `%ProgramFiles(x86)%`, taking only an absolute one. An empty or relative
-/// directory would be read from cuno's working directory (often the project).
-fn sdk_root(env: &Env, registry: &dyn Registry) -> Option<PathBuf> {
-    registry
-        .local_machine_string(KITS_KEY, KITS_VALUE)
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
-        .or_else(|| {
-            env.get("ProgramFiles(x86)")
-                .map(|pf| Path::new(pf).join("Windows Kits").join("10"))
-                .filter(|dir| dir.is_absolute())
-        })
-}
-
-/// Whether `version` has both the headers and the x64 libraries: an SDK can
-/// leave a version's `Include` behind when only part of it is installed.
+/// Whether `version` has the x64 headers and libraries of both the Windows
+/// API (`um`) and the C runtime (`ucrt`): an SDK can leave part of a version
+/// behind when only part of it is installed or removed.
 fn complete(dir: &Path, version: &str) -> bool {
-    dir.join("Include")
-        .join(version)
-        .join("um")
-        .join("windows.h")
-        .is_file()
-        && dir
-            .join("Lib")
-            .join(version)
-            .join("um")
-            .join("x64")
-            .is_dir()
+    let include = dir.join("Include").join(version);
+    let lib = dir.join("Lib").join(version);
+    include.join("um").join("windows.h").is_file()
+        && include.join("ucrt").join("stdio.h").is_file()
+        && lib.join("um").join("x64").is_dir()
+        && lib.join("ucrt").join("x64").is_dir()
 }
 
 /// `10.0.28000.0` as numbers, so that `10.0.9` is older than `10.0.10`.
@@ -130,9 +144,17 @@ pub fn resolve(toolset: &MsvcToolset, sdk: &WindowsSdk) -> MsvcEnvironment {
     let msvc = &toolset.dir;
     let include = sdk.dir.join("Include").join(&sdk.version);
     let lib = sdk.dir.join("Lib").join(&sdk.version);
+    // `<VS>\VC\Auxiliary\VS\include` (`CppCoreCheck\warnings.h`), next to the
+    // toolset's `VC\Tools\MSVC\<version>`, when this Visual Studio has it.
+    let auxiliary = msvc
+        .ancestors()
+        .nth(3)
+        .map(|vc| vc.join("Auxiliary").join("VS").join("include"))
+        .filter(|dir| dir.is_dir());
     MsvcEnvironment {
         include: [msvc.join("include")]
             .into_iter()
+            .chain(auxiliary)
             .chain(
                 ["ucrt", "um", "shared", "winrt", "cppwinrt"]
                     .iter()
@@ -153,9 +175,11 @@ pub fn resolve(toolset: &MsvcToolset, sdk: &WindowsSdk) -> MsvcEnvironment {
 }
 
 impl MsvcEnvironment {
-    /// `base` with `INCLUDE`, `LIB` and `LIBPATH` replaced and `PATH`
-    /// prefixed, for running a compiler or linker.
+    /// `base` with `INCLUDE`, `LIB` and `LIBPATH` replaced, `PATH` prefixed
+    /// and the Developer Command Prompt's variables removed, for running a
+    /// compiler or linker.
     pub fn apply(&self, base: &Env) -> Env {
+        let base = &base.without(DEVELOPER_PROMPT_VARIABLES);
         let path = self
             .path
             .iter()
@@ -171,6 +195,21 @@ impl MsvcEnvironment {
         .fold(base.clone(), |env, (name, value)| env.with(name, value))
     }
 }
+
+/// What a Developer Command Prompt sets that clang and clang-cl read to find
+/// a toolset and a linker: left in place, a prompt for another Visual Studio
+/// would win over the toolset cuno chose. See `docs/en/specs/toolchain.md`,
+/// "How it is resolved".
+const DEVELOPER_PROMPT_VARIABLES: &[&str] = &[
+    "VSINSTALLDIR",
+    "VCINSTALLDIR",
+    "VCToolsInstallDir",
+    "EXTERNAL_INCLUDE",
+    "WindowsSdkDir",
+    "WindowsSDKVersion",
+    "UniversalCRTSdkDir",
+    "UCRTVersion",
+];
 
 /// Directories as one `PATH`-style value. On Windows joining fails only for
 /// a `"` in a name, which Windows does not allow in file names.
@@ -192,14 +231,35 @@ mod tests {
         }
     }
 
-    /// An SDK tree under `dir` with `versions`; `true` marks a complete one.
-    fn sdk_tree(dir: &Path, versions: &[(&str, bool)]) {
-        for (version, complete) in versions {
-            let um = dir.join("Include").join(version).join("um");
-            std::fs::create_dir_all(&um).unwrap();
-            std::fs::create_dir_all(dir.join("Lib").join(version).join("um").join("x64")).unwrap();
-            if *complete {
-                std::fs::write(um.join("windows.h"), "").unwrap();
+    /// What a version directory holds.
+    #[derive(Clone, Copy)]
+    enum Part {
+        Complete,
+        NoWindowsH,
+        NoUcrtHeader,
+        NoUmLib,
+        NoUcrtLib,
+    }
+
+    /// An SDK tree under `dir` with `versions`.
+    fn sdk_tree(dir: &Path, versions: &[(&str, Part)]) {
+        for (version, part) in versions {
+            let include = dir.join("Include").join(version);
+            let lib = dir.join("Lib").join(version);
+            for sub in ["um", "ucrt"] {
+                std::fs::create_dir_all(include.join(sub)).unwrap();
+            }
+            if !matches!(part, Part::NoWindowsH) {
+                std::fs::write(include.join("um").join("windows.h"), "").unwrap();
+            }
+            if !matches!(part, Part::NoUcrtHeader) {
+                std::fs::write(include.join("ucrt").join("stdio.h"), "").unwrap();
+            }
+            if !matches!(part, Part::NoUmLib) {
+                std::fs::create_dir_all(lib.join("um").join("x64")).unwrap();
+            }
+            if !matches!(part, Part::NoUcrtLib) {
+                std::fs::create_dir_all(lib.join("ucrt").join("x64")).unwrap();
             }
         }
     }
@@ -213,8 +273,9 @@ mod tests {
         )
     }
 
-    /// Mutation: compare versions as strings, or skip the `windows.h` check;
-    /// this test fails.
+    /// Mutation: compare versions as strings, take a name that is not a
+    /// number as a version, or drop any of the four checks of a complete
+    /// version; this test fails.
     #[test]
     fn the_newest_complete_version_is_taken() {
         let root = tempfile::tempdir().unwrap();
@@ -222,9 +283,14 @@ mod tests {
         sdk_tree(
             &kits,
             &[
-                ("10.0.9.0", true),
-                ("10.0.10.0", true),
-                ("10.0.11.0", false),
+                ("10.0.9.0", Part::Complete),
+                ("10.0.10.0", Part::Complete),
+                ("10.0.11.0", Part::NoWindowsH),
+                ("10.0.12.0", Part::NoUcrtHeader),
+                ("10.0.13.0", Part::NoUmLib),
+                ("10.0.14.0", Part::NoUcrtLib),
+                ("wdf", Part::Complete),
+                ("10.0.x.0", Part::Complete),
             ],
         );
         let sdk = find_windows_sdk(&env(&[]), &Kits(Some(kits.clone()))).unwrap();
@@ -238,51 +304,67 @@ mod tests {
     }
 
     /// Mutation: read `%ProgramFiles(x86)%` from the process instead of
-    /// `env`, or ignore it when the registry has no value; this test fails.
-    /// The directory name is not ASCII, as on a machine with a Japanese user
-    /// name: paths stay paths end to end.
+    /// `env`, look there before the registry, or stop at a registered
+    /// directory with no SDK left in it; this test fails. The directory name
+    /// is not ASCII, as on a machine with a Japanese user name: paths stay
+    /// paths end to end.
     #[test]
-    fn without_a_registry_value_program_files_is_used() {
+    fn the_registry_comes_first_and_program_files_second() {
         let root = tempfile::tempdir().unwrap();
         let pf = root.path().join("プログラム");
-        let kits = pf.join("Windows Kits").join("10");
-        sdk_tree(&kits, &[("10.0.1.0", true)]);
-        let sdk = find_windows_sdk(&env(&[("ProgramFiles(x86)", &pf)]), &Kits(None)).unwrap();
-        assert_eq!(sdk.dir, kits);
+        let installed = pf.join("Windows Kits").join("10");
+        sdk_tree(&installed, &[("10.0.1.0", Part::Complete)]);
+        let registered = root.path().join("Registered");
+        let stale = root.path().join("Stale");
+        std::fs::create_dir_all(&stale).unwrap();
+        sdk_tree(&registered, &[("10.0.1.0", Part::Complete)]);
+        let env = env(&[("ProgramFiles(x86)", &pf)]);
+        let found = |registry| find_windows_sdk(&env, &registry).unwrap().dir;
+        assert_eq!(found(Kits(Some(registered.clone()))), registered);
+        assert_eq!(found(Kits(Some(stale))), installed);
+        assert_eq!(found(Kits(None)), installed);
     }
 
-    /// Mutation: accept a version without `um\windows.h`; this test fails.
+    /// Mutation: report only one of the places looked in, take a directory
+    /// whose name is not a number as a version, or name no place
+    /// when there is none to look in; this test fails.
     #[test]
-    fn no_complete_version_is_an_error_naming_the_directory() {
+    fn no_complete_version_is_an_error_naming_where_it_looked() {
         let root = tempfile::tempdir().unwrap();
-        sdk_tree(root.path(), &[("10.0.1.0", false)]);
-        let err = find_windows_sdk(&env(&[]), &Kits(Some(root.path().into()))).unwrap_err();
-        assert!(
-            matches!(&err, ToolchainError::NoWindowsSdk { looked_in } if looked_in == root.path())
+        let pf = root.path().join("pf");
+        let installed = pf.join("Windows Kits").join("10");
+        sdk_tree(
+            root.path(),
+            &[("10.0.1.0", Part::NoWindowsH), ("wdf", Part::Complete)],
         );
+        let err = find_windows_sdk(
+            &env(&[("ProgramFiles(x86)", &pf)]),
+            &Kits(Some(root.path().into())),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::NoWindowsSdk { looked_in } if *looked_in == [root.path().to_owned(), installed]),
+            "{err:?}"
+        );
+        let err = find_windows_sdk(&env(&[]), &Kits(None)).unwrap_err();
+        assert!(err.to_string().contains("%ProgramFiles(x86)%"), "{err}");
     }
 
     /// Mutation: take an empty or relative directory from the registry or
     /// `%ProgramFiles(x86)%` instead of passing over it; this test fails.
     #[test]
-    fn only_an_absolute_sdk_directory_is_taken() {
+    fn only_absolute_sdk_directories_are_searched() {
         let pf = std::env::temp_dir();
         let absolute = env(&[("ProgramFiles(x86)", &pf)]);
         let relative = env(&[("ProgramFiles(x86)", Path::new("pf"))]);
-        let expected = pf.join("Windows Kits").join("10");
-        assert_eq!(
-            sdk_root(&absolute, &Kits(Some("".into()))),
-            Some(expected.clone())
-        );
-        assert_eq!(
-            sdk_root(&absolute, &Kits(Some("Kits".into()))),
-            Some(expected)
-        );
-        assert_eq!(sdk_root(&relative, &Kits(None)), None);
-        assert_eq!(sdk_root(&env(&[]), &Kits(None)), None);
+        let expected = vec![pf.join("Windows Kits").join("10")];
+        assert_eq!(sdk_roots(&absolute, &Kits(Some("".into()))), expected);
+        assert_eq!(sdk_roots(&absolute, &Kits(Some("Kits".into()))), expected);
+        assert!(sdk_roots(&relative, &Kits(None)).is_empty());
+        assert!(sdk_roots(&env(&[]), &Kits(None)).is_empty());
     }
 
-    fn toolset(dir: &str) -> MsvcToolset {
+    fn toolset(dir: impl Into<PathBuf>) -> MsvcToolset {
         MsvcToolset {
             dir: dir.into(),
             cl_version: Version {
@@ -293,8 +375,9 @@ mod tests {
         }
     }
 
-    /// Mutation: drop `um` from `INCLUDE`, `ucrt` from `LIB`, or prepend
-    /// `PATH` after the user's instead of before; this test fails.
+    /// Mutation: drop `um` from `INCLUDE`, `ucrt` from `LIB`, prepend `PATH`
+    /// after the user's instead of before, or keep a Developer Command Prompt
+    /// variable; this test fails.
     #[test]
     fn the_environment_has_the_toolset_and_sdk_directories_in_order() {
         let sdk = WindowsSdk {
@@ -306,10 +389,19 @@ mod tests {
             [
                 ("Path".into(), "U".into()),
                 ("INCLUDE".into(), "stale".into()),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                DEVELOPER_PROMPT_VARIABLES
+                    .iter()
+                    .map(|name| (name.to_ascii_lowercase().into(), "stale".into())),
+            ),
             NameCase::Insensitive,
         );
         let env = resolved.apply(&base);
+        for name in DEVELOPER_PROMPT_VARIABLES {
+            assert_eq!(env.get(name), None, "{name}");
+        }
         let list = |name: &str| -> Vec<PathBuf> {
             std::env::split_paths(env.get(name).unwrap()).collect()
         };
@@ -338,5 +430,26 @@ mod tests {
             list("PATH"),
             [p("T/bin/Hostx64/x64"), p("K/bin/10.0.1.0/x64"), p("U")]
         );
+    }
+
+    /// Mutation: leave out `VC\Auxiliary\VS\include`, or add it when this
+    /// Visual Studio does not have it; this test fails.
+    #[test]
+    fn the_auxiliary_include_directory_is_used_when_present() {
+        let root = tempfile::tempdir().unwrap();
+        let vc = root.path().join("VS").join("VC");
+        let msvc = vc.join("Tools").join("MSVC").join("14.52.1");
+        let sdk = WindowsSdk {
+            dir: "K".into(),
+            version: "10.0.1.0".into(),
+        };
+        let auxiliary = vc.join("Auxiliary").join("VS").join("include");
+        assert!(
+            !resolve(&toolset(msvc.clone()), &sdk)
+                .include
+                .contains(&auxiliary)
+        );
+        std::fs::create_dir_all(&auxiliary).unwrap();
+        assert_eq!(resolve(&toolset(msvc.clone()), &sdk).include[1], auxiliary);
     }
 }

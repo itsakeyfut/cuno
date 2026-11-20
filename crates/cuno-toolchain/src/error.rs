@@ -30,8 +30,8 @@ pub enum ToolchainError {
     },
     /// No Windows SDK with the x64 headers and libraries.
     NoWindowsSdk {
-        /// The SDK directory looked in.
-        looked_in: PathBuf,
+        /// The SDK directories looked in, in order.
+        looked_in: Vec<PathBuf>,
     },
     /// A tool path the user configured has no file.
     ConfiguredToolMissing {
@@ -57,11 +57,15 @@ impl fmt::Display for ToolchainError {
             ToolchainError::ClVersionUnknown { path } => {
                 write!(f, "could not read the version of {}", path.display())
             }
-            ToolchainError::NoWindowsSdk { looked_in } => write!(
-                f,
-                "no Windows SDK with the x64 headers and libraries was found in {}",
-                looked_in.display()
-            ),
+            ToolchainError::NoWindowsSdk { looked_in } => {
+                let places: Vec<String> =
+                    looked_in.iter().map(|p| p.display().to_string()).collect();
+                write!(
+                    f,
+                    "no Windows SDK with the x64 headers and libraries was found in {}",
+                    places.join(" or ")
+                )
+            }
             ToolchainError::ConfiguredToolMissing { setting, path } => {
                 write!(
                     f,
@@ -115,7 +119,7 @@ mod tests {
                 path: "x".into(),
             },
             ToolchainError::NoWindowsSdk {
-                looked_in: "x".into(),
+                looked_in: vec!["x".into()],
             },
         ] {
             assert_eq!(e.exit_class(), ExitClass::Setup, "{e}");
@@ -165,9 +169,9 @@ mod tests {
             ),
             (
                 ToolchainError::NoWindowsSdk {
-                    looked_in: "Z:/Windows Kits/10".into(),
+                    looked_in: vec!["Y:/Kits".into(), "Z:/Windows Kits/10".into()],
                 },
-                "Z:/Windows Kits/10",
+                "Y:/Kits or Z:/Windows Kits/10",
                 "Windows 11 SDK",
             ),
         ];
