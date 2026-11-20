@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 2a49c6f030038eefa0b6e4a2e4623a38ff5a7922 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 02582f65527e2d313614665764f5426ce8ebb22e -->
 
 # Commands
 
@@ -68,6 +68,17 @@ Values of `--color`:
 - `never`: Never color.
 
 - If the `NO_COLOR` environment variable is set, it is treated as `never` unless `--color` / `[term] color` is specified (following the NO_COLOR convention).
+
+### Without a command (`--version` / `--help` / no arguments)
+
+| Invocation | Stream | Output | Exit code |
+|---|---|---|---|
+| `cuno --version` (`-V`) | stdout | First line is `cuno <version>` | `0` |
+| `cuno --help` (`-h`) | stdout | Usage (English) | `0` |
+| `cuno` (no command) | stdout | The same usage as `--help` | `0` |
+
+- `cuno` with no command is not treated as a usage error (same as Cargo).
+- The format of the first line of `--version` is fixed, because scripts and `cuno self update` read it. Any additional information, such as a commit hash, goes on the second and later lines.
 
 ## Per-command options (MVP)
 
