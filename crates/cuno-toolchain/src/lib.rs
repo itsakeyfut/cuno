@@ -8,6 +8,7 @@ mod host;
 pub mod llvm;
 pub mod msvc;
 mod run;
+pub mod select;
 mod version;
 
 pub use error::ToolchainError;

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 638d1993525a3a69e268dacc6ebc2d1afd42aa18 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 6f9e033c272559a50a7fa01bb9845d946fc03da0 -->
 
 # Toolchain
 
@@ -56,9 +56,9 @@ A compiler must accept a C++20 specification.
 - Why Clang 17 or later: a floor common to every OS, as the oldest Clang cuno supports. 17 is the version the VS 2022 17.10 to 17.12 standard library (MSVC STL) requires, and older Clang is not covered. Also, `-fms-runtime-lib`, which specifies the C runtime kind for GNU-style `clang`, is only available in Clang 16 and later (without it, the default is the static runtime, which conflicts with the `runtime = "dynamic"` default). 17 is a floor, and on Windows the check below can raise it.
 - **On Windows, the Clang must also be accepted by the MSVC standard library (MSVC STL).** The MSVC STL errors out (STL1000) on a Clang older than its own floor, and that floor rises as Visual Studio is updated. It cannot be expressed as a fixed number, so cuno asks the standard library itself.
   - Examples of the floor (MSVC STL's `yvals_core.h`): VS 2022 17.0 requires Clang 12, 17.7 requires 16, 17.10 requires 17, 17.13 requires 18, 17.14 requires 19, MSVC 14.51 requires 20, and 14.52 requires 22.
-  - **How it is checked**: a file that includes only `<yvals_core.h>` is syntax-checked **as C++** under the same conditions as the build's compile command (the same Clang, the resolved Windows environment, the target `x86_64-pc-windows-msvc`, the include paths, and the project's `defines`): `/TP /Zs` for `clang-cl`, `-x c++ -fsyntax-only` for `clang`. The file is placed outside the project (in a temporary directory).
+  - **How it is checked**: a file that includes only `<yvals_core.h>` is syntax-checked **as C++** under the same conditions as the build's compile command (the same Clang, the resolved Windows environment, the target `x86_64-pc-windows-msvc`, and every compile flag of the build except those naming inputs and outputs: the language standard, the RTTI and exception settings, the include paths, the `defines`, and the user's `flags`): `/TP /Zs` for `clang-cl`, `-x c++ -fsyntax-only` for `clang`. The file is placed outside the project (in a temporary directory).
     - Why as C++: treated as C, the standard library stops with a different error (STL1003).
-    - Why the `defines` are passed: the MSVC STL does not emit STL1000 when `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` is defined. A pairing the user has deliberately allowed by writing this in `defines` passes, as the real build does.
+    - Why the build's flags are passed: the MSVC STL's verdict depends on flags and macros. It does not emit STL1000 when `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` is defined (a pairing the user has deliberately allowed passes, as the real build does), and a project with `rtti = false` that defines `_HAS_STATIC_RTTI=0` stops with another error without `/GR-`. Passing only some of the flags would give a verdict the real build does not.
   - **Verdict**: if the exit code is not 0 and `STL1000:` appears on either stdout or stderr, the pairing cannot be used. The Clang version needed is taken from `<version>` in the standard library's message `expected Clang <version> or newer` and shown in the form written (it may be `22` or `17.0.0`). If it cannot be extracted, the standard library's message is shown in `help:` as is.
   - **When no verdict is possible**: if the probe fails for a reason other than STL1000 (headers not found, another STL error, etc.), or does not finish within 30 seconds, whether the pairing works cannot be decided. It is not treated as passing; the compiler's output is shown as an environment problem (with the exit codes below).
   - Rationale: reading the header's condition, or keeping a table of MSVC versions in cuno, could judge an unusable pairing as fine once a new Visual Studio changes how the header is written or which version it requires. The probe compile takes tens of milliseconds and uses the standard library's own answer.
@@ -183,6 +183,7 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 
 - On Windows, if Visual Studio / Build Tools is not found, it is an error (Clang also requires Visual Studio, so switching to Clang does not solve it).
 - **When multiple versions of the same compiler are installed**, the newest one that satisfies the version constraint is selected. Preview versions are not selected.
+- **When clang / clang-cl is selected on Windows, one MSVC toolset is still used** (for the headers, libraries and the resolved environment): the toolset with the newest cl.exe among the complete, non-preview Visual Studio installations. The MSVC version constraint is checked only when MSVC is selected ([manifest.md](manifest.md)).
 
 ## Version pinning
 

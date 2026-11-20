@@ -434,6 +434,7 @@ rr = "run --release"
 ツール名ごとに場所を書く。書いたものは自動検出より優先される。
 
 - `msvc`: Visual Studio（または Build Tools）の**インストールディレクトリ**を書く（例: `"C:/Program Files/Microsoft Visual Studio/2022/Community"`）。MSVC は cl.exe 単体では動かず、cuno がそのインストールから環境を解決するため（[toolchain.md](toolchain.md)）。
+  - 書いた場合、Visual Studio はこのディレクトリのものだけを使う（clang / clang-cl が使う MSVC のツールセットも含む）。ここに C++ x64 ツールを持つ Visual Studio が見つからなければエラー（終了コード 3）。
 - `clang` / `clang-cl` / `gcc` / `safec` / `clang-format` / `clang-tidy` / `sccache` / `ccache`: 実行ファイルのパスを書く。
 
 #### `[target.<ビルド対象環境>]`
