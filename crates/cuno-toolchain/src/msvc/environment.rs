@@ -53,14 +53,13 @@ pub struct WindowsSdk {
 /// SDK directory (or `%ProgramFiles(x86)%\Windows Kits\10`) whose x64 headers
 /// and libraries are both there.
 pub fn find_windows_sdk(env: &Env, registry: &dyn Registry) -> Result<WindowsSdk, ToolchainError> {
-    let dir = registry
-        .local_machine_string(KITS_KEY, KITS_VALUE)
-        .map(PathBuf::from)
-        .or_else(|| {
-            env.get("ProgramFiles(x86)")
-                .map(|pf| Path::new(pf).join("Windows Kits").join("10"))
-        })
-        .unwrap_or_default();
+    let Some(dir) = sdk_root(env, registry) else {
+        return Err(ToolchainError::NoWindowsSdk {
+            looked_in: Path::new("%ProgramFiles(x86)%")
+                .join("Windows Kits")
+                .join("10"),
+        });
+    };
     let mut versions: Vec<(Vec<u32>, String)> = std::fs::read_dir(dir.join("Include"))
         .into_iter()
         .flatten()
@@ -74,6 +73,21 @@ pub fn find_windows_sdk(env: &Env, registry: &dyn Registry) -> Result<WindowsSdk
         Some((_, version)) => Ok(WindowsSdk { dir, version }),
         None => Err(ToolchainError::NoWindowsSdk { looked_in: dir }),
     }
+}
+
+/// Where the SDK is: the registered directory, else the one under
+/// `%ProgramFiles(x86)%`, taking only an absolute one. An empty or relative
+/// directory would be read from cuno's working directory (often the project).
+fn sdk_root(env: &Env, registry: &dyn Registry) -> Option<PathBuf> {
+    registry
+        .local_machine_string(KITS_KEY, KITS_VALUE)
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| {
+            env.get("ProgramFiles(x86)")
+                .map(|pf| Path::new(pf).join("Windows Kits").join("10"))
+                .filter(|dir| dir.is_absolute())
+        })
 }
 
 /// Whether `version` has both the headers and the x64 libraries: an SDK can
@@ -246,6 +260,26 @@ mod tests {
         assert!(
             matches!(&err, ToolchainError::NoWindowsSdk { looked_in } if looked_in == root.path())
         );
+    }
+
+    /// Mutation: take an empty or relative directory from the registry or
+    /// `%ProgramFiles(x86)%` instead of passing over it; this test fails.
+    #[test]
+    fn only_an_absolute_sdk_directory_is_taken() {
+        let pf = std::env::temp_dir();
+        let absolute = env(&[("ProgramFiles(x86)", &pf)]);
+        let relative = env(&[("ProgramFiles(x86)", Path::new("pf"))]);
+        let expected = pf.join("Windows Kits").join("10");
+        assert_eq!(
+            sdk_root(&absolute, &Kits(Some("".into()))),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            sdk_root(&absolute, &Kits(Some("Kits".into()))),
+            Some(expected)
+        );
+        assert_eq!(sdk_root(&relative, &Kits(None)), None);
+        assert_eq!(sdk_root(&env(&[]), &Kits(None)), None);
     }
 
     fn toolset(dir: &str) -> MsvcToolset {
