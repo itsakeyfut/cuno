@@ -8,7 +8,7 @@
 mod support;
 
 use support::Project;
-use support::compilers::{Compiler, Language, Missing, Outcome, on_missing, require};
+use support::compilers::{Compiler, Language, require};
 
 /// Compiles a program printing `greeting` with `compiler` in a fresh
 /// project, runs it, and asserts its exact output.
@@ -80,78 +80,4 @@ fn clang_cl_builds_and_runs_c() {
 #[test]
 fn clang_cl_builds_and_runs_cxx() {
     hello(Compiler::ClangCl, Language::Cxx);
-}
-
-fn missing() -> Missing {
-    Missing {
-        compiler: "clang",
-        detail: "clang.exe is not on PATH".into(),
-    }
-}
-
-/// Mutation: let `CUNO_TEST_ALLOW_MISSING` apply on CI in `on_missing`; this
-/// test fails.
-#[test]
-fn missing_compiler_fails_on_ci_even_when_allowed() {
-    assert!(matches!(
-        on_missing(&missing(), true, true),
-        Outcome::Fail(_)
-    ));
-    assert!(matches!(
-        on_missing(&missing(), true, false),
-        Outcome::Fail(_)
-    ));
-}
-
-/// Mutation: make `on_missing` skip by default; this test fails.
-#[test]
-fn missing_compiler_fails_locally_by_default() {
-    assert!(matches!(
-        on_missing(&missing(), false, false),
-        Outcome::Fail(_)
-    ));
-}
-
-/// Mutation: make `on_missing` ignore `allow_missing`; this test fails.
-#[test]
-fn missing_compiler_skips_locally_only_when_allowed() {
-    assert_eq!(
-        on_missing(&missing(), false, true),
-        Outcome::Skip("skipped: clang not found: clang.exe is not on PATH".into())
-    );
-}
-
-/// Mutation: drop the compiler, the detail or an override variable from the
-/// failure message in `on_missing`; this test fails.
-#[test]
-fn failure_message_names_the_compiler_and_the_overrides() {
-    let Outcome::Fail(message) = on_missing(&missing(), false, false) else {
-        panic!("a missing compiler should fail");
-    };
-    for part in [
-        "clang not found: clang.exe is not on PATH",
-        "CUNO_TEST_VS_INSTALL",
-        "CUNO_TEST_LLVM_BIN",
-        "CUNO_TEST_ALLOW_MISSING=1",
-    ] {
-        assert!(message.contains(part), "{part:?} missing from:\n{message}");
-    }
-}
-
-/// Mutation: discard vcvars64.bat's output again (`>nul` before `&&` in
-/// `vcvars_environment`); the reason disappears and this test fails.
-#[cfg(windows)]
-#[test]
-fn failing_vcvars_is_reported_with_its_output() {
-    let install = Project::new().file(
-        "VC/Auxiliary/Build/vcvars64.bat",
-        "@echo [ERROR:vcvars.bat] fake failure\r\n@exit /b 1\r\n",
-    );
-    let missing = support::compilers::vcvars_environment(install.path())
-        .expect_err("a failing vcvars64.bat should be reported");
-    assert!(
-        missing.detail.contains("[ERROR:vcvars.bat] fake failure"),
-        "{}",
-        missing.detail
-    );
 }

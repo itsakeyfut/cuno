@@ -9,8 +9,9 @@
 //! project.cuno(&["--version"]).assert(0, "cuno 0.0.0\n", "");
 //! ```
 //!
-//! Every program runs with a hermetic environment (see [`hermetic`]), so the
-//! developer's or the CI runner's environment cannot change a result.
+//! Every program runs with a hermetic environment (see [`hermetic`]) and a
+//! cuno home of its own (see [`Project::home`]), so neither the developer's or
+//! the CI runner's environment nor their real cuno home can change a result.
 
 // Each test file compiles its own copy of this module and uses only part of
 // it; without this, `clippy -D warnings` fails on the helpers a given file
@@ -20,30 +21,43 @@
 pub mod compilers;
 
 use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// A fresh directory for one test, under the system temp directory, removed
-/// when the `Project` is dropped (also when the test panics).
+/// when the `Project` is dropped (also when the test panics). It holds the
+/// project itself and, beside it, the cuno home the test's programs use.
 pub struct Project {
-    dir: tempfile::TempDir,
+    root: tempfile::TempDir,
+    project: PathBuf,
+    home: PathBuf,
 }
 
 impl Project {
-    /// An empty project in a new, uniquely named directory.
+    /// An empty project, with an empty cuno home, in a new, uniquely named
+    /// directory.
     pub fn new() -> Project {
-        let dir = tempfile::Builder::new()
+        let root = tempfile::Builder::new()
             .prefix("cuno-test-")
             .tempdir()
-            .expect("a temporary project directory should be created");
-        Project { dir }
+            .expect("a temporary directory should be created");
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        for dir in [&project, &home] {
+            std::fs::create_dir(dir).expect("the test's directories should be created");
+        }
+        Project {
+            root,
+            project,
+            home,
+        }
     }
 
     /// Writes `contents` to `path` inside the project, creating any parent
     /// directories. `path` is relative and `/`-separated. Returns `self` so
     /// that files can be chained.
     pub fn file(self, path: &str, contents: &str) -> Project {
-        let full = self.dir.path().join(path);
+        let full = self.project.join(path);
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).expect("parent directories should be created");
         }
@@ -53,7 +67,16 @@ impl Project {
 
     /// The project's directory.
     pub fn path(&self) -> &Path {
-        self.dir.path()
+        &self.project
+    }
+
+    /// The cuno home every program run from this project sees as `CUNO_HOME`.
+    /// It sits beside the project directory rather than inside it, so nothing
+    /// that walks or scans the project can come across it, and it is empty
+    /// unless a test writes into it. Without it, cuno would fall back to the
+    /// developer's real `%USERPROFILE%\.cuno`.
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     /// Runs the built `cuno` binary with `args`, in the project directory.
@@ -73,10 +96,13 @@ impl Project {
     /// Runs a prepared `cmd` in the project directory, with the same hermetic
     /// environment as [`Project::run`]. Variables `cmd` sets itself are kept
     /// unless [`hermetic`] removes them; used for compilers, which need an
-    /// environment of their own (see [`compilers`]).
+    /// environment of their own (see [`compilers`]). `CUNO_HOME` is always
+    /// [`Project::home`].
     pub fn run_command(&self, mut cmd: Command) -> Run {
         cmd.current_dir(self.path());
         hermetic(&mut cmd, std::env::vars_os().map(|(name, _)| name));
+        // After `hermetic`, which removes every inherited `CUNO_*` variable.
+        cmd.env("CUNO_HOME", &self.home);
         let output = cmd.output().expect("the program should start");
         Run {
             code: output.status.code(),
