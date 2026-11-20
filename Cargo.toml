@@ -22,6 +22,9 @@ workspace = true
 
 [workspace]
 members = ["crates/*"]
+# The root is a package, so without this a plain `cargo test` would build and
+# test only `cuno` and skip the crates; CI passes --workspace either way.
+default-members = [".", "crates/*"]
 # Explicit so that the resolver does not depend on which package's edition the
 # workspace happens to read it from.
 resolver = "3"
