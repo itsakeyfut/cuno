@@ -68,6 +68,9 @@ fn no_arguments_is_a_usage_error() {
 }
 
 /// An unknown option is a usage error (exit code 2), reported on stderr.
+///
+/// Mutation: add `ignore_errors = true` to `#[command(...)]` in `src/main.rs`;
+/// the unknown option is then accepted and this test fails.
 #[test]
 fn unknown_option_is_a_usage_error() {
     let out = cuno(&["--unknown"]);
