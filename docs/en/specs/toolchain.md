@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 638d1993525a3a69e268dacc6ebc2d1afd42aa18 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob c05cbcea2351a10899ddbc2ba3f80e7ced52324e -->
 
 # Toolchain
 
@@ -183,6 +183,7 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 
 - On Windows, if Visual Studio / Build Tools is not found, it is an error (Clang also requires Visual Studio, so switching to Clang does not solve it).
 - **When multiple versions of the same compiler are installed**, the newest one that satisfies the version constraint is selected. Preview versions are not selected.
+- **When clang / clang-cl is selected on Windows, one MSVC toolset is still used** (for the headers, libraries and the resolved environment): the toolset with the newest cl.exe among the complete, non-preview Visual Studio installations. The MSVC version constraint is checked only when MSVC is selected ([manifest.md](manifest.md)).
 
 ## Version pinning
 

@@ -181,6 +181,7 @@ C++20 の指定を受け付けるものとする。
 
 - Windows で Visual Studio / Build Tools が見つからない場合はエラーにする（Clang も Visual Studio を必要とするため、Clang への切り替えでは解決しない）。
 - **同じコンパイラが複数バージョン入っている場合**は、バージョン制約を満たすもののうち最新を選ぶ。プレビュー版は選ばない。
+- **Windows で clang / clang-cl を選んだ場合も、MSVC のツールセットを 1 つ使う**（ヘッダ・ライブラリと環境の解決のため）。使うのは、完全でプレビュー版でない Visual Studio のツールセットのうち cl.exe が最新のもの。MSVC のバージョン制約は MSVC を選んだときだけ見る（[manifest.md](manifest.md)）。
 
 ## バージョン固定
 

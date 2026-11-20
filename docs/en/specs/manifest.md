@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 9c666fa998c6c52461b74727ce5432c7fb93c49f -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 95e2775cab93a2d7c93db7d1f271265955352a8e -->
 
 # Configuration Files
 
@@ -436,6 +436,7 @@ Values of `cache`:
 Write a location per tool name. Locations written here take precedence over auto-detection.
 
 - `msvc`: Write the **installation directory** of Visual Studio (or Build Tools) (e.g. `"C:/Program Files/Microsoft Visual Studio/2022/Community"`). MSVC does not work with cl.exe alone, and cuno resolves the environment from that installation ([toolchain.md](toolchain.md)).
+  - When it is written, only the Visual Studio in this directory is used (including the MSVC toolset that clang / clang-cl use). If no Visual Studio with the C++ x64 tools is found there, it is an error (exit code 3).
 - `clang` / `clang-cl` / `gcc` / `safec` / `clang-format` / `clang-tidy` / `sccache` / `ccache`: Write the executable path.
 
 #### `[target.<target>]`
