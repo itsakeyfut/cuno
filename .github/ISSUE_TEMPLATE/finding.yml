@@ -51,7 +51,7 @@ body:
       placeholder: |
         Fixing it means deciding whether clang-cl gets its own column in the
         flag table or always borrows MSVC's, which is a spec change
-        (`docs/ja/specs/manifest.md`). The change that surfaced it was about
+        (`docs/en/specs/manifest.md`). The change that surfaced it was about
         output directories.
     validations:
       required: true
