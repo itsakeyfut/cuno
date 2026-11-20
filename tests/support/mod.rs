@@ -17,6 +17,8 @@
 // does not call.
 #![allow(dead_code)]
 
+pub mod compilers;
+
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
