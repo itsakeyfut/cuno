@@ -5,6 +5,7 @@ use std::ffi::OsStr;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use cuno_core::Env;
@@ -58,16 +59,30 @@ fn run_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let timed_out = || {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "did not finish within {} seconds and was stopped",
+                limit.as_secs_f64()
+            ),
+        )
+    };
     // Each pipe is drained on its own thread, so a child that fills one
-    // cannot stall waiting for cuno to read it.
+    // cannot stall waiting for cuno to read it. The bytes come back over a
+    // channel rather than by joining, so that waiting for them is bounded
+    // by the same deadline: a process the tool started can keep a pipe open
+    // after the tool itself has exited.
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (send, receive) = mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(mut pipe) = pipe {
                 let _ = pipe.read_to_end(&mut bytes);
             }
-            bytes
-        })
+            let _ = send.send(bytes);
+        });
+        receive
     };
     let stdout = drain(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = drain(child.stderr.take().map(|p| Box::new(p) as _));
@@ -79,22 +94,18 @@ fn run_with_timeout(
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            // The readers are left behind rather than joined: a grandchild
-            // still holding a pipe would keep them, and cuno, waiting.
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "did not finish within {} seconds and was stopped",
-                    limit.as_secs_f64()
-                ),
-            ));
+            return Err(timed_out());
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    let collect = |pipe: mpsc::Receiver<Vec<u8>>| {
+        pipe.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| timed_out())
+    };
     Ok(Output {
         success: status.success(),
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout: collect(stdout)?,
+        stderr: collect(stderr)?,
     })
 }
 
@@ -144,6 +155,46 @@ mod tests {
             std::thread::sleep(Duration::from_secs(3));
             std::fs::write(marker, "finished").unwrap();
         }
+    }
+
+    /// Run by [`output_held_open_after_exit_is_waited_for_only_until_the_limit`]:
+    /// starts [`sleeps_then_marks`] with this process's stdout, then exits at
+    /// once, leaving the pipe open behind it.
+    #[test]
+    #[ignore]
+    fn exits_leaving_a_sleeper() {
+        if std::env::var_os("CUNO_LEAVE_SLEEPER").is_some() {
+            // Deliberately not waited for: leaving it running is the point.
+            #[allow(clippy::zombie_processes)]
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--ignored", "--exact", "run::tests::sleeps_then_marks"])
+                .stdout(Stdio::inherit())
+                .spawn()
+                .unwrap();
+        }
+    }
+
+    /// Mutation: wait for the output without the deadline (join the readers);
+    /// this test fails (it returns only when the left-behind process exits).
+    #[test]
+    fn output_held_open_after_exit_is_waited_for_only_until_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (program, _, env) = sleeper(&dir.path().join("marker"));
+        let env = env.with("CUNO_LEAVE_SLEEPER", "1".into());
+        let args = [
+            "--ignored",
+            "--exact",
+            "run::tests::exits_leaving_a_sleeper",
+        ];
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        let started = Instant::now();
+        let err = run_with_timeout(&program, &args, &env, Duration::from_millis(1500)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut, "{err}");
+        assert!(
+            started.elapsed() < Duration::from_millis(2500),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     fn sleeper(marker: &Path) -> (std::path::PathBuf, Vec<std::ffi::OsString>, Env) {
