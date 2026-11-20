@@ -71,9 +71,10 @@ impl Project {
     }
 
     /// The cuno home every program run from this project sees as `CUNO_HOME`.
-    /// It is outside the project directory, so cuno never mistakes it for part
-    /// of the project, and empty unless a test writes into it. Without it, cuno
-    /// would fall back to the developer's real `%USERPROFILE%\.cuno`.
+    /// It sits beside the project directory rather than inside it, so nothing
+    /// that walks or scans the project can come across it, and it is empty
+    /// unless a test writes into it. Without it, cuno would fall back to the
+    /// developer's real `%USERPROFILE%\.cuno`.
     pub fn home(&self) -> &Path {
         &self.home
     }

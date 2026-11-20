@@ -4,6 +4,7 @@
 mod support;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::Command;
 
 use support::compilers::{Missing, Outcome, on_missing};
@@ -19,19 +20,66 @@ fn files_are_written_under_the_project() {
     assert_eq!(read, "contents\n");
 }
 
-/// Mutation: remove `.current_dir(self.path())` from `Project::run`; the child
-/// then runs in the test's own directory and this test fails.
+/// Run only as the program a test starts through `Project::run` (see
+/// `observe`): prints its working directory and environment as UTF-8.
+///
+/// The tests ask this test binary rather than `cmd /C cd`, `set` or `env`,
+/// because those print paths in the console's code page (CP932 on Japanese
+/// Windows), and a temp directory under a non-ASCII user name would then not
+/// decode at all.
+#[test]
+#[ignore = "started as a child program by observe()"]
+fn report_directory_and_environment() {
+    println!("cwd={}", std::env::current_dir().unwrap().display());
+    for (name, value) in std::env::vars_os() {
+        println!("env:{}={}", name.to_string_lossy(), value.to_string_lossy());
+    }
+}
+
+/// What a program run through `project` sees: its working directory and its
+/// environment, from `report_directory_and_environment`.
+fn observe(project: &Project) -> (PathBuf, Vec<(String, String)>) {
+    let run = project.run(
+        std::env::current_exe().unwrap(),
+        &[
+            "--exact",
+            "report_directory_and_environment",
+            "--ignored",
+            "--nocapture",
+        ],
+    );
+    assert_eq!(run.code, Some(0), "{run:?}");
+    let cwd = run
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("cwd="))
+        .unwrap_or_else(|| panic!("no cwd= line:\n{}", run.stdout));
+    let env = run
+        .stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("env:")?.split_once('='))
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+    (PathBuf::from(cwd), env)
+}
+
+/// The value of `name` in an environment from `observe`.
+fn var<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    env.iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+/// Mutation: remove `.current_dir(self.path())` from `Project::run_command`;
+/// the child then runs in the test's own directory and this test fails.
 #[test]
 fn programs_run_in_the_project_directory() {
     let project = Project::new();
-    let run = if cfg!(windows) {
-        project.run("cmd", &["/C", "cd"])
-    } else {
-        project.run("pwd", &[])
-    };
-    let expected = std::fs::canonicalize(project.path()).unwrap();
-    let actual = std::fs::canonicalize(run.stdout.trim_end()).unwrap();
-    assert_eq!(actual, expected, "{run:?}");
+    let (cwd, _) = observe(&project);
+    assert_eq!(
+        std::fs::canonicalize(cwd).unwrap(),
+        std::fs::canonicalize(project.path()).unwrap()
+    );
 }
 
 /// Mutation: give `Project::new` a fixed directory name (`.rand_bytes(0)`);
@@ -124,26 +172,20 @@ fn child_of_run_sees_no_probe_variables() {
         );
     }
     let project = Project::new();
-    let run = if cfg!(windows) {
-        project.run("cmd", &["/C", "set"])
-    } else {
-        project.run("env", &[])
-    };
-    for name in PROBES {
-        let leaked = run.stdout.lines().any(|line| line == format!("{name}=1"));
-        assert!(!leaked, "{name} reached the child:\n{}", run.stdout);
+    let (_, env) = observe(&project);
+    for name in ["CUNO_PROBE", "CLICOLOR_FORCE"] {
+        assert_eq!(var(&env, name), None, "{name} reached the child");
     }
-    let home = format!("CUNO_HOME={}", project.home().display());
-    assert!(
-        run.stdout.lines().any(|line| line == home),
-        "the child should see {home}:\n{}",
-        run.stdout
+    // CUNO_HOME is present, but as the project's own home, not the parent's.
+    assert_eq!(
+        var(&env, "CUNO_HOME").map(PathBuf::from),
+        Some(project.home().to_path_buf())
     );
 }
 
-/// Mutation: remove the `hermetic(...)` call from `Project::run`, or pass it
-/// an empty iterator; the probe variables then reach the child and this test
-/// fails. Mutation: set `CUNO_HOME` before the `hermetic` call in
+/// Mutation: remove the `hermetic(...)` call from `Project::run_command`, or
+/// pass it an empty iterator; the probe variables then reach the child and
+/// this test fails. Mutation: set `CUNO_HOME` before the `hermetic` call in
 /// `Project::run_command`; `hermetic` then removes it and this test fails.
 #[test]
 fn run_does_not_pass_on_parent_variables() {
@@ -173,24 +215,30 @@ fn run_does_not_pass_on_parent_variables() {
 #[test]
 fn programs_see_the_project_s_own_cuno_home() {
     let project = Project::new();
-    let run = if cfg!(windows) {
-        project.run("cmd", &["/C", "echo %CUNO_HOME%"])
-    } else {
-        project.run("printenv", &["CUNO_HOME"])
-    };
+    let (_, env) = observe(&project);
     assert_eq!(
-        run.stdout.trim_end(),
-        project.home().to_str().unwrap(),
-        "{run:?}"
+        var(&env, "CUNO_HOME").map(PathBuf::from),
+        Some(project.home().to_path_buf())
     );
     assert!(project.home().is_dir());
     assert!(!project.home().starts_with(project.path()));
 }
 
-// The missing-compiler policy and the MSVC environment capture in
-// `tests/support/compilers.rs`; the compilers themselves are tested in
-// `tests/toolchains.rs`.
+/// Mutation: keep the temporary directory (`.disable_cleanup(true)` on the
+/// `tempfile::Builder` in `Project::new`); the directory holding the project
+/// and its home then outlives the `Project` and this test fails.
+#[test]
+fn dropping_a_project_removes_its_directories() {
+    let project = Project::new().file("a.txt", "a");
+    let root = project.path().parent().unwrap().to_path_buf();
+    assert!(project.home().starts_with(&root));
+    drop(project);
+    assert!(!root.exists(), "{} was left behind", root.display());
+}
 
+// Tests of the missing-compiler policy and the MSVC environment capture in
+// `tests/support/compilers.rs`. The compilers themselves are tested in
+// `tests/toolchains.rs`.
 fn missing() -> Missing {
     Missing {
         compiler: "clang",
