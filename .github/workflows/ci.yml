@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run for the previous push. Runs on
+# main are never cancelled, so every commit on main gets a complete result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -38,6 +44,19 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
+      # Dependencies and build output, keyed on the job, the exact compiler and
+      # Cargo.lock: a new compiler or a changed lock file starts from scratch.
+      - name: Compiler version
+        id: rustc
+        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   doc:
@@ -50,6 +69,19 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      # Dependencies and build output, keyed on the job, the exact compiler and
+      # Cargo.lock: a new compiler or a changed lock file starts from scratch.
+      - name: Compiler version
+        id: rustc
+        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo doc --workspace --no-deps
 
   test:
@@ -60,6 +92,19 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      # Dependencies and build output, keyed on the job, the exact compiler and
+      # Cargo.lock: a new compiler or a changed lock file starts from scratch.
+      - name: Compiler version
+        id: rustc
+        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo test --workspace --no-fail-fast
 
   msrv:
@@ -75,4 +120,17 @@ jobs:
           test -n "$msrv" || { echo "rust-version not found in Cargo.toml"; exit 1; }
           rustup toolchain install "$msrv" --profile minimal
           rustup default "$msrv"
+      # Dependencies and build output, keyed on the job, the exact compiler and
+      # Cargo.lock: a new compiler or a changed lock file starts from scratch.
+      - name: Compiler version
+        id: rustc
+        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo test --workspace --no-fail-fast
