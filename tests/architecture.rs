@@ -1,140 +1,155 @@
-//! The allowed dependencies between cuno's crates, checked against every
-//! `crates/*/Cargo.toml`.
+//! The allowed dependencies between cuno's crates, checked against what Cargo
+//! actually resolves for every crate under `crates/`.
 //!
 //! Cargo rejects only cycles, so a dependency in a direction the design does
-//! not allow would otherwise build without complaint. The table below mirrors
-//! `docs/en/specs/architecture.md`, "Dependencies between crates"; change the
-//! spec first, then this table.
+//! not allow would otherwise build without complaint. The allowed directions
+//! are read from the table in `docs/en/specs/architecture.md`, "Dependencies
+//! between crates", so the spec is the only copy of them: changing the design
+//! means changing that table, and this test follows.
 
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 
-/// Each crate under `crates/` and the `cuno-*` crates it may depend on.
-const ALLOWED: &[(&str, &[&str])] = &[
-    ("cuno-core", &[]),
-    ("cuno-toolchain", &["cuno-core"]),
-    ("cuno-manifest", &["cuno-core", "cuno-toolchain"]),
-    (
-        "cuno-build",
-        &["cuno-core", "cuno-manifest", "cuno-toolchain"],
-    ),
-    ("cuno-test", &["cuno-core"]),
-    (
-        "cuno-tools",
-        &["cuno-core", "cuno-manifest", "cuno-toolchain"],
-    ),
-    (
-        "cuno-deps",
-        &["cuno-core", "cuno-manifest", "cuno-toolchain"],
-    ),
-    ("cuno-script", &["cuno-core", "cuno-build"]),
-];
+const SPEC: &str = "docs/en/specs/architecture.md";
+const SECTION: &str = "## Dependencies between crates";
 
-/// The package name and the `cuno-*` entries of `[dependencies]` in a
-/// `Cargo.toml`. Entries are read in both the `cuno-x = ...` and the
-/// `cuno-x.workspace = true` forms; `[dev-dependencies]` and other tables are
-/// ignored, since test-only edges do not shape the build.
-fn crate_and_dependencies(manifest: &str) -> (String, Vec<String>) {
-    let mut name = None;
-    let mut deps = Vec::new();
-    let mut table = String::new();
-    for line in manifest.lines().map(str::trim) {
-        if line.starts_with('[') {
-            table = line.trim_matches(|c| c == '[' || c == ']').to_owned();
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
+/// The crates in the spec's table and the `cuno-*` crates each may depend on.
+/// `None` means "all" (the `cuno` binary). A row marked "(later)" is a crate
+/// that does not exist yet and is read like any other.
+fn allowed_from_spec(spec: &str) -> BTreeMap<String, Option<Vec<String>>> {
+    let section = spec
+        .split_once(SECTION)
+        .unwrap_or_else(|| panic!("{SPEC} has no {SECTION:?} section"))
+        .1;
+    let section = section.split("\n## ").next().unwrap();
+    let mut table = BTreeMap::new();
+    for row in section.lines().filter(|line| line.starts_with("| `")) {
+        let cells: Vec<&str> = row.trim_matches('|').split('|').map(str::trim).collect();
+        let [krate, deps] = cells[..] else {
+            panic!("unexpected row in {SPEC}: {row}");
         };
-        let key = key.trim();
-        if table == "package" && key == "name" {
-            name = Some(value.trim().trim_matches('"').to_owned());
-        } else if table == "dependencies" {
-            let dep = key.split('.').next().unwrap_or(key).trim();
-            if dep.starts_with("cuno-") {
-                deps.push(dep.to_owned());
-            }
-        }
+        let name = backticked(krate).into_iter().next().unwrap();
+        let deps = (deps != "all").then(|| backticked(deps));
+        table.insert(name, deps);
     }
-    (name.expect("a [package] name"), deps)
+    assert!(!table.is_empty(), "no rows read from {SECTION:?} in {SPEC}");
+    table
 }
 
-/// Every crate under `crates/`, as (package name, `cuno-*` dependencies).
-fn workspace_crates() -> Vec<(String, Vec<String>)> {
-    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates");
-    let mut found: Vec<_> = std::fs::read_dir(&crates)
-        .expect("crates/ should exist")
-        .map(|entry| entry.unwrap().path().join("Cargo.toml"))
-        .filter(|manifest| manifest.is_file())
-        .map(|manifest| crate_and_dependencies(&std::fs::read_to_string(manifest).unwrap()))
-        .collect();
-    found.sort();
+/// The names written in backticks in a table cell.
+fn backticked(cell: &str) -> Vec<String> {
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every crate under `crates/` and the `cuno-*` packages it depends on, as
+/// Cargo resolves them: every form of declaring a dependency (inline, table,
+/// `.workspace = true`, renamed with `package =`, target-specific) and both
+/// normal and build dependencies. Dev-dependencies are left out, since
+/// test-only edges do not shape what is built.
+fn workspace_crates() -> BTreeMap<String, Vec<String>> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(root)
+        .output()
+        .expect("cargo metadata should run");
+    assert!(output.status.success(), "{output:?}");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata prints JSON");
+
+    let crates_dir = root.join("crates");
+    let mut found = BTreeMap::new();
+    for package in metadata["packages"].as_array().unwrap() {
+        let manifest = Path::new(package["manifest_path"].as_str().unwrap());
+        if !manifest.starts_with(&crates_dir) {
+            continue; // the root `cuno` package, which may depend on all
+        }
+        let mut deps: Vec<String> = package["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|dep| dep["kind"].as_str() != Some("dev"))
+            .map(|dep| dep["name"].as_str().unwrap().to_owned())
+            .filter(|name| name.starts_with("cuno-"))
+            .collect();
+        deps.sort();
+        deps.dedup();
+        found.insert(package["name"].as_str().unwrap().to_owned(), deps);
+    }
     found
 }
 
-fn allowed(name: &str) -> Option<&'static [&'static str]> {
-    ALLOWED
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, deps)| *deps)
+fn spec() -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(SPEC)).unwrap()
 }
 
-/// Mutation: add `cuno-manifest = { path = "../cuno-manifest" }` under
-/// `[dependencies]` in `crates/cuno-toolchain/Cargo.toml`, or any `cuno-*`
-/// dependency to `crates/cuno-core/Cargo.toml`; this test fails.
+/// Mutation: add `cuno-manifest = { path = "../cuno-manifest" }` to
+/// `crates/cuno-toolchain/Cargo.toml` under `[dependencies]`, under
+/// `[target.'cfg(windows)'.dependencies]`, under `[build-dependencies]`, as
+/// `[dependencies.cuno-manifest]`, or renamed (`m = { path = ..., package =
+/// "cuno-manifest" }`); this test fails each time.
 #[test]
 fn crate_dependencies_follow_architecture() {
+    let allowed = allowed_from_spec(&spec());
     let mut violations = Vec::new();
     for (name, deps) in workspace_crates() {
-        let Some(permitted) = allowed(&name) else {
+        let Some(Some(permitted)) = allowed.get(&name) else {
             continue; // reported by every_crate_is_in_the_architecture_table
         };
-        for dep in deps {
-            if !permitted.contains(&dep.as_str()) {
-                violations.push(format!(
-                    "{name} depends on {dep}, which architecture.md does not allow"
-                ));
-            }
+        for dep in deps.iter().filter(|dep| !permitted.contains(dep)) {
+            violations.push(format!(
+                "{name} depends on {dep}, which {SPEC}, {SECTION:?}, does not allow"
+            ));
         }
     }
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
-/// Mutation: add a crate under `crates/` without an entry in `ALLOWED`, or
-/// remove `cuno-core` from `ALLOWED`; this test fails.
+/// Mutation: add a crate under `crates/` without a row in the spec's table, or
+/// remove the `cuno-core` row from it; this test fails.
 #[test]
 fn every_crate_is_in_the_architecture_table() {
+    let allowed = allowed_from_spec(&spec());
     let missing: Vec<_> = workspace_crates()
-        .into_iter()
-        .map(|(name, _)| name)
-        .filter(|name| allowed(name).is_none())
+        .into_keys()
+        .filter(|name| !allowed.contains_key(name))
         .collect();
     assert!(
         missing.is_empty(),
-        "crates not in the dependency table of architecture.md: {missing:?}"
+        "crates with no row in {SPEC}, {SECTION:?}: {missing:?}"
     );
 }
 
-/// Mutation: make `crate_and_dependencies` skip the `cuno-x.workspace = true`
-/// form, or read `[dev-dependencies]`; this test fails.
+/// Mutation: make `allowed_from_spec` read "all" as an empty list, or drop
+/// the "(later)" rows; this test fails.
 #[test]
-fn dependencies_are_read_in_every_form_and_only_from_dependencies() {
-    let manifest = r#"
-[package]
-name = "cuno-example"
+fn the_spec_table_is_read_as_written() {
+    let spec = "\
+## Dependencies between crates
 
-[dependencies]
-cuno-core.workspace = true
-cuno-toolchain = { path = "../cuno-toolchain" }
-clap.workspace = true
+| Crate | May depend on |
+|---|---|
+| `cuno-core` | none |
+| `cuno-manifest` | `cuno-core`, `cuno-toolchain` |
+| `cuno-deps` (later) | `cuno-core` |
+| `cuno` (the binary) | all |
 
-[dev-dependencies]
-cuno-build = { path = "../cuno-build" }
-"#;
+## Next
+| `ignored` | `ignored` |
+";
+    let table = allowed_from_spec(spec);
+    let expect = |deps: &[&str]| Some(deps.iter().map(|d| d.to_string()).collect());
+    assert_eq!(table.len(), 4, "{table:?}");
+    assert_eq!(table["cuno-core"], expect(&[]));
     assert_eq!(
-        crate_and_dependencies(manifest),
-        (
-            "cuno-example".to_owned(),
-            vec!["cuno-core".to_owned(), "cuno-toolchain".to_owned()]
-        )
+        table["cuno-manifest"],
+        expect(&["cuno-core", "cuno-toolchain"])
     );
+    assert_eq!(table["cuno-deps"], expect(&["cuno-core"]));
+    assert_eq!(table["cuno"], None);
 }
