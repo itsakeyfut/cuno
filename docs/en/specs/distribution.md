@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob bf6d214951fc4c35ae8d0b2009629d4731bcbce9 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob f7b4979e02dad9b374b9f978581663aba9029216 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -45,6 +45,7 @@ Supported in the order Windows x64 → Linux x64 → macOS (arm64).
 
 - cuno itself uses semantic versioning.
 - From 1.0 onward, backward compatibility of `cuno.toml` is guaranteed (an old `cuno.toml` works as is with a newer cuno).
+- Whether to release 1.0 will be considered once production adoption is reported. Completing milestones alone does not make a 1.0 ([roadmap.md](../roadmap.md)).
 
 ## Accepting contributions
 
@@ -53,5 +54,4 @@ Supported in the order Windows x64 → Linux x64 → macOS (arm64).
 
 ## Open questions
 
-- Criteria for 1.0
 - Code of Conduct, and whether a DCO / CLA is required
