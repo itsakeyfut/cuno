@@ -11,30 +11,17 @@
 //! `<COMMAND>`) or when clap is upgraded; update them then rather than bending
 //! the code to keep the old text.
 
-use std::process::{Command, Output};
+mod support;
 
-/// Runs the built `cuno` binary with `args` and returns what it printed.
+use support::{Project, Run};
+
+/// Runs the built `cuno` binary with `args` in a fresh, empty project.
 ///
-/// The colour variables clap reads are removed, so the output does not depend
-/// on the environment the tests run in: with `CLICOLOR_FORCE=1` set, clap would
-/// otherwise add ANSI escapes to the help and error text and every exact-text
-/// test would fail.
-fn cuno(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_cuno"))
-        .args(args)
-        .env_remove("CLICOLOR_FORCE")
-        .env_remove("CLICOLOR")
-        .env_remove("NO_COLOR")
-        .output()
-        .expect("the cuno binary should start")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).expect("stdout should be UTF-8")
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8(output.stderr.clone()).expect("stderr should be UTF-8")
+/// The environment is hermetic (see `support::hermetic`): with
+/// `CLICOLOR_FORCE=1` inherited, clap would add ANSI escapes to the help and
+/// error text and every exact-text test would fail.
+fn cuno(args: &[&str]) -> Run {
+    Project::new().cuno(args)
 }
 
 /// The usage text, printed by `--help` and by `cuno` with no command.
@@ -52,13 +39,7 @@ Options:
 /// the version format; this test fails.
 #[test]
 fn version_prints_the_name_and_the_package_version() {
-    let out = cuno(&["--version"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        stdout(&out),
-        format!("cuno {}\n", env!("CARGO_PKG_VERSION"))
-    );
-    assert_eq!(stderr(&out), "");
+    cuno(&["--version"]).assert(0, &format!("cuno {}\n", env!("CARGO_PKG_VERSION")), "");
 }
 
 /// Mutation (Windows only, where the executable is `cuno.exe`): remove
@@ -67,10 +48,7 @@ fn version_prints_the_name_and_the_package_version() {
 /// `Cargo.toml`; the first line changes and this test fails.
 #[test]
 fn help_prints_usage_and_exits_zero() {
-    let out = cuno(&["--help"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(stdout(&out), HELP);
-    assert_eq!(stderr(&out), "");
+    cuno(&["--help"]).assert(0, HELP, "");
 }
 
 /// Like Cargo, `cuno` with no command prints the usage to stdout and succeeds.
@@ -79,10 +57,7 @@ fn help_prints_usage_and_exits_zero() {
 /// `src/main.rs`; `cuno` then exits 0 with no output and this test fails.
 #[test]
 fn no_command_prints_usage_and_exits_zero() {
-    let out = cuno(&[]);
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(stdout(&out), HELP);
-    assert_eq!(stderr(&out), "");
+    cuno(&[]).assert(0, HELP, "");
 }
 
 /// An unknown option is a usage error (exit code 2), reported on stderr.
@@ -91,18 +66,16 @@ fn no_command_prints_usage_and_exits_zero() {
 /// the unknown option is then accepted and this test fails.
 #[test]
 fn unknown_option_is_a_usage_error() {
-    let out = cuno(&["--unknown"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(stdout(&out), "");
-    assert_eq!(
-        stderr(&out),
+    cuno(&["--unknown"]).assert(
+        2,
+        "",
         "\
 error: unexpected argument '--unknown' found
 
 Usage: cuno
 
 For more information, try '--help'.
-"
+",
     );
 }
 
@@ -114,17 +87,15 @@ For more information, try '--help'.
 /// this test fails.
 #[test]
 fn unexpected_argument_is_a_usage_error() {
-    let out = cuno(&["foo"]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(stdout(&out), "");
-    assert_eq!(
-        stderr(&out),
+    cuno(&["foo"]).assert(
+        2,
+        "",
         "\
 error: unexpected argument 'foo' found
 
 Usage: cuno
 
 For more information, try '--help'.
-"
+",
     );
 }
