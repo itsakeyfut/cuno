@@ -1,0 +1,78 @@
+# Checks every pull request and every push to main. One job per check, so a
+# failure is visible by name and branch protection can require each by name.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Manual runs on any branch: `gh workflow run ci.yml --ref <branch>`.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fmt:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  doc:
+    runs-on: windows-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - run: cargo doc --workspace --no-deps
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - run: cargo test --workspace --no-fail-fast
+
+  msrv:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The MSRV is read from Cargo.toml rather than repeated here, so raising
+      # `rust-version` cannot leave CI testing the old one.
+      # See docs/en/specs/architecture.md, "Rust".
+      - name: Install toolchain
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          test -n "$msrv" || { echo "rust-version not found in Cargo.toml"; exit 1; }
+          rustup toolchain install "$msrv" --profile minimal
+          rustup default "$msrv"
+      - run: cargo test --workspace --no-fail-fast
