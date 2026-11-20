@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob d368df5f158b887f404135803d26b74f500438f9 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 9745bc8dadfc35b029e7b753853b109584534736 -->
 
 # Toolchain
 
@@ -50,11 +50,14 @@ A compiler must accept a C++20 specification.
 | Compiler | Minimum version |
 |---|---|
 | MSVC | VS 2019 16.11 or later (cl.exe 19.29 or later) |
-| Clang | 17 or later |
+| Clang | 17 or later, and on Windows accepted by the MSVC standard library in use |
 | GCC | 10 or later |
 
-- Why Clang 17 or later: the VS 2022 standard library (MSVC STL) errors out (STL1000) on Clang older than 17. Also, `-fms-runtime-lib`, which specifies the C runtime kind for GNU-style `clang`, is only available in Clang 16 and later (without it, the default is the static runtime, which conflicts with the `runtime = "dynamic"` default).
-- `cuno doctor` reports a "problem" if the selected compiler is below the minimum version.
+- Why Clang 17 or later: the VS 2022 standard library (MSVC STL) errors out (STL1000) on Clang older than 17 (one instance of the problem the check below handles). Also, `-fms-runtime-lib`, which specifies the C runtime kind for GNU-style `clang`, is only available in Clang 16 and later (without it, the default is the static runtime, which conflicts with the `runtime = "dynamic"` default).
+- **On Windows, the Clang must also be accepted by the MSVC standard library (MSVC STL).** The MSVC STL errors out (STL1000) on a Clang older than its own floor, and that floor rises as Visual Studio is updated (for example, MSVC 14.52 requires Clang 22 or newer). It cannot be expressed as a fixed number, so cuno asks the standard library itself.
+  - Method: with the selected Clang and the resolved Windows environment, compile a file that includes only `<yvals_core.h>`, as a syntax check only (`/Zs` for `clang-cl`, `-fsyntax-only` for `clang`). If it fails with STL1000, the pairing cannot be used. The Clang version needed is taken from the standard library's message (`expected Clang N or newer`) and shown in `help:`.
+  - Rationale: reading the header's condition, or keeping a table of MSVC versions in cuno, could judge an unusable pairing as fine once a new Visual Studio changes how the header is written or which version it requires. The probe compile takes about 35 milliseconds and uses the standard library's own answer.
+- The minimum versions and the check above are one decision, used by both `cuno doctor` and the build commands. `cuno doctor` reports a "problem" when it is not met (exit code 1); the build commands make it an error before compiling (exit code 3).
 
 - Inside cuno, in `[toolchain.version]` of `cuno.toml`, and in output messages, MSVC versions are expressed as the **cl.exe version** (e.g. `19.29`). The Visual Studio product version (e.g. `16.11`) is not used.
 
