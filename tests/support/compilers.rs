@@ -253,24 +253,34 @@ fn resolve_msvc_environment() -> Result<HashMap<String, String>, Missing> {
     // `raw_arg`.
     let output = Command::new("cmd")
         .raw_arg(format!(
-            "/d /s /c \"call \"{}\" >nul && set\"",
+            "/d /s /c \"call \"{}\" && echo {ENV_MARKER} && set\"",
             vcvars.display()
         ))
         .output()
         .map_err(|e| missing(format!("cmd could not run vcvars64.bat: {e}")))?;
-    if !output.status.success() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // vcvars64.bat reports its errors on stdout, so its output is kept rather
+    // than discarded, and the environment is only what `set` printed after
+    // the marker.
+    let Some((_, env)) = stdout.split_once(ENV_MARKER) else {
         return Err(missing(format!(
-            "{} failed: {}",
+            "{} failed:\n{}\n{}",
             vcvars.display(),
-            String::from_utf8_lossy(&output.stdout)
+            stdout.trim_end(),
+            String::from_utf8_lossy(&output.stderr).trim_end()
         )));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
+    };
+    Ok(env
         .lines()
         .filter_map(|line| line.split_once('='))
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect())
 }
+
+/// Printed between vcvars64.bat's own output and `set`'s; only reached when
+/// vcvars64.bat succeeded.
+#[cfg(windows)]
+const ENV_MARKER: &str = "--- cuno-test: environment follows ---";
 
 /// The installation path of the latest Visual Studio with the C++ x64 tools.
 #[cfg(windows)]
