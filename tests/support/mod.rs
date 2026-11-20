@@ -17,6 +17,8 @@
 // does not call.
 #![allow(dead_code)]
 
+pub mod compilers;
+
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Command;
@@ -64,7 +66,16 @@ impl Project {
     /// than cuno, such as what cuno builds.
     pub fn run(&self, program: impl AsRef<OsStr>, args: &[&str]) -> Run {
         let mut cmd = Command::new(program);
-        cmd.args(args).current_dir(self.path());
+        cmd.args(args);
+        self.run_command(cmd)
+    }
+
+    /// Runs a prepared `cmd` in the project directory, with the same hermetic
+    /// environment as [`Project::run`]. Variables `cmd` sets itself are kept
+    /// unless [`hermetic`] removes them; used for compilers, which need an
+    /// environment of their own (see [`compilers`]).
+    pub fn run_command(&self, mut cmd: Command) -> Run {
+        cmd.current_dir(self.path());
         hermetic(&mut cmd, std::env::vars_os().map(|(name, _)| name));
         let output = cmd.output().expect("the program should start");
         Run {
