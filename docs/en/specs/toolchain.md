@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob a549ce2d597d8b0de75ac289c514ed92aac1fa80 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob a9112f2db926a7d356c180cd1be7ec4ae6343b3d -->
 
 # Toolchain
 
@@ -125,6 +125,19 @@ A compiler must accept a C++20 specification.
   - A toolset whose cl.exe does not tell its version is left out as unusable, and detecting the other toolsets continues. If no usable toolset remains, it is an error.
 - Preview installations and incomplete installations (those vswhere does not report as complete and launchable: an error in setup, or a reboot pending) are detected too (so `cuno doctor` can show them). Whether to choose one is decided by "Selection", which chooses neither. When vswhere does not report this information, the installation is treated as a preview and incomplete.
 - If there is no installation with the C++ x64 tools, or no vswhere, it is an error (exit code 3) with guidance on installing the "Desktop development with C++" workload of Build Tools.
+
+### LLVM (clang / clang-cl / clang-format / clang-tidy)
+
+- Each of the four tools is looked for in the following order, and every one found is recorded.
+  1. The path written in `[toolchain.paths]` ([manifest.md](manifest.md))
+  2. Each directory on `PATH`
+  3. On Windows, `%ProgramFiles%\LLVM\bin` (the default location of the official LLVM installer)
+  4. On Windows, `VC\Tools\Llvm\x64\bin` of each detected Visual Studio (the Clang bundled with Visual Studio)
+- The same file found from several places counts as one.
+- **The version is read from what the tool prints when run with `--version`**: the first `<n>.<n>.<n>` after `version` (`clang version 22.1.8`; clang-tidy prints `LLVM version 22.1.8`).
+- Which one is used when several are found is decided by "Selection" (the newest that satisfies the version conditions; the list keeps this search order).
+- If the path written in `[toolchain.paths]` has no file, it is an error (exit code 3) naming that setting, so that a tool the user named is never silently replaced by another.
+- A tool not being found is not itself an error in detection. Whether it is needed is decided by each command that uses it (`cuno doctor`, `cuno fmt` / `cuno lint`, the build commands).
 
 ## Selection
 
