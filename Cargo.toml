@@ -2,7 +2,8 @@
 # `tests/` that run it. See docs/en/specs/architecture.md, "Repository layout".
 [package]
 name = "cuno"
-description = "The cuno command: a Cargo-like build, package and test tool for C and C++."
+# Also the first line of `cuno --help` (src/main.rs reads it via `about`).
+description = "One tool for C/C++ development, with the feel of Cargo."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
