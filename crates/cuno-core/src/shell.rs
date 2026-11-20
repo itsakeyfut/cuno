@@ -1,19 +1,20 @@
 //! Writing what cuno shows the user: errors, warnings, help and status lines,
-//! in colour or not. See `docs/en/specs/commands.md`, "Output".
+//! in color or not. See `docs/en/specs/commands.md`, "Output".
 
+use std::fmt::Display;
 use std::io::Write;
 
-use crate::{CunoError, Env};
+use crate::Env;
 
-/// The `--color` / `[term] color` choice (`docs/en/specs/commands.md`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// A color choice given with `--color` or `[term] color`
+/// (`docs/en/specs/commands.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColorChoice {
-    /// Colour only when writing to a terminal and `NO_COLOR` is unset.
-    #[default]
+    /// Color only when writing to a terminal.
     Auto,
-    /// Always colour.
+    /// Always color.
     Always,
-    /// Never colour.
+    /// Never color.
     Never,
 }
 
@@ -24,62 +25,71 @@ const BOLD_CYAN: &str = "\x1b[1;36m";
 const BOLD_GREEN: &str = "\x1b[1;32m";
 
 /// Where cuno's messages go (stderr for the binary). Crates write through a
-/// `Shell` instead of printing, so the colour decision is made once.
+/// `Shell` instead of printing, so the color decision is made once.
 pub struct Shell {
     out: Box<dyn Write>,
     color: bool,
 }
 
 impl Shell {
-    /// A shell writing to `out`. `out_is_terminal` says whether `out` is a
-    /// terminal, which `ColorChoice::Auto` needs.
+    /// A shell writing to `out`. `choice` is the color choice the user gave,
+    /// or `None` when they gave none; `out_is_terminal` says whether `out` is
+    /// a terminal.
     ///
-    /// `NO_COLOR` (any value) turns `Auto` into no colour, but not `Always`:
-    /// an explicit choice wins, as `commands.md` specifies.
+    /// With no choice given, `NO_COLOR` (set to anything, including empty)
+    /// means no color, and otherwise color follows the terminal. A choice the
+    /// user gave always wins over `NO_COLOR`, including an explicit `auto`, as
+    /// `commands.md` specifies.
     pub fn new(
         out: Box<dyn Write>,
-        choice: ColorChoice,
+        choice: Option<ColorChoice>,
         env: &Env,
         out_is_terminal: bool,
     ) -> Shell {
         let color = match choice {
-            ColorChoice::Always => true,
-            ColorChoice::Never => false,
-            ColorChoice::Auto => out_is_terminal && env.get("NO_COLOR").is_none(),
+            Some(ColorChoice::Always) => true,
+            Some(ColorChoice::Never) => false,
+            Some(ColorChoice::Auto) => out_is_terminal,
+            None => out_is_terminal && env.get("NO_COLOR").is_none(),
         };
         Shell { out, color }
     }
 
-    /// Whether this shell writes colour.
-    pub fn color(&self) -> bool {
+    /// Whether this shell writes color escape codes.
+    pub fn uses_color(&self) -> bool {
         self.color
     }
 
-    /// `error: <error>`, then `help: <help>` when the error has one.
-    pub fn error(&mut self, error: &dyn CunoError) {
-        self.line(BOLD_RED, "error", &error.to_string());
-        if let Some(help) = error.help() {
-            self.line(BOLD_CYAN, "help", &help);
-        }
+    /// `error: <message>`.
+    pub fn error(&mut self, message: impl Display) {
+        self.line(BOLD_RED, "error", message);
     }
 
     /// `warning: <message>`.
-    pub fn warning(&mut self, message: &str) {
+    pub fn warning(&mut self, message: impl Display) {
         self.line(BOLD_YELLOW, "warning", message);
+    }
+
+    /// `help: <message>`, how to fix what the previous line reported.
+    pub fn help(&mut self, message: impl Display) {
+        self.line(BOLD_CYAN, "help", message);
     }
 
     /// A status line: `verb` right-aligned in 12 columns, then `message`, as
     /// in `   Compiling mygame v0.1.0`.
-    pub fn status(&mut self, verb: &str, message: &str) {
-        let verb = format!("{verb:>12}");
-        let verb = self.paint(BOLD_GREEN, &verb);
-        // A failed write to stderr cannot be reported anywhere better.
-        let _ = writeln!(self.out, "{verb} {message}");
+    pub fn status(&mut self, verb: &str, message: impl Display) {
+        let verb = self.paint(BOLD_GREEN, &format!("{verb:>12}"));
+        self.write(format_args!("{verb} {message}"));
     }
 
-    fn line(&mut self, style: &str, label: &str, message: &str) {
+    fn line(&mut self, style: &str, label: &str, message: impl Display) {
         let label = self.paint(style, label);
-        let _ = writeln!(self.out, "{label}: {message}");
+        self.write(format_args!("{label}: {message}"));
+    }
+
+    fn write(&mut self, line: std::fmt::Arguments<'_>) {
+        // A failed write to stderr cannot be reported anywhere better.
+        let _ = writeln!(self.out, "{line}");
     }
 
     fn paint(&self, style: &str, text: &str) -> String {
@@ -94,7 +104,7 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExitClass;
+    use crate::env::NameCase;
     use std::sync::{Arc, Mutex};
 
     /// A writer the test can read back after the `Shell` has written to it.
@@ -116,74 +126,72 @@ mod tests {
         }
     }
 
-    fn shell(choice: ColorChoice, env: &[(&str, &str)], terminal: bool) -> (Shell, Captured) {
+    fn shell(
+        choice: Option<ColorChoice>,
+        env: &[(&str, &str)],
+        terminal: bool,
+    ) -> (Shell, Captured) {
         let out = Captured::default();
-        let env = Env::from_pairs(env.iter().map(|(n, v)| (n.into(), v.into())));
+        let env = Env::from_pairs(
+            env.iter().map(|(n, v)| (n.into(), v.into())),
+            NameCase::Sensitive,
+        );
         (
             Shell::new(Box::new(out.clone()), choice, &env, terminal),
             out,
         )
     }
 
-    #[derive(Debug)]
-    struct Fake(Option<&'static str>);
-    impl std::fmt::Display for Fake {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("no compiler found")
-        }
-    }
-    impl std::error::Error for Fake {}
-    impl CunoError for Fake {
-        fn exit_class(&self) -> ExitClass {
-            ExitClass::Config
-        }
-        fn help(&self) -> Option<String> {
-            self.0.map(str::to_owned)
-        }
-    }
-
-    /// Mutation: drop the `help:` line from `Shell::error`, or change a
-    /// label; this test fails.
+    /// Mutation: change a label in `error`, `warning`, `help` or `status`,
+    /// or the width in `status`; this test fails.
     #[test]
-    fn errors_print_error_then_help() {
-        let (mut sh, out) = shell(ColorChoice::Never, &[], false);
-        sh.error(&Fake(Some("install Build Tools")));
-        sh.error(&Fake(None));
-        assert_eq!(
-            out.text(),
-            "error: no compiler found\nhelp: install Build Tools\nerror: no compiler found\n"
-        );
-    }
-
-    /// Mutation: change the width in `Shell::status`; this test fails.
-    #[test]
-    fn status_verbs_are_right_aligned_in_twelve_columns() {
-        let (mut sh, out) = shell(ColorChoice::Never, &[], false);
-        sh.status("Compiling", "mygame v0.1.0");
+    fn lines_without_color() {
+        let (mut sh, out) = shell(Some(ColorChoice::Never), &[], false);
+        sh.error("no compiler found");
+        sh.help("install Build Tools");
         sh.warning("unused key");
+        sh.status("Compiling", "mygame v0.1.0");
         assert_eq!(
             out.text(),
-            "   Compiling mygame v0.1.0\nwarning: unused key\n"
+            "error: no compiler found\nhelp: install Build Tools\nwarning: unused key\n   Compiling mygame v0.1.0\n"
         );
     }
 
-    /// Mutation: ignore `NO_COLOR`, let it override `Always`, or colour when
-    /// not a terminal under `Auto`; this test fails.
+    /// Mutation: swap or drop the style of any label, or stop painting the
+    /// status verb; this test fails.
+    #[test]
+    fn lines_with_color_paint_only_the_label() {
+        let (mut sh, out) = shell(Some(ColorChoice::Always), &[], false);
+        sh.error("e");
+        sh.help("h");
+        sh.warning("w");
+        sh.status("Compiling", "m");
+        assert_eq!(
+            out.text(),
+            "\x1b[1;31merror\x1b[0m: e\n\
+             \x1b[1;36mhelp\x1b[0m: h\n\
+             \x1b[1;33mwarning\x1b[0m: w\n\
+             \x1b[1;32m   Compiling\x1b[0m m\n"
+        );
+    }
+
+    /// Mutation: let `NO_COLOR` override an explicit choice (including an
+    /// explicit `auto`), ignore it when no choice was given, or color when not
+    /// a terminal under `auto`; this test fails.
     #[test]
     fn color_follows_the_choice_the_terminal_and_no_color() {
-        let on = |choice, env: &[(&str, &str)], terminal| shell(choice, env, terminal).0.color();
-        assert!(on(ColorChoice::Auto, &[], true));
-        assert!(!on(ColorChoice::Auto, &[], false));
-        assert!(!on(ColorChoice::Auto, &[("NO_COLOR", "1")], true));
-        assert!(on(ColorChoice::Always, &[("NO_COLOR", "1")], false));
-        assert!(!on(ColorChoice::Never, &[], true));
-    }
-
-    /// Mutation: stop painting the label when colour is on; this test fails.
-    #[test]
-    fn colour_wraps_the_label_only() {
-        let (mut sh, out) = shell(ColorChoice::Always, &[], false);
-        sh.warning("x");
-        assert_eq!(out.text(), "\x1b[1;33mwarning\x1b[0m: x\n");
+        let on =
+            |choice, env: &[(&str, &str)], terminal| shell(choice, env, terminal).0.uses_color();
+        let no_color: &[(&str, &str)] = &[("NO_COLOR", "")];
+        // No choice given: the terminal decides, and NO_COLOR (even empty)
+        // turns color off.
+        assert!(on(None, &[], true));
+        assert!(!on(None, &[], false));
+        assert!(!on(None, no_color, true));
+        // A choice given wins over NO_COLOR.
+        assert!(on(Some(ColorChoice::Auto), no_color, true));
+        assert!(!on(Some(ColorChoice::Auto), &[], false));
+        assert!(on(Some(ColorChoice::Always), no_color, false));
+        assert!(!on(Some(ColorChoice::Never), &[], true));
     }
 }

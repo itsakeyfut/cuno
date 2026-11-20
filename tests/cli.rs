@@ -13,6 +13,8 @@
 
 mod support;
 
+use std::process::Command;
+
 use support::{Project, Run};
 
 /// Runs the built `cuno` binary with `args` in a fresh, empty project.
@@ -31,7 +33,7 @@ One comfortable tool for C/C++ development.
 Usage: cuno [OPTIONS]
 
 Options:
-      --color <WHEN>  Coloring [default: auto] [possible values: auto, always, never]
+      --color <WHEN>  Coloring [possible values: auto, always, never]
   -h, --help          Print help
   -V, --version       Print version
 ";
@@ -125,4 +127,54 @@ For more information, try '--help'.
 #[test]
 fn color_is_accepted_without_a_command() {
     cuno(&["--color", "never"]).assert(0, HELP, "");
+}
+
+/// Runs cuno with `args` and the debug-only `CUNO_TEST_TRIGGER` set to
+/// `trigger`, plus `extra` environment variables, in a fresh project. The
+/// trigger lets these tests reach the error path through the real process
+/// before any command can fail (src/main.rs, `test_trigger`).
+fn triggered(trigger: &str, args: &[&str], extra: &[(&str, &str)]) -> Run {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(args).env("CUNO_TEST_TRIGGER", trigger);
+    for (name, value) in extra {
+        cmd.env(name, value);
+    }
+    Project::new().run_command(cmd)
+}
+
+/// An error reaches stderr as `error:` and `help:` lines, without color when
+/// stderr is not a terminal and no `--color` was given, and the process exits
+/// with the error's class (3 for a setup problem).
+///
+/// Mutation: drop the `std::process::exit` call in `main`, print the help
+/// before the error in `report`, make `Env::from_process` return an empty
+/// environment, or pass `true` as the terminal flag; this test fails.
+#[test]
+fn an_error_exits_with_its_class_and_prints_error_and_help() {
+    triggered("setup-error", &[], &[]).assert(
+        3,
+        "",
+        "error: triggered by CUNO_TEST_TRIGGER\nhelp: unset CUNO_TEST_TRIGGER\n",
+    );
+}
+
+/// `--color always` colors cuno's own lines, and wins over `NO_COLOR`.
+///
+/// Mutation: ignore `cli.color` in `main` (pass `None`), or let `NO_COLOR`
+/// override an explicit choice in `Shell::new`; this test fails.
+#[test]
+fn color_always_colors_errors_even_with_no_color() {
+    let expected = "\x1b[1;31merror\x1b[0m: triggered by CUNO_TEST_TRIGGER\n\x1b[1;36mhelp\x1b[0m: unset CUNO_TEST_TRIGGER\n";
+    triggered("setup-error", &["--color", "always"], &[]).assert(3, "", expected);
+    triggered("setup-error", &["--color", "always"], &[("NO_COLOR", "1")]).assert(3, "", expected);
+}
+
+/// A panic exits 101, the spec's code for an internal error.
+///
+/// Mutation: set `panic = "abort"` in a `[profile.dev]` of `Cargo.toml`; the
+/// exit code changes and this test fails.
+#[test]
+fn a_panic_exits_101() {
+    let run = triggered("panic", &[], &[]);
+    assert_eq!(run.code, Some(101), "{run:?}");
 }

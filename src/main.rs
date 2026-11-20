@@ -22,14 +22,17 @@ use cuno_core::{ColorChoice, CunoError, Env, Shell};
     about
 )]
 struct Cli {
+    // The line below is the help text `cuno --help` prints for this option,
+    // pinned by tests/cli.rs. `None` when not given: NO_COLOR applies only
+    // then (docs/en/specs/commands.md, "Available for all commands").
     /// Coloring
-    #[arg(long, value_name = "WHEN", value_enum, global = true, default_value_t = Color::Auto)]
-    color: Color,
+    #[arg(long, value_name = "WHEN", value_enum, global = true)]
+    color: Option<Color>,
 }
 
-/// The values of `--color` (docs/en/specs/commands.md, "Available for all
-/// commands"). A separate type because `cuno-core` does not depend on clap.
-#[derive(Clone, Copy, ValueEnum)]
+/// The values of `--color`. A separate type because `cuno-core` does not
+/// depend on clap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum Color {
     Auto,
     Always,
@@ -54,23 +57,28 @@ fn main() {
     let env = Env::from_process();
     let mut shell = Shell::new(
         Box::new(std::io::stderr()),
-        cli.color.into(),
+        cli.color.map(ColorChoice::from),
         &env,
         std::io::stderr().is_terminal(),
     );
-    if let Err(error) = run(cli) {
+    if let Err(error) = run(cli, &env) {
         std::process::exit(report(&mut shell, &*error));
     }
-    // A panic anywhere keeps Rust's own exit code, 101, which is the spec's
-    // code for an internal error.
+    // A panic anywhere exits with Rust's own code, 101, the spec's code for an
+    // internal error. This holds while `panic = "abort"` is not set in any
+    // profile; tests/cli.rs, `a_panic_exits_101`, guards it.
 }
 
 /// Carries out the command line. Every error a command can meet comes back
 /// here rather than being printed where it happens.
-fn run(cli: Cli) -> Result<(), Box<dyn CunoError>> {
+fn run(cli: Cli, env: &Env) -> Result<(), Box<dyn CunoError>> {
     // Destructured rather than ignored, so that adding a field to `Cli` (the
     // first subcommand) fails to compile here until it is handled.
     let Cli { color: _ } = cli;
+
+    #[cfg(debug_assertions)]
+    test_trigger::fire(env)?;
+    let _ = env;
 
     // Reaching here means no command was given. Like Cargo, print the usage to
     // stdout and succeed; see docs/en/specs/commands.md, "Without a command".
@@ -84,59 +92,58 @@ fn run(cli: Cli) -> Result<(), Box<dyn CunoError>> {
 /// (docs/en/specs/architecture.md, "What goes in `cuno-core`").
 fn report(shell: &mut Shell, error: &dyn CunoError) -> i32 {
     shell.error(error);
+    if let Some(help) = error.help() {
+        shell.help(help);
+    }
     error.exit_class().code()
+}
+
+/// A way for tests/cli.rs to make the binary fail before any command can, so
+/// that the error path, colors and exit codes are tested through the real
+/// process. Compiled into debug builds only (which is what `cargo test`
+/// runs); release builds have no trace of it.
+#[cfg(debug_assertions)]
+mod test_trigger {
+    use cuno_core::{CunoError, Env, ExitClass};
+
+    /// `CUNO_TEST_TRIGGER=setup-error` fails with an exit-class-3 error that
+    /// has a help line; `CUNO_TEST_TRIGGER=panic` panics.
+    pub fn fire(env: &Env) -> Result<(), Box<dyn CunoError>> {
+        match env.get("CUNO_TEST_TRIGGER").and_then(|v| v.to_str()) {
+            Some("setup-error") => Err(Box::new(Triggered)),
+            Some("panic") => panic!("triggered by CUNO_TEST_TRIGGER"),
+            _ => Ok(()),
+        }
+    }
+
+    #[derive(Debug)]
+    struct Triggered;
+    impl std::fmt::Display for Triggered {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("triggered by CUNO_TEST_TRIGGER")
+        }
+    }
+    impl std::error::Error for Triggered {}
+    impl CunoError for Triggered {
+        fn exit_class(&self) -> ExitClass {
+            ExitClass::Setup
+        }
+        fn help(&self) -> Option<String> {
+            Some("unset CUNO_TEST_TRIGGER".into())
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cuno_core::ExitClass;
-    use std::io::Write;
-    use std::sync::{Arc, Mutex};
 
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-    impl Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().write(buf)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[derive(Debug)]
-    struct NoCompiler;
-    impl std::fmt::Display for NoCompiler {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("no compiler found")
-        }
-    }
-    impl std::error::Error for NoCompiler {}
-    impl CunoError for NoCompiler {
-        fn exit_class(&self) -> ExitClass {
-            ExitClass::Config
-        }
-        fn help(&self) -> Option<String> {
-            Some("install Build Tools".into())
-        }
-    }
-
-    /// Mutation: make `report` return a fixed 1, or skip `shell.error`; this
+    /// Mutation: swap any two arms of `From<Color> for ColorChoice`; this
     /// test fails.
     #[test]
-    fn an_error_is_shown_and_exits_with_its_class() {
-        let out = Captured::default();
-        let mut shell = Shell::new(
-            Box::new(out.clone()),
-            ColorChoice::Never,
-            &Env::default(),
-            false,
-        );
-        assert_eq!(report(&mut shell, &NoCompiler), 3);
-        assert_eq!(
-            String::from_utf8(out.0.lock().unwrap().clone()).unwrap(),
-            "error: no compiler found\nhelp: install Build Tools\n"
-        );
+    fn color_values_map_to_the_same_choice() {
+        assert_eq!(ColorChoice::from(Color::Auto), ColorChoice::Auto);
+        assert_eq!(ColorChoice::from(Color::Always), ColorChoice::Always);
+        assert_eq!(ColorChoice::from(Color::Never), ColorChoice::Never);
     }
 }
