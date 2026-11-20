@@ -1,0 +1,21 @@
+# Text files are stored with LF and checked out with LF on every platform,
+# whatever a contributor's core.autocrlf says. Tests compare exact output, so
+# a file's line endings must not depend on the machine that last wrote it.
+* text=auto eol=lf
+
+# cmd.exe misreads batch files with LF line endings (labels and `goto` can
+# break), so they keep CRLF in the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary formats, so that text=auto never has to guess about them.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.lib binary
+*.obj binary
