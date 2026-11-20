@@ -123,6 +123,10 @@ name = "cuno-build"
 version = "0.0.0"
 
 [[package]]
+name = "cuno-core"
+version = "0.0.0"
+
+[[package]]
 name = "cuno-manifest"
 version = "0.0.0"
 
