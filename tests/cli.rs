@@ -128,3 +128,8 @@ For more information, try '--help'.
 "
     );
 }
+
+#[test]
+fn spike_blocks_merge() {
+    assert_eq!(1, 2);
+}
