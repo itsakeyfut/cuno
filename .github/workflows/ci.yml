@@ -105,6 +105,8 @@ jobs:
             ~/.cargo/git/db
             target
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+      # The clang the compiler tests use; see .github/actions/llvm.
+      - uses: ./.github/actions/llvm
       - run: cargo test --workspace --no-fail-fast
 
   msrv:
@@ -133,4 +135,6 @@ jobs:
             ~/.cargo/git/db
             target
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+      # The clang the compiler tests use; see .github/actions/llvm.
+      - uses: ./.github/actions/llvm
       - run: cargo test --workspace --no-fail-fast
