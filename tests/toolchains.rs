@@ -137,3 +137,21 @@ fn failure_message_names_the_compiler_and_the_overrides() {
         assert!(message.contains(part), "{part:?} missing from:\n{message}");
     }
 }
+
+/// Mutation: discard vcvars64.bat's output again (`>nul` before `&&` in
+/// `vcvars_environment`); the reason disappears and this test fails.
+#[cfg(windows)]
+#[test]
+fn failing_vcvars_is_reported_with_its_output() {
+    let install = Project::new().file(
+        "VC/Auxiliary/Build/vcvars64.bat",
+        "@echo [ERROR:vcvars.bat] fake failure\r\n@exit /b 1\r\n",
+    );
+    let missing = support::compilers::vcvars_environment(install.path())
+        .expect_err("a failing vcvars64.bat should be reported");
+    assert!(
+        missing.detail.contains("[ERROR:vcvars.bat] fake failure"),
+        "{}",
+        missing.detail
+    );
+}

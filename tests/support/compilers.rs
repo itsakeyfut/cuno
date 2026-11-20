@@ -234,15 +234,26 @@ fn resolve_msvc_environment() -> Result<HashMap<String, String>, Missing> {
 
 #[cfg(windows)]
 fn resolve_msvc_environment() -> Result<HashMap<String, String>, Missing> {
+    let install = match std::env::var_os("CUNO_TEST_VS_INSTALL") {
+        Some(dir) => PathBuf::from(dir),
+        None => vswhere_installation().map_err(|detail| Missing {
+            compiler: Compiler::Msvc.name(),
+            detail,
+        })?,
+    };
+    vcvars_environment(&install)
+}
+
+/// The environment `vcvars64.bat` of the Visual Studio installation at
+/// `install` sets up, or why it could not be obtained (including what
+/// `vcvars64.bat` printed when it failed).
+#[cfg(windows)]
+pub fn vcvars_environment(install: &Path) -> Result<HashMap<String, String>, Missing> {
     use std::os::windows::process::CommandExt;
 
     let missing = |detail: String| Missing {
         compiler: Compiler::Msvc.name(),
         detail,
-    };
-    let install = match std::env::var_os("CUNO_TEST_VS_INSTALL") {
-        Some(dir) => PathBuf::from(dir),
-        None => vswhere_installation().map_err(missing)?,
     };
     let vcvars = install.join(r"VC\Auxiliary\Build\vcvars64.bat");
     if !vcvars.is_file() {
