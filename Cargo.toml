@@ -3,7 +3,7 @@
 [package]
 name = "cuno"
 # Also the first line of `cuno --help` (src/main.rs reads it via `about`).
-description = "One tool for C/C++ development, with the feel of Cargo."
+description = "One comfortable tool for C/C++ development."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

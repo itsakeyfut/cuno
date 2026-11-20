@@ -39,7 +39,7 @@ fn stderr(output: &Output) -> String {
 
 /// The usage text, printed by `--help` and by `cuno` with no command.
 const HELP: &str = "\
-One tool for C/C++ development, with the feel of Cargo.
+One comfortable tool for C/C++ development.
 
 Usage: cuno
 
