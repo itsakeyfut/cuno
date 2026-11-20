@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 02582f65527e2d313614665764f5426ce8ebb22e -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 55c6a51e30d0d5334d44854b4cf0c545e02606b0 -->
 
 # Commands
 
@@ -174,6 +174,12 @@ If there are no problems, the exit code is `0`.
 - Output messages are **unified in English**.
   - Rationale: international users are expected, error messages are easier to search for, and this is consistent with cargo and others.
   - Localization is a future consideration.
+
+### Names of other tools
+
+- cuno's own output (the `--help` description, messages) does not name the tools cuno was modeled on (cargo, CMake, etc.).
+  - Rationale: cuno is presented as a tool whose description stands on its own, not as "something like" another tool, so that the description makes sense to users who do not know the tools it was modeled on.
+  - The compilers and tools cuno actually invokes (MSVC, clang, clang-format, etc.) may be named, since diagnostics and guidance need them.
 
 ### Format
 
