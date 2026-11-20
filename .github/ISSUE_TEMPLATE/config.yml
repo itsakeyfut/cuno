@@ -1,0 +1,4 @@
+# Blank issues stay on. The templates exist to make the common shapes cheap,
+# not to stop anything else being written down.
+blank_issues_enabled: true
+contact_links: []

@@ -1,0 +1,79 @@
+name: Experiment
+description: A question that has to be answered by trying it, because design alone could not settle it. Opened when design finds a task is not yet implementable.
+title: "spike: "
+labels: ["T-Experiment"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Opened when design decides a task cannot be implemented yet and the
+        reason is something only evidence can settle.
+
+        Work happens on a throwaway branch and results are posted here as
+        comments while they arrive, so that stopping halfway loses nothing. When
+        there is an answer, it goes back to the blocked issue as a comment, with
+        the evidence, and that is what unblocks it.
+
+        An experiment is allowed to fail. A failed experiment that is written
+        down is worth more than an unwritten success, because the next person to
+        have the same idea stops sooner.
+
+  - type: input
+    id: parent
+    attributes:
+      label: Blocks
+      description: The issue this exists to unblock.
+      placeholder: "#14"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: >
+        What is not known. One question, stated so that an answer is possible:
+        "can X be done" rather than "investigate X".
+      placeholder: |
+        Can the incremental build rely on file modification times on Windows,
+        or does it need content hashes to avoid reporting a stale build as up
+        to date?
+    validations:
+      required: true
+
+  - type: textarea
+    id: success
+    attributes:
+      label: What would count as a good result
+      description: >
+        Decided **before** running anything. This is the whole difference
+        between an experiment and a justification: written afterwards, the bar
+        moves to wherever the result landed.
+      placeholder: |
+        Over twenty edit-and-rebuild cases (two edits within one second, a file
+        restored from git, a header reached through two include paths, a copy
+        with preserved timestamps), timestamps alone rebuild exactly what
+        changed. Any case that reports a stale build as up to date is a
+        negative result and settles the question the other way.
+    validations:
+      required: true
+
+  - type: textarea
+    id: method
+    attributes:
+      label: How it will be tried
+      description: >
+        A throwaway branch, a prototype, a comparison with Cargo or another
+        build tool, a measurement. Say what is disposable: nothing here is
+        expected to merge.
+    validations:
+      required: true
+
+  - type: textarea
+    id: giving_up
+    attributes:
+      label: When to stop
+      description: >
+        A bound, so that an open-ended experiment does not become the project.
+        A number of attempts, a scope, or a condition under which the answer is
+        "no" and the blocked issue gets that as its evidence.

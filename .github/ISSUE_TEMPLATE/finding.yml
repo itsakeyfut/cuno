@@ -1,0 +1,74 @@
+name: Finding
+description: Something wrong or worth doing that turned up during other work and is not being fixed now.
+title: "fix: "
+labels: ["T-Bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a defect, a gap, or an observation found while doing something else.
+
+        A finding that can be fixed in ten minutes should be fixed, not filed.
+        This is for the ones that are real, are not this change's business, and
+        would otherwise survive only in a conversation that ends.
+
+        Change `T-Bug` if it is not one, and add `S-Needs-Design` or
+        `S-Ready-For-Implementation` when it becomes work rather than a note.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong
+      description: One or two sentences. What cuno does, and what it should do.
+      placeholder: |
+        With `compiler = "clang-cl"`, `warnings-as-errors = true` is passed as
+        `-Werror` instead of `/WX`. clang-cl accepts both today, but the spec
+        maps clang-cl to MSVC-style flags, and the generated
+        compile_commands.json disagrees with the MSVC column.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        The command and its real output, or the failing test. Not a description
+        of what would happen. A finding nobody demonstrated is a finding nobody
+        can act on, and it will be re-investigated from scratch.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: why_not_now
+    attributes:
+      label: Why it is not being fixed now
+      description: >
+        The interesting field. Out of scope, needs a decision, belongs to a
+        later milestone, or cheap to leave and expensive to do badly. A
+        deferral without a reason is a deferral nobody can overturn later.
+      placeholder: |
+        Fixing it means deciding whether clang-cl gets its own column in the
+        flag table or always borrows MSVC's, which is a spec change
+        (`docs/ja/specs/manifest.md`). The change that surfaced it was about
+        output directories.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proof
+    attributes:
+      label: What would prove it fixed
+      description: >
+        Which test, and which mutation would make it fail. Writing this now is
+        cheaper than writing it later, because the context is in your head now.
+    validations:
+      required: true
+
+  - type: input
+    id: origin
+    attributes:
+      label: Where it came from
+      description: The review, the pull request, or the work that turned it up.
+      placeholder: "review of #42, while checking the output directory layout"
