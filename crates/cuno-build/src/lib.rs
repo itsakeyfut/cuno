@@ -2,3 +2,5 @@
 //! `compile_commands.json`.
 //!
 //! See `docs/en/specs/build.md`.
+
+pub fn undocumented_spike() {}

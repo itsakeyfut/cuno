@@ -128,3 +128,8 @@ For more information, try '--help'.
 "
     );
 }
+
+#[test]
+fn spike_fails() {
+    assert_eq!(1, 2);
+}

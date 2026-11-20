@@ -29,7 +29,7 @@ resolver = "3"
 version = "0.0.0"
 edition = "2024"
 # See docs/en/specs/architecture.md, "Rust".
-rust-version = "1.88"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/itsakeyfut/cuno"
 # Nothing goes to crates.io until distribution is decided (M4).

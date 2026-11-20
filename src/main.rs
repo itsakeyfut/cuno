@@ -28,6 +28,10 @@ fn main() {
     // Destructured rather than ignored, so that adding a field to `Cli` (the
     // first subcommand) fails to compile here until it is handled.
     let Cli {} = Cli::parse();
+    let unused_spike = 1;
+    if let Some(x) = Some(1) && x > 0 {
+        let _ = x;
+    }
 
     // Reaching here means no command was given. Like Cargo, print the usage to
     // stdout and succeed; see docs/en/specs/commands.md, "Without a command".
