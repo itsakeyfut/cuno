@@ -28,6 +28,13 @@ pub enum ToolchainError {
         /// The cl.exe that was run.
         path: PathBuf,
     },
+    /// A tool path the user configured has no file.
+    ConfiguredToolMissing {
+        /// The setting, such as `[toolchain.paths] clang-tidy`.
+        setting: String,
+        /// The path it gives.
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for ToolchainError {
@@ -45,6 +52,13 @@ impl fmt::Display for ToolchainError {
             ToolchainError::ClVersionUnknown { path } => {
                 write!(f, "could not read the version of {}", path.display())
             }
+            ToolchainError::ConfiguredToolMissing { setting, path } => {
+                write!(
+                    f,
+                    "{setting} is {}, but there is no file there",
+                    path.display()
+                )
+            }
         }
     }
 }
@@ -58,6 +72,9 @@ impl CunoError for ToolchainError {
 
     fn help(&self) -> Option<String> {
         match self {
+            ToolchainError::ConfiguredToolMissing { setting, .. } => Some(format!(
+                "correct {setting}, or remove it to let cuno find the tool"
+            )),
             ToolchainError::VswhereMissing { .. } | ToolchainError::NoVisualStudio => {
                 Some(BUILD_TOOLS_HELP.to_owned())
             }
@@ -80,6 +97,10 @@ mod tests {
             ToolchainError::VswhereFailed { detail: "x".into() },
             ToolchainError::NoVisualStudio,
             ToolchainError::ClVersionUnknown { path: "x".into() },
+            ToolchainError::ConfiguredToolMissing {
+                setting: "x".into(),
+                path: "x".into(),
+            },
         ] {
             assert_eq!(e.exit_class(), ExitClass::Setup, "{e}");
             assert!(e.help().is_some(), "{e}");
@@ -117,6 +138,14 @@ mod tests {
                 },
                 "Z:/t/cl.exe",
                 "Visual Studio Installer",
+            ),
+            (
+                ToolchainError::ConfiguredToolMissing {
+                    setting: "[toolchain.paths] clang".into(),
+                    path: "Z:/c/clang.exe".into(),
+                },
+                "Z:/c/clang.exe",
+                "[toolchain.paths] clang",
             ),
         ];
         for (error, in_message, in_help) in cases {
