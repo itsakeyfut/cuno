@@ -1,12 +1,12 @@
 # Checks every pull request and every push to main. One job per check, so a
 # failure is visible by name and branch protection can require each by name.
-name: check
+name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
-  # Manual runs on any branch: `gh workflow run check.yml --ref <branch>`.
+  # Manual runs on any branch: `gh workflow run ci.yml --ref <branch>`.
   workflow_dispatch:
 
 permissions:
