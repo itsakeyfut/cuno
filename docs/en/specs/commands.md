@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 55c6a51e30d0d5334d44854b4cf0c545e02606b0 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob d9777b7224afa808501cbb3cd8ae1bf99eb33dde -->
 
 # Commands
 
@@ -50,12 +50,19 @@ See [dependencies.md](dependencies.md) for the stages of dependency management.
 | `-q, --quiet` | Minimal output |
 | `--color <when>` | Coloring (auto / always / never) |
 
-### Available for build commands (`build` / `run` / `check` / `test` / `lint`)
+### Available for build commands (`build` / `run` / `check` / `test`)
 
 | Option | Description |
 |---|---|
 | `--release` | Build with the release profile |
 | `--profile <name>` | Build with the specified profile. In the MVP, only `dev` / `release` (anything else is an error, exit code 3) |
+
+- `cuno lint` does not accept these two (specifying one is an unknown option, exit code 2). The reason is in [dev-tools.md](dev-tools.md#target-files).
+
+### Available for build commands and `lint` (`build` / `run` / `check` / `test` / `lint`)
+
+| Option | Description |
+|---|---|
 | `--compiler <name>` | Compiler to use (msvc / clang / clang-cl / gcc / safec). See `compiler` in [manifest.md](manifest.md) for the values. Specifying `gcc` / `safec` in the MVP is an error (exit code 3) |
 | `--target <target>` | Cross-compilation. Reserved only in the MVP; specifying it is an error (exit code 3) ([toolchain.md](toolchain.md)) |
 | `--target-dir <path>` | Output directory ([build.md](build.md)). Relative paths are resolved against the current directory (the same applies to the `CUNO_TARGET_DIR` environment variable) |
@@ -155,14 +162,21 @@ Common options only.
 
 ### `cuno doctor`
 
-No options. Diagnoses the environment and shows a fix for each problem.
+Diagnoses the environment and shows a fix for each problem.
 
-- Can be run outside a project (where no `cuno.toml` is found). In that case, the diagnosis targets the automatically selected compiler.
+| Option | Description |
+|---|---|
+| `--compiler <name>` | The compiler to diagnose. Same as `--compiler` of the build commands. If not specified, diagnoses the compiler chosen by the same selection precedence as the build commands ([toolchain.md](toolchain.md#selection)) |
+
+- Can be run outside a project (where no `cuno.toml` is found). In that case, the compiler is chosen by the precedence without the project layers ([toolchain.md](toolchain.md#selection)).
+- Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported in the MVP (`gcc` / `safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
+  - Rationale: `doctor` is what users run when the environment or settings are wrong, so stopping at a configuration error would make it useless.
 
 | Result | Condition | Exit code |
 |---|---|---|
 | Problem | Cannot build with the selected compiler (not found, does not satisfy the version requirement, Visual Studio environment cannot be resolved, etc.) | `1` |
 | Problem | clang-format / clang-tidy not found | `1` |
+| Problem | An error in a configuration file, or an unsupported compiler selected | `1` |
 | Info | A compiler that is not used is not found (e.g. no Clang in an environment that uses MSVC) | No effect |
 
 If there are no problems, the exit code is `0`.

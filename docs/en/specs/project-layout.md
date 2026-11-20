@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 6017835a550750c5444a72b9e3a0b25c70717672 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob fecf7f0f7fefef9cef84fcb7a069c016203591a0 -->
 
 # Project Kinds and Layout
 
@@ -64,6 +64,22 @@ sources = ["Private"]
 - `src/main.*` and everything under `src/bin/` are **always excluded from the package body**, regardless of whether `[[bin]]` is written.
   - Rationale: writing `[[bin]]` disables automatic detection, so without this exclusion `src/main.cpp` and the like would be linked as package body into every executable and test, duplicating `main`.
   - When `[[bin]]` is written, files under `src/main.*` / `src/bin/` that are not listed in `[[bin]]` are not built (cuno warns about this).
+
+### Where the package's code lives
+
+The places where the package's code (the C/C++ sources and headers the user writes) lives are the following directories. What `cuno fmt` / `cuno lint` act on is decided from these ([dev-tools.md](dev-tools.md#target-files)).
+
+- `src/`, `tests/`, `examples/`, `benches/`
+- For a file given by `[[bin]] path` that is in none of the above, the directory that contains it
+
+The following are excluded:
+
+- The output directory (judged by the absolute path of the output directory actually used, including when it is changed with `--target-dir` and the like; [build.md](build.md#output-directory))
+- A subdirectory with its own `cuno.toml` (another package)
+
+- `include-dirs` is not part of these places.
+  - Rationale: `include-dirs` often points at third-party headers (`third_party/include` and the like), and formatting them would rewrite files that do not belong to the user. Also, `include-dirs` can be added in `[platform.<OS>.build]` / `[profile.<name>.build]`, so deciding its value needs the compiler and profile selected, whereas `cuno fmt` must work without a compiler.
+- These places are decided by directories alone, not by the selected compiler, profile or target.
 
 ### Linking rules
 

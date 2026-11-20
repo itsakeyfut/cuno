@@ -54,7 +54,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
   - 理由: コンパイラの抽象化に TOML の構造を持ち込まないため。コンパイラの追加が `cuno-toolchain` の変更だけで済む（[concept.md](../concept.md) の設計原則 5）。
 - `cuno-test` はテストの実行と結果の表示だけを持つ。テストのビルドは `cuno-build` の 1 つのモードとする。
   - 理由: 渡された実行ファイルを動かして結果を集めるだけなので、設定やコンパイラを知る必要がない。
-- `cuno-tools` には compile_commands.json のパスを渡す。`cuno-build` には依存しない。
+- `cuno-tools` には、cuno 本体が「パッケージのコードの置き場」（[project-layout.md](project-layout.md#パッケージのコードの置き場)）から作った対象ファイルの一覧と、compile_commands.json のパスを渡す。lint の対象は一覧で決まり、compile_commands.json は各ソースのコマンドを与えるだけ。`cuno-build` には依存しない。
 - `cuno-build` は `cuno-deps` / `cuno-script` に依存しない。解決済みの依存やスクリプトの結果は、cuno 本体がデータとして渡す。
 - **ライブラリのクレートは、プロセスの環境変数やコマンド引数を直接読まない。** cuno 本体が集めて値として渡す（環境変数の一覧を cuno home の解決やコンパイラの検出に渡す、など）。
   - 動いている OS（ホスト）も同じく、`cfg!` などで直接判断せず値として受け取る。ビルド対象の OS（ターゲット）は、[manifest.md](manifest.md) のとおりホストと区別する。MVP ではターゲット＝ホストとして本体が渡す。
