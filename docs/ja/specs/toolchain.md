@@ -113,6 +113,15 @@ C++20 の指定を受け付けるものとする。
 - PATH、Visual Studio のインストール先（vswhere）、LLVM の標準インストール先、環境変数から探す。
 - `cuno toolchain list` で検出したコンパイラを一覧表示する。
 
+### Visual Studio / Build Tools
+
+- **vswhere だけで探す。** `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` を `-all -products * -prerelease -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -utf8 -format json` で実行し、C++ の x64 ツールを含むインストールをすべて得る。
+  - 理由: vswhere は Visual Studio 2017 以降と Build Tools に必ず付き、インストール先を正しく知っている唯一の方法。`-utf8 -format json` で、コンソールのコードページ（日本語版 Windows では CP932）に左右されずに読める。
+- 各インストールの MSVC ツールセットは、`VC\Tools\MSVC\<バージョン>` のうち `bin\Hostx64\x64\cl.exe` があるもの。既定のツールセットは `VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt` に書かれた版。
+- **cl.exe のバージョンは、cl.exe を引数なしで実行し、その表示の最初の `<数>.<数>.<数>` から読む。** 表示の言語（日本語版の Visual Studio を含む）に関係なく、数字の部分は同じだから。ツールセットのフォルダ名（例: `14.52.37025`）は cl.exe のバージョン（例: `19.52.37029`）と一致しないので使わない。
+- プレビュー版も検出はする（`cuno doctor` で示せるように）。選ぶかどうかは「選択」が決め、選ばない。
+- C++ の x64 ツールを含むインストールが 1 つもない、または vswhere がない場合はエラー（終了コード 3）にし、Build Tools の「C++ によるデスクトップ開発」ワークロードの入れ方を案内する。
+
 ## 選択
 
 優先順位（上ほど優先）:
