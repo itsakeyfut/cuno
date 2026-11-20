@@ -104,9 +104,11 @@ fn assert_checks_the_exit_code() {
     run.assert(0, "", "");
 }
 
-/// The variables that `Project::run` must keep away from the child, set by
-/// `run_does_not_pass_on_parent_variables` on the process running this test.
-const PROBES: [&str; 2] = ["CUNO_PROBE", "CLICOLOR_FORCE"];
+/// The variables that `Project::run` must keep away from the child, set to
+/// `1` by `run_does_not_pass_on_parent_variables` on the process running this
+/// test. `CUNO_HOME` is among them: the child must see the project's own home
+/// instead, whatever the parent had.
+const PROBES: [&str; 3] = ["CUNO_PROBE", "CLICOLOR_FORCE", "CUNO_HOME"];
 
 /// Run only by `run_does_not_pass_on_parent_variables`, which starts this
 /// test binary again with `PROBES` set, so that the parent environment is
@@ -127,17 +129,21 @@ fn child_of_run_sees_no_probe_variables() {
         project.run("env", &[])
     };
     for name in PROBES {
-        let leaked = run
-            .stdout
-            .lines()
-            .any(|line| line.starts_with(&format!("{name}=")));
+        let leaked = run.stdout.lines().any(|line| line == format!("{name}=1"));
         assert!(!leaked, "{name} reached the child:\n{}", run.stdout);
     }
+    let home = format!("CUNO_HOME={}", project.home().display());
+    assert!(
+        run.stdout.lines().any(|line| line == home),
+        "the child should see {home}:\n{}",
+        run.stdout
+    );
 }
 
 /// Mutation: remove the `hermetic(...)` call from `Project::run`, or pass it
 /// an empty iterator; the probe variables then reach the child and this test
-/// fails.
+/// fails. Mutation: set `CUNO_HOME` before the `hermetic` call in
+/// `Project::run_command`; `hermetic` then removes it and this test fails.
 #[test]
 fn run_does_not_pass_on_parent_variables() {
     let mut cmd = Command::new(std::env::current_exe().unwrap());
@@ -157,4 +163,25 @@ fn run_does_not_pass_on_parent_variables() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
+/// Mutation: remove `cmd.env("CUNO_HOME", &self.home)` from
+/// `Project::run_command`; the child then sees no `CUNO_HOME` and this test
+/// fails. (Setting it before `hermetic` only shows when the parent has a
+/// `CUNO_HOME`, which `run_does_not_pass_on_parent_variables` covers.)
+#[test]
+fn programs_see_the_project_s_own_cuno_home() {
+    let project = Project::new();
+    let run = if cfg!(windows) {
+        project.run("cmd", &["/C", "echo %CUNO_HOME%"])
+    } else {
+        project.run("printenv", &["CUNO_HOME"])
+    };
+    assert_eq!(
+        run.stdout.trim_end(),
+        project.home().to_str().unwrap(),
+        "{run:?}"
+    );
+    assert!(project.home().is_dir());
+    assert!(!project.home().starts_with(project.path()));
 }
