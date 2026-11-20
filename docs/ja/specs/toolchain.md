@@ -96,6 +96,27 @@ C++20 の指定を受け付けるものとする。
 - **Clang（`clang` / `clang-cl`）にも同じ解決を適用する**。Windows の Clang も MSVC のヘッダ・ライブラリ・Windows SDK を使うため。
 - Visual Studio / Build Tools が見つからない場合は、Clang を選んでいてもエラーにし、`cuno doctor` と同じ案内を出す。
 
+### 解決の方法
+
+- **環境は、ツールセットと Windows SDK のディレクトリから cuno が組み立てる。** `vcvars64.bat` は実行しない。
+  - 理由: `vcvars64.bat` の実行は 1 回あたり約 1.75 秒かかり、その出力はコンソールのコードページ（日本語版 Windows では CP932）で、正しく復号しないと日本語のパスで黙って壊れる。組み立ては 10 ミリ秒程度で、文字コードの問題がない。ディレクトリの構成は Visual Studio 2017 から変わっておらず、cuno のテストが `vcvars64.bat` の結果と照合して、構成の変化を CI で検出する。
+- Windows SDK の場所: レジストリの `HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots` の `KitsRoot10`、次に `%ProgramFiles(x86)%\Windows Kits\10` の順に探し、使える版がある最初の場所を使う（レジストリの値が古く、そこに SDK が残っていない場合があるため）。絶対パスでない場所は探さない。
+- Windows SDK の版: `Include\<バージョン>` のうち、`um\windows.h`、`ucrt\stdio.h`、`Lib\<バージョン>\um\x64`、`Lib\<バージョン>\ucrt\x64` がすべてあるものの最新（版は数値として比べ、数値でない名前のディレクトリは版として扱わない）。一部だけ入った版を選ぶと、後でヘッダやライブラリが見つからないエラーになるため。
+- 組み立てる値（`<MSVC>` は MSVC のツールセットのディレクトリ、`<SDK>` は SDK の場所、`<バージョン>` は SDK の版）:
+
+  | 変数 | 値 |
+  |---|---|
+  | `INCLUDE` | `<MSVC>\include`、Visual Studio の `VC\Auxiliary\VS\include`（あれば）、`<SDK>\Include\<バージョン>\` の `ucrt` / `um` / `shared` / `winrt` / `cppwinrt` |
+  | `LIB` | `<MSVC>\lib\x64`、`<SDK>\Lib\<バージョン>\ucrt\x64`、`<SDK>\Lib\<バージョン>\um\x64` |
+  | `LIBPATH` | `<MSVC>\lib\x64` |
+  | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
+
+- **Developer Command Prompt の変数は取り除く。** `VSINSTALLDIR`、`VCINSTALLDIR`、`VCToolsInstallDir`、`EXTERNAL_INCLUDE`、`WindowsSdkDir`、`WindowsSDKVersion`、`UniversalCRTSdkDir`、`UCRTVersion`。clang / clang-cl はこれらからツールセットとリンカーを探すため、別の Visual Studio の Developer Command Prompt から cuno を実行すると、cuno が選んだものと違うツールセットで成功してしまう。
+- `vcvars64.bat` が設定するもののうち、次は設定しない（使えばエラーで分かる）。
+  - .NET Framework SDK（`NETFXSDK`）のヘッダとライブラリ（`metahost.h`、`mscoree.lib` など）。
+  - C++/CLI（`/clr`）と C++/CX（`/ZW`）のための `LIBPATH` の項目。
+- Windows SDK が見つからない場合はエラー（終了コード 3）にし、Build Tools の Windows SDK の入れ方を案内する。
+
 ### Windows の Clang は MSVC 互換で動かす
 
 - `clang` / `clang-cl` とも、ビルド対象は `x86_64-pc-windows-msvc`（MSVC と同じ ABI）。MSVC でビルドしたライブラリと混ぜてリンクできる。
@@ -185,6 +206,5 @@ C++20 の指定を受け付けるものとする。
 
 ## 未決
 
-- MSVC 環境の具体的な解決方法（vswhere の利用など）
 - GCC など、ほかのコンパイラの検出の探索順序（Visual Studio と LLVM は上で決めた）
 - 対応するビルド対象環境の一覧と、各環境のツールの検出方法
