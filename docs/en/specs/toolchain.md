@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 6f9e033c272559a50a7fa01bb9845d946fc03da0 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 984c4607cf8d7ca5fa025feb7eb1a091b2f166b6 -->
 
 # Toolchain
 
@@ -135,6 +135,8 @@ A compiler must accept a C++20 specification.
 
 - Searches PATH, Visual Studio installation locations (vswhere), LLVM's standard installation location, and environment variables.
 - `cuno toolchain list` lists the detected compilers.
+- **A tool cuno runs for detection and checking is stopped if it does not finish within 30 seconds** (vswhere, reading cl.exe's version, each tool's `--version`, the standard library probe compile). A tool cut off this way is stopped and treated as having failed to run (never as success).
+  - Rationale: a tool stuck on an antivirus scan or a broken installation would otherwise stop cuno with it. These normally take under a second, so 30 seconds is long enough not to cut off a working tool on a machine whose first start is slow, and matches the probe compile's limit.
 
 ### Visual Studio / Build Tools
 

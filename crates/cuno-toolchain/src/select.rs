@@ -1054,6 +1054,17 @@ mod tests {
         }
     }
 
+    /// A runner whose tool runs past the limit, as `SystemRunner` reports it.
+    struct TimesOut;
+    impl Runner for TimesOut {
+        fn run(&self, _p: &Path, _a: &[&OsStr], _e: &Env) -> std::io::Result<Output> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "did not finish within 30 seconds and was stopped",
+            ))
+        }
+    }
+
     fn selected(kind: CompilerKind) -> Selected {
         Selected {
             kind,
@@ -1064,7 +1075,8 @@ mod tests {
         }
     }
 
-    /// Mutation: treat a failed probe as passing, call any failure STL1000,
+    /// Mutation: treat a failed or timed-out probe as passing, call any
+    /// failure STL1000,
     /// read only stdout, lose the version the library asks for, the
     /// compiler, its version or the library's message, keep the probe file,
     /// or swallow why it could not run; this test fails.
@@ -1102,6 +1114,11 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(&err, ToolchainError::ProbeFailed { compiler: "clang", output } if output == "fatal error: 'yvals_core.h' file not found"),
+            "{err:?}"
+        );
+        let err = check(&clang, &Env::default(), inputs, &TimesOut).unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::ProbeFailed { output, .. } if output.contains("within 30 seconds")),
             "{err:?}"
         );
         let err = check(&clang, &Env::default(), inputs, &CannotStart).unwrap_err();

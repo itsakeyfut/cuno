@@ -13,5 +13,5 @@ mod version;
 
 pub use error::ToolchainError;
 pub use host::HostOs;
-pub use run::{Output, Runner, SystemRunner};
+pub use run::{Output, Runner, SystemRunner, TOOL_TIMEOUT};
 pub use version::Version;

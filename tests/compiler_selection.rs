@@ -30,13 +30,13 @@ fn selected(kind: CompilerKind) -> Option<(Selected, Env)> {
     ));
     let env = process.with("PATH", std::env::join_paths(path).unwrap());
 
-    let installs = msvc::find_installations(&env, &SystemRunner).unwrap();
+    let installs = msvc::find_installations(&env, &SystemRunner::new()).unwrap();
     let llvm = find_llvm_tools(
         &env,
         HostOs::Windows,
         &ExplicitPaths::default(),
         &installs,
-        &SystemRunner,
+        &SystemRunner::new(),
     )
     .unwrap();
     let choices = Choices {
@@ -65,7 +65,7 @@ fn probe(selected: &Selected, env: &Env, flags: &[&str]) -> Result<(), Toolchain
             scratch: scratch.path(),
             flags: &flags,
         },
-        &SystemRunner,
+        &SystemRunner::new(),
     )
 }
 
