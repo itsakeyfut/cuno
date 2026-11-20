@@ -77,7 +77,8 @@ impl Project {
 
 /// Removes from `cmd` every variable that could change cuno's output: the
 /// colour variables clap reads (`CLICOLOR_FORCE`, `CLICOLOR`, `NO_COLOR`), and
-/// every variable among `inherited` whose name starts with `CUNO_`.
+/// every variable among `inherited` whose name starts with `CUNO_` (in any
+/// case).
 ///
 /// `inherited` is the names of the variables the child would inherit. It is a
 /// parameter so that tests can pass synthetic names instead of modifying the
@@ -87,7 +88,12 @@ pub fn hermetic(cmd: &mut Command, inherited: impl Iterator<Item = OsString>) {
         cmd.env_remove(name);
     }
     for name in inherited {
-        if name.to_string_lossy().starts_with("CUNO_") {
+        // Upper-cased because Windows variable names are case-insensitive.
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("CUNO_")
+        {
             cmd.env_remove(name);
         }
     }

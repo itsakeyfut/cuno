@@ -51,15 +51,17 @@ fn projects_do_not_share_a_directory() {
     );
 }
 
-/// Mutation: remove either loop from `hermetic`; the colour variable or the
-/// `CUNO_*` variable is then left set and this test fails.
+/// Mutation: remove either loop from `hermetic`, or drop the upper-casing of
+/// the name; a colour or `CUNO_*` variable is then left set and this test
+/// fails.
 #[test]
 fn hermetic_removes_colour_and_cuno_variables() {
     let mut cmd = Command::new("unused");
     cmd.env("CUNO_PROBE", "1")
         .env("CLICOLOR_FORCE", "1")
+        .env("cuno_lower", "1")
         .env("KEEP_ME", "1");
-    let inherited = ["CUNO_PROBE", "KEEP_ME", "PATH"].map(OsString::from);
+    let inherited = ["CUNO_PROBE", "cuno_lower", "KEEP_ME", "PATH"].map(OsString::from);
     hermetic(&mut cmd, inherited.into_iter());
 
     let envs: Vec<_> = cmd
@@ -69,6 +71,7 @@ fn hermetic_removes_colour_and_cuno_variables() {
     // `None` means "removed from the child's environment".
     assert!(envs.contains(&("CUNO_PROBE".into(), false)), "{envs:?}");
     assert!(envs.contains(&("CLICOLOR_FORCE".into(), false)), "{envs:?}");
+    assert!(envs.contains(&("cuno_lower".into(), false)), "{envs:?}");
     assert!(envs.contains(&("KEEP_ME".into(), true)), "{envs:?}");
     assert!(!envs.iter().any(|(name, _)| name == "PATH"), "{envs:?}");
 }
@@ -99,4 +102,59 @@ fn assert_checks_the_exit_code() {
         stderr: String::new(),
     };
     run.assert(0, "", "");
+}
+
+/// The variables that `Project::run` must keep away from the child, set by
+/// `run_does_not_pass_on_parent_variables` on the process running this test.
+const PROBES: [&str; 2] = ["CUNO_PROBE", "CLICOLOR_FORCE"];
+
+/// Run only by `run_does_not_pass_on_parent_variables`, which starts this
+/// test binary again with `PROBES` set, so that the parent environment is
+/// controlled without changing the test process's own (which needs `unsafe`).
+#[test]
+#[ignore = "run with PROBES set by run_does_not_pass_on_parent_variables"]
+fn child_of_run_sees_no_probe_variables() {
+    for name in PROBES {
+        assert!(
+            std::env::var_os(name).is_some(),
+            "{name} should be set by the caller"
+        );
+    }
+    let project = Project::new();
+    let run = if cfg!(windows) {
+        project.run("cmd", &["/C", "set"])
+    } else {
+        project.run("env", &[])
+    };
+    for name in PROBES {
+        let leaked = run
+            .stdout
+            .lines()
+            .any(|line| line.starts_with(&format!("{name}=")));
+        assert!(!leaked, "{name} reached the child:\n{}", run.stdout);
+    }
+}
+
+/// Mutation: remove the `hermetic(...)` call from `Project::run`, or pass it
+/// an empty iterator; the probe variables then reach the child and this test
+/// fails.
+#[test]
+fn run_does_not_pass_on_parent_variables() {
+    let mut cmd = Command::new(std::env::current_exe().unwrap());
+    cmd.args([
+        "--exact",
+        "child_of_run_sees_no_probe_variables",
+        "--ignored",
+    ]);
+    for name in PROBES {
+        cmd.env(name, "1");
+    }
+    let output = cmd.output().expect("the test binary should start again");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
