@@ -12,6 +12,9 @@ publish.workspace = true
 cuno-core.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+winreg.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

@@ -28,6 +28,11 @@ pub enum ToolchainError {
         /// The cl.exe that was run.
         path: PathBuf,
     },
+    /// No Windows SDK with the x64 headers and libraries.
+    NoWindowsSdk {
+        /// The SDK directory looked in.
+        looked_in: PathBuf,
+    },
     /// A tool path the user configured has no file.
     ConfiguredToolMissing {
         /// The setting, such as `[toolchain.paths] clang-tidy`.
@@ -52,6 +57,11 @@ impl fmt::Display for ToolchainError {
             ToolchainError::ClVersionUnknown { path } => {
                 write!(f, "could not read the version of {}", path.display())
             }
+            ToolchainError::NoWindowsSdk { looked_in } => write!(
+                f,
+                "no Windows SDK with the x64 headers and libraries was found in {}",
+                looked_in.display()
+            ),
             ToolchainError::ConfiguredToolMissing { setting, path } => {
                 write!(
                     f,
@@ -78,6 +88,9 @@ impl CunoError for ToolchainError {
             ToolchainError::VswhereMissing { .. } | ToolchainError::NoVisualStudio => {
                 Some(BUILD_TOOLS_HELP.to_owned())
             }
+            ToolchainError::NoWindowsSdk { .. } => Some(
+                "add a Windows SDK in the Visual Studio Installer (a \"Windows 11 SDK\" component of the \"Desktop development with C++\" workload)".to_owned(),
+            ),
             ToolchainError::VswhereFailed { .. } | ToolchainError::ClVersionUnknown { .. } => Some(
                 "repair the Visual Studio installation with the Visual Studio Installer".to_owned(),
             ),
@@ -100,6 +113,9 @@ mod tests {
             ToolchainError::ConfiguredToolMissing {
                 setting: "x".into(),
                 path: "x".into(),
+            },
+            ToolchainError::NoWindowsSdk {
+                looked_in: "x".into(),
             },
         ] {
             assert_eq!(e.exit_class(), ExitClass::Setup, "{e}");
@@ -146,6 +162,13 @@ mod tests {
                 },
                 "Z:/c/clang.exe",
                 "[toolchain.paths] clang",
+            ),
+            (
+                ToolchainError::NoWindowsSdk {
+                    looked_in: "Z:/Windows Kits/10".into(),
+                },
+                "Z:/Windows Kits/10",
+                "Windows 11 SDK",
             ),
         ];
         for (error, in_message, in_help) in cases {

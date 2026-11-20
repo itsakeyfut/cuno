@@ -80,6 +80,15 @@ impl Env {
             .map(|(name, value)| (name.as_os_str(), value.as_os_str()))
     }
 
+    /// This environment with `name` set to `value`, replacing any variable
+    /// that has the same name as this environment compares names.
+    pub fn with(&self, name: &str, value: OsString) -> Env {
+        let mut env = self.clone();
+        env.vars
+            .insert(key(OsStr::new(name), self.case), (name.into(), value));
+        env
+    }
+
     /// This environment without the variables named in `names`, compared as
     /// this environment compares names.
     pub fn without(&self, names: &[&str]) -> Env {
@@ -157,6 +166,15 @@ mod tests {
 
     /// Mutation: keep the first of two pairs with the same name; this test
     /// fails.
+    /// Mutation: insert under the name as spelled instead of as compared;
+    /// this test fails (`Path` would survive beside `PATH`).
+    #[test]
+    fn with_replaces_a_variable_spelled_differently() {
+        let env = env(&[("Path", "old")], NameCase::Insensitive).with("path", "new".into());
+        assert_eq!(env.get("PATH"), Some(OsStr::new("new")));
+        assert_eq!(env.vars().count(), 1);
+    }
+
     #[test]
     fn a_later_pair_replaces_an_earlier_one() {
         let e = env(

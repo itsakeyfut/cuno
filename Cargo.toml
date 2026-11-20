@@ -53,6 +53,8 @@ clap = { version = "4.6.9", features = ["derive"] }
 serde_json = "1.0.154"
 # Temporary project directories in tests (tests/support).
 tempfile = "3.27"
+# Reading where the Windows SDK is installed (cuno-toolchain, Windows only).
+winreg = "0.56"
 
 [workspace.lints.rust]
 # `deny` rather than `forbid`: a small Windows integration module may need an
