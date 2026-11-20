@@ -28,11 +28,12 @@ fn cuno(args: &[&str]) -> Run {
 const HELP: &str = "\
 One comfortable tool for C/C++ development.
 
-Usage: cuno
+Usage: cuno [OPTIONS]
 
 Options:
-  -h, --help     Print help
-  -V, --version  Print version
+      --color <WHEN>  Coloring [default: auto] [possible values: auto, always, never]
+  -h, --help          Print help
+  -V, --version       Print version
 ";
 
 /// Mutation: drop `version` from `#[command(...)]` in `src/main.rs`, or change
@@ -72,7 +73,7 @@ fn unknown_option_is_a_usage_error() {
         "\
 error: unexpected argument '--unknown' found
 
-Usage: cuno
+Usage: cuno [OPTIONS]
 
 For more information, try '--help'.
 ",
@@ -93,9 +94,35 @@ fn unexpected_argument_is_a_usage_error() {
         "\
 error: unexpected argument 'foo' found
 
-Usage: cuno
+Usage: cuno [OPTIONS]
 
 For more information, try '--help'.
 ",
     );
+}
+
+/// `--color` takes `auto`, `always` or `never` (docs/en/specs/commands.md);
+/// any other value is a usage error.
+///
+/// Mutation: remove `value_enum` from the `--color` argument in `src/main.rs`
+/// (or make it a free string); this test fails.
+#[test]
+fn an_unknown_color_is_a_usage_error() {
+    cuno(&["--color", "bogus"]).assert(
+        2,
+        "",
+        "error: invalid value 'bogus' for '--color <WHEN>'
+  [possible values: auto, always, never]
+
+For more information, try '--help'.
+",
+    );
+}
+
+/// `--color never` is accepted wherever a command is (it is a global option).
+///
+/// Mutation: remove the `--color` argument from `Cli`; this test fails.
+#[test]
+fn color_is_accepted_without_a_command() {
+    cuno(&["--color", "never"]).assert(0, HELP, "");
 }

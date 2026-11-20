@@ -115,6 +115,7 @@ name = "cuno"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "cuno-core",
  "serde_json",
  "tempfile",
 ]
