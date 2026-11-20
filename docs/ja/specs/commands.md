@@ -48,12 +48,19 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `-q, --quiet` | 表示を最小限にする |
 | `--color <いつ>` | 色付け（auto / always / never） |
 
-### ビルド系コマンド（`build` / `run` / `check` / `test` / `lint`）で使えるもの
+### ビルド系コマンド（`build` / `run` / `check` / `test`）で使えるもの
 
 | オプション | 説明 |
 |---|---|
 | `--release` | release プロファイルでビルドする |
 | `--profile <名前>` | 指定したプロファイルでビルドする。MVP では `dev` / `release` のみ（それ以外はエラー、終了コード 3） |
+
+- `cuno lint` はこの 2 つを受け付けない（指定すると不明なオプションとして終了コード 2）。理由は [dev-tools.md](dev-tools.md#対象ファイル)。
+
+### ビルド系コマンドと `lint`（`build` / `run` / `check` / `test` / `lint`）で使えるもの
+
+| オプション | 説明 |
+|---|---|
 | `--compiler <名前>` | 使用するコンパイラ（msvc / clang / clang-cl / gcc / safec）。値の説明は [manifest.md](manifest.md) の `compiler`。MVP で `gcc` / `safec` を指定するとエラー（終了コード 3） |
 | `--target <ビルド対象環境>` | クロスコンパイル。MVP では予約のみで、指定するとエラー（終了コード 3）（[toolchain.md](toolchain.md)） |
 | `--target-dir <パス>` | 出力先（[build.md](build.md)）。相対パスはカレントディレクトリ基準（環境変数 `CUNO_TARGET_DIR` も同じ） |
@@ -155,7 +162,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 オプションなし。環境を診断し、問題ごとに対処法を表示する。
 
-- プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合は自動選択されるコンパイラを対象に診断する。
+- プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合は、プロジェクトの層を除いた選択の優先順位で選ばれるコンパイラを対象に診断する（[toolchain.md](toolchain.md#選択)）。
 
 | 判定 | 条件 | 終了コード |
 |---|---|---|
