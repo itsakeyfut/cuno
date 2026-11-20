@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob a9112f2db926a7d356c180cd1be7ec4ae6343b3d -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 7325cd3b4d1f7fad30f2b661c54cdf254d494c98 -->
 
 # Toolchain
 
@@ -130,12 +130,15 @@ A compiler must accept a C++20 specification.
 
 - Each of the four tools is looked for in the following order, and every one found is recorded.
   1. The path written in `[toolchain.paths]` ([manifest.md](manifest.md))
-  2. Each directory on `PATH`
+  2. Each directory on `PATH` (absolute ones only; an empty or relative entry would point at cuno's working directory, often the project, where a file named like the tool would then be used, so it is not searched)
   3. On Windows, `%ProgramFiles%\LLVM\bin` (the default location of the official LLVM installer)
   4. On Windows, `VC\Tools\Llvm\x64\bin` of each detected Visual Studio (the Clang bundled with Visual Studio)
 - The same file found from several places counts as one.
-- **The version is read from what the tool prints when run with `--version`**: the first `<n>.<n>.<n>` after `version` (`clang version 22.1.8`; clang-tidy prints `LLVM version 22.1.8`).
-- Which one is used when several are found is decided by "Selection" (the newest that satisfies the version conditions; the list keeps this search order).
+- **The version is read from what the tool prints when run with `--version`**: the first `<n>.<n>.<n>` after `version` on the line that contains `version` (`clang version 22.1.8`; clang-tidy prints `LLVM version 22.1.8`). Numbers on later lines (an install path, etc.) are not read.
+  - If characters follow the number directly (`19.1.0-rc1`, `23.0.0git`), it is recorded as a pre-release.
+  - If there is a `Target:` line, its default target (such as `x86_64-pc-windows-msvc`) is recorded.
+  - A tool that cannot be started, or exits with an error, is recorded as "failed to run", and no version is read. One with no version line is recorded as "no version". Both stay in the list (so that `cuno doctor` can show them).
+- Which one is used when several are found is decided by "Selection". It chooses, among those that run, are not pre-releases and, on Windows, have an MSVC default target (`*-windows-msvc`), the newest that satisfies the version conditions (a Clang for MinGW cannot be linked together with MSVC; the list keeps this search order).
 - If the path written in `[toolchain.paths]` has no file, it is an error (exit code 3) naming that setting, so that a tool the user named is never silently replaced by another.
 - A tool not being found is not itself an error in detection. Whether it is needed is decided by each command that uses it (`cuno doctor`, `cuno fmt` / `cuno lint`, the build commands).
 
@@ -185,5 +188,5 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 ## Open questions
 
 - Concrete method for resolving the MSVC environment (use of vswhere, etc.)
-- Detailed search order for detection
+- The search order for detecting other compilers such as GCC (Visual Studio and LLVM are settled above)
 - List of supported targets, and how to detect each target's tools

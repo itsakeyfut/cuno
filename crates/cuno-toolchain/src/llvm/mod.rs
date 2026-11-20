@@ -3,4 +3,4 @@
 
 mod detect;
 
-pub use detect::{ExplicitPaths, LlvmTool, Origin, Tool, find_llvm_tools};
+pub use detect::{ExplicitPaths, LlvmTool, Origin, Probe, Tool, find_llvm_tools};

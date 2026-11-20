@@ -115,9 +115,32 @@ fn finds_the_clang_the_reference_uses() {
         std::fs::canonicalize(&reference_clang).ok()
     );
     assert_eq!(
-        first_clang.version.map(|v| v.to_string()),
-        Some(reference_version)
+        first_clang.version().map(|v| v.to_string()),
+        Some(reference_version.clone())
     );
+
+    // clang-cl beside it: the same file cuno finds, with the same version.
+    let reference_clang_cl = reference_dir.join(
+        reference_clang
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace("clang", "clang-cl"),
+    );
+    if reference_clang_cl.is_file() {
+        let first_clang_cl = found
+            .iter()
+            .find(|t| t.tool == cuno_toolchain::llvm::Tool::ClangCl)
+            .unwrap_or_else(|| panic!("no clang-cl among {found:#?}"));
+        assert_eq!(
+            std::fs::canonicalize(&first_clang_cl.path).ok(),
+            std::fs::canonicalize(&reference_clang_cl).ok()
+        );
+        assert_eq!(
+            first_clang_cl.version().map(|v| v.to_string()),
+            Some(clang_version(&reference_clang_cl))
+        );
+    }
 }
 
 /// The version clang prints, read here independently of cuno: the word after
