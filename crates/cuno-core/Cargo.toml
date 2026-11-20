@@ -1,6 +1,6 @@
 [package]
 name = "cuno-core"
-description = "Error classification, output, and the cuno home, shared by the other crates."
+description = "Error classification, output, the cuno home, and the environment snapshot, shared by the other crates."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
