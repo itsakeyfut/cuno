@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 3b125bf8d5aadd239958ec9ea2b03607fc50eca8 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 2f5a3f98e75e2e210e98a0955537969b07066e97 -->
 
 # Development Tools
 
@@ -172,7 +172,7 @@ Example: with `warn = ["modernize-*"]` and `allow = ["modernize-use-auto"]`, onl
 |---|---|
 | No findings, or only warnings (preset checks / `warn`) | `0` |
 | There are findings for `deny` checks | `1` |
-| A compile error in clang-tidy itself (`clang-diagnostic-error`) | `1` |
+| A compile error in clang-tidy itself (`clang-diagnostic-error`; a mismatch with the standard library (STL1000) is caught by the check before analysis with exit code 3, so it does not reach here) | `1` |
 
 - Checks included in the preset are treated as **warnings** unless written in `deny`.
 

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 4f49505ca8174875ea26ecf2dc3da5cfc4e5923e -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 42221d37701a115f9a49bb22cc09222caf0a58c8 -->
 
 # Toolchain
 
@@ -53,22 +53,35 @@ A compiler must accept a C++20 specification.
 | Clang | 17 or later, and on Windows accepted by the MSVC standard library in use |
 | GCC | 10 or later |
 
-- Why Clang 17 or later: a floor common to every OS, matching the version the VS 2022 17.10 standard library (MSVC STL) requires. Also, `-fms-runtime-lib`, which specifies the C runtime kind for GNU-style `clang`, is only available in Clang 16 and later (without it, the default is the static runtime, which conflicts with the `runtime = "dynamic"` default).
-- **On Windows, the Clang must also be accepted by the MSVC standard library (MSVC STL).** The MSVC STL errors out (STL1000) on a Clang older than its own floor, and that floor rises as Visual Studio is updated (for example, MSVC 14.52 requires Clang 22 or newer). It cannot be expressed as a fixed number, so cuno asks the standard library itself.
-  - How the floor has moved (MSVC STL's `yvals_core.h`): VS 2022 17.0 requires Clang 12, 17.4 requires 14, 17.8 requires 16, 17.10 requires 17, 17.14 requires 19, and VS 18 (MSVC 14.52) requires 22.
-  - Method: with the selected Clang and the resolved Windows environment, compile a file that includes only `<yvals_core.h>` **as C++**, as a syntax check only (`/TP /Zs` for `clang-cl`, `-x c++ -fsyntax-only` for `clang`). Treated as C, the standard library stops with a different error (STL1003), so it is compiled as C++ even for a C-only project.
-  - If the output contains STL1000, the pairing cannot be used. The Clang version needed is taken from `<version>` in the standard library's message `expected Clang <version> or newer` (it may be an integer such as `22` or a form such as `17.0.0`). If it cannot be extracted, the standard library's message is shown in `help:` as is.
-  - If the probe fails for a reason other than STL1000 (headers not found, etc.), whether the pairing works cannot be decided. The compiler's output is shown as is, and it is treated as an environment problem.
+- Why Clang 17 or later: a floor common to every OS, as the oldest Clang cuno supports. 17 is the version the VS 2022 17.10 to 17.12 standard library (MSVC STL) requires, and older Clang is not covered. Also, `-fms-runtime-lib`, which specifies the C runtime kind for GNU-style `clang`, is only available in Clang 16 and later (without it, the default is the static runtime, which conflicts with the `runtime = "dynamic"` default). 17 is a floor, and on Windows the check below can raise it.
+- **On Windows, the Clang must also be accepted by the MSVC standard library (MSVC STL).** The MSVC STL errors out (STL1000) on a Clang older than its own floor, and that floor rises as Visual Studio is updated. It cannot be expressed as a fixed number, so cuno asks the standard library itself.
+  - Examples of the floor (MSVC STL's `yvals_core.h`): VS 2022 17.0 requires Clang 12, 17.7 requires 16, 17.10 requires 17, 17.13 requires 18, 17.14 requires 19, MSVC 14.51 requires 20, and 14.52 requires 22.
+  - **How it is checked**: a file that includes only `<yvals_core.h>` is syntax-checked **as C++** under the same conditions as the build's compile command (the same Clang, the resolved Windows environment, the target `x86_64-pc-windows-msvc`, the include paths, and the project's `defines`): `/TP /Zs` for `clang-cl`, `-x c++ -fsyntax-only` for `clang`. The file is placed outside the project (in a temporary directory).
+    - Why as C++: treated as C, the standard library stops with a different error (STL1003).
+    - Why the `defines` are passed: the MSVC STL does not emit STL1000 when `_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` is defined. A pairing the user has deliberately allowed by writing this in `defines` passes, as the real build does.
+  - **Verdict**: if the exit code is not 0 and `STL1000:` appears on either stdout or stderr, the pairing cannot be used. The Clang version needed is taken from `<version>` in the standard library's message `expected Clang <version> or newer` and shown in the form written (it may be `22` or `17.0.0`). If it cannot be extracted, the standard library's message is shown in `help:` as is.
+  - **When no verdict is possible**: if the probe fails for a reason other than STL1000 (headers not found, another STL error, etc.), or does not finish within 30 seconds, whether the pairing works cannot be decided. It is not treated as passing; the compiler's output is shown as an environment problem (with the exit codes below).
   - Rationale: reading the header's condition, or keeping a table of MSVC versions in cuno, could judge an unusable pairing as fine once a new Visual Studio changes how the header is written or which version it requires. The probe compile takes tens of milliseconds and uses the standard library's own answer.
-- **The same check applies to clang-tidy.** clang-tidy analyzes with the commands in compile_commands.json and reads the MSVC standard headers, so an old clang-tidy fails on every file with STL1000. The check is done by having clang-tidy itself analyze the same file.
-- A C-only project (`[package] lang = "c"`) does not use the standard library (the C++ STL), so the build commands do not run this check. `cuno doctor` and `cuno lint` (clang-tidy) run it for C++ projects and outside a project.
-- The minimum versions and the check above are one decision, used by both `cuno doctor` and the build commands. `cuno doctor` reports a "problem" when it is not met (exit code 1); the build commands and `cuno lint` make it an error before doing anything (exit code 3).
+- **The same check applies to clang-tidy.** clang-tidy analyzes with the commands in compile_commands.json and reads the MSVC standard headers, so an old clang-tidy fails on every file with STL1000.
+  - Method: clang-tidy analyzes the same file with `--checks=-*,readability-braces-around-statements` (with no check enabled it stops without analyzing, so one harmless check is enabled) and, after `--`, the same compile conditions as above. The project's `.clang-tidy` is not read. clang-tidy reports STL1000 on stdout. The verdict is as above.
+- **Where it is checked**:
+
+  | Command | What is checked | C-only project (`[package] lang = "c"`) |
+  |---|---|---|
+  | Build commands | The selected Clang | Not checked (the C++ standard library is not used) |
+  | `cuno lint` | clang-tidy | Not checked |
+  | `cuno doctor` (inside or outside a project) | The selected Clang and clang-tidy | Not checked |
+
+  - A Clang that is not selected (Clang while MSVC is selected, etc.) is not checked.
+- The minimum versions and the check above are one decision, used by both `cuno doctor` and the build commands. `cuno doctor` reports a "problem" when it is not met or cannot be decided (exit code 1); the build commands and `cuno lint` make it an error before doing anything (exit code 3).
 - What is shown when a pairing is rejected:
 
   ```
   error: clang 20.1.8 is not accepted by the MSVC standard library in use (STL1000)
   help: install Clang 22 or newer, or select another compiler
   ```
+
+  For clang-tidy: `error: clang-tidy 20.1.8 is not accepted by ...` and `help: install clang-tidy 22 or newer`.
 
 - Inside cuno, in `[toolchain.version]` of `cuno.toml`, and in output messages, MSVC versions are expressed as the **cl.exe version** (e.g. `19.29`). The Visual Studio product version (e.g. `16.11`) is not used.
 
