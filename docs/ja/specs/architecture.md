@@ -21,13 +21,18 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 
 ```
 cuno/
-├── Cargo.toml        # ワークスペース
-├── crates/           # 上記クレート
+├── Cargo.toml        # ワークスペース、かつ cuno パッケージ（バイナリ）
+├── src/main.rs       # cuno バイナリ本体
+├── crates/           # cuno 以外の上記クレート（ライブラリ）
 ├── headers/cuno/     # 同梱ヘッダ（test.hpp / test.h）。ビルド時にバイナリへ埋め込む
 ├── templates/        # cuno new が生成するサンプル
 ├── tests/            # cuno 自体の結合テスト（実際にコンパイラを呼ぶ）
 └── docs/specs/       # 仕様書
 ```
+
+- ルートはワークスペースであると同時に `cuno` パッケージでもある。
+  - 理由: ルートの `tests/` は、ルートがパッケージでなければどのパッケージのテストにもならず、ビルドされない。ルートを `cuno` パッケージにすることで、`tests/` が cuno バイナリの結合テストとして動く。
+  - あわせて、ルートで `-p cuno` を付けずに `cargo run` / `cargo install --path .` が使える。
 
 ## 主な外部ライブラリ
 
