@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob d9777b7224afa808501cbb3cd8ae1bf99eb33dde -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 5e0dce45cbd05abd5cf09f2ac8a6f3f29fa1d4c1 -->
 
 # Commands
 
@@ -176,6 +176,7 @@ Diagnoses the environment and shows a fix for each problem.
 |---|---|---|
 | Problem | Cannot build with the selected compiler (not found, does not satisfy the version requirement, Visual Studio environment cannot be resolved, etc.) | `1` |
 | Problem | clang-format / clang-tidy not found | `1` |
+| Problem | Clang / clang-tidy is not accepted by the MSVC standard library in use ([toolchain.md](toolchain.md#minimum-compiler-versions)) | `1` |
 | Problem | An error in a configuration file, or an unsupported compiler selected | `1` |
 | Info | A compiler that is not used is not found (e.g. no Clang in an environment that uses MSVC) | No effect |
 

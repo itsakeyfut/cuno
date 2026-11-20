@@ -176,7 +176,7 @@ exclude = []           # 解析しないファイル
 
 ## ツールのバージョン
 
-- clang-format / clang-tidy の最低バージョンは **17**。Clang の下限は Windows で MSVC 標準ライブラリによって変わるが（[toolchain.md](toolchain.md)）、clang-format / clang-tidy は標準ライブラリを使わないので、この下限は固定の 17 とする。バージョンによって整形結果が変わり、手元と CI で `fmt --check` の結果が食い違うのを防ぐため。
+- clang-format / clang-tidy の最低バージョンは **17**。clang-tidy は MSVC の標準ヘッダを読むので、Windows ではさらに Clang と同じく、使用する MSVC 標準ライブラリが受け付けることを条件とする（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。clang-format は標準ライブラリを読まないので、固定の 17 だけを条件とする。バージョンによって整形結果が変わり、手元と CI で `fmt --check` の結果が食い違うのを防ぐため。
 - `cuno doctor` で確認する。
 
 ## ツールが見つからない場合

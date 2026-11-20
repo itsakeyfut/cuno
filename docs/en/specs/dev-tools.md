@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 63ce1c08eee6522fa2800150003ca45c9065af59 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 3b125bf8d5aadd239958ec9ea2b03607fc50eca8 -->
 
 # Development Tools
 
@@ -178,7 +178,7 @@ Example: with `warn = ["modernize-*"]` and `allow = ["modernize-use-auto"]`, onl
 
 ## Tool versions
 
-- The minimum version of clang-format / clang-tidy is **17**. Clang's floor varies on Windows with the MSVC standard library ([toolchain.md](toolchain.md)), but clang-format / clang-tidy do not use the standard library, so their floor is a fixed 17. This prevents formatting results from changing across versions and `fmt --check` results from diverging between local machines and CI.
+- The minimum version of clang-format / clang-tidy is **17**. clang-tidy reads the MSVC standard headers, so on Windows it must also, like Clang, be accepted by the MSVC standard library in use ([toolchain.md](toolchain.md#minimum-compiler-versions)). clang-format does not read the standard library, so its only condition is the fixed 17. This prevents formatting results from changing across versions and `fmt --check` results from diverging between local machines and CI.
 - Checked by `cuno doctor`.
 
 ## When a tool is not found

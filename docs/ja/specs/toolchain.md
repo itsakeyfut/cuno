@@ -51,11 +51,22 @@ C++20 の指定を受け付けるものとする。
 | Clang | 17 以降、かつ Windows では使用する MSVC 標準ライブラリが受け付けるもの |
 | GCC | 10 以降 |
 
-- Clang を 17 以降とする理由: VS 2022 の標準ライブラリ（MSVC STL）は Clang 17 未満をエラー（STL1000）にする（下の確認が扱う問題の一例）。また、GNU 形式の `clang` で C ランタイムの種類を指定する `-fms-runtime-lib` は Clang 16 以降でしか使えない（指定しないと既定が静的ランタイムになり、`runtime = "dynamic"` の既定と食い違う）。
+- Clang を 17 以降とする理由: VS 2022 17.10 の標準ライブラリ（MSVC STL）が要求する版に合わせた、すべての OS で共通の下限。また、GNU 形式の `clang` で C ランタイムの種類を指定する `-fms-runtime-lib` は Clang 16 以降でしか使えない（指定しないと既定が静的ランタイムになり、`runtime = "dynamic"` の既定と食い違う）。
 - **Windows では、MSVC 標準ライブラリ（MSVC STL）が受け付ける Clang であることも条件とする。** MSVC STL は自分の下限より古い Clang をエラー（STL1000）にし、その下限は Visual Studio の更新とともに上がる（例: MSVC 14.52 は Clang 22 以上を要求する）。固定の数値では表せないため、cuno は標準ライブラリ自身に確かめる。
-  - 方法: 選ばれた Clang と、解決した Windows の環境で、`<yvals_core.h>` だけを含むファイルを構文チェックだけでコンパイルする（`clang-cl` は `/Zs`、`clang` は `-fsyntax-only`）。STL1000 で失敗したら、その組み合わせは使えない。必要な Clang のバージョンは、標準ライブラリのメッセージ（`expected Clang N or newer`）から取り、`help:` で案内する。
-  - 理由: ヘッダの条件式を読んだり、MSVC の版ごとの対応表を cuno が持ったりすると、新しい Visual Studio で書き方や版が変わったときに、使えない組み合わせを「問題なし」と判定しうる。試しのコンパイルは約 35 ミリ秒で、標準ライブラリの答えそのものを使える。
-- 最低バージョンと上の確認は、`cuno doctor` とビルド系コマンドが同じ 1 つの判定を使う。`cuno doctor` は満たさなければ「問題あり」（終了コード 1）、ビルド系コマンドはコンパイルの前にエラー（終了コード 3）にする。
+  - 下限の推移（MSVC STL の `yvals_core.h`）: VS 2022 17.0 は Clang 12、17.4 は 14、17.8 は 16、17.10 は 17、17.14 は 19、VS 18（MSVC 14.52）は 22。
+  - 方法: 選ばれた Clang と、解決した Windows の環境で、`<yvals_core.h>` だけを含むファイルを **C++ として**構文チェックだけでコンパイルする（`clang-cl` は `/TP /Zs`、`clang` は `-x c++ -fsyntax-only`）。C として扱うと標準ライブラリが別のエラー（STL1003）で止まるため、C だけのプロジェクトでも C++ として行う。
+  - 出力に STL1000 があれば、その組み合わせは使えない。必要な Clang の版は、標準ライブラリのメッセージ `expected Clang <バージョン> or newer` の `<バージョン>` から取る（`22` のような整数のことも `17.0.0` のような形のこともある）。取り出せなければ、標準ライブラリのメッセージをそのまま `help:` に出す。
+  - STL1000 以外の理由で失敗した場合（ヘッダが見つからない等）は、その組み合わせの可否を判定できない。コンパイラの出力をそのまま示し、環境の問題として扱う。
+  - 理由: ヘッダの条件式を読んだり、MSVC の版ごとの対応表を cuno が持ったりすると、新しい Visual Studio で書き方や版が変わったときに、使えない組み合わせを「問題なし」と判定しうる。試しのコンパイルは数十ミリ秒で、標準ライブラリの答えそのものを使える。
+- **clang-tidy にも同じ確認を適用する。** clang-tidy は compile_commands.json のコマンドで解析し、MSVC の標準ヘッダを読むので、古い clang-tidy は STL1000 で全ファイルの解析に失敗する。確認は clang-tidy 自身で同じファイルを解析して行う。
+- C だけのプロジェクト（`[package] lang = "c"`）は標準ライブラリ（C++ の STL）を使わないので、ビルド系コマンドはこの確認を行わない。`cuno doctor` と `cuno lint`（clang-tidy）は、C++ のプロジェクトとプロジェクトの外で行う。
+- 最低バージョンと上の確認は、`cuno doctor` とビルド系コマンドが同じ 1 つの判定を使う。`cuno doctor` は満たさなければ「問題あり」（終了コード 1）、ビルド系コマンドと `cuno lint` は処理の前にエラー（終了コード 3）にする。
+- 拒否されたときの表示:
+
+  ```
+  error: clang 20.1.8 is not accepted by the MSVC standard library in use (STL1000)
+  help: install Clang 22 or newer, or select another compiler
+  ```
 
 - cuno 内部および `cuno.toml` の `[toolchain.version]`、出力メッセージでは、MSVC のバージョンを **cl.exe のバージョン**（例: `19.29`）で表す。Visual Studio の製品バージョン（例: `16.11`）は使わない。
 
