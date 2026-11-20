@@ -1,0 +1,22 @@
+[workspace]
+members = ["crates/*"]
+# Explicit because a virtual manifest has no `package.edition` to infer it from.
+resolver = "3"
+
+[workspace.package]
+# Nothing is released before v0.1.0 (M4, docs/en/roadmap.md), so no build
+# before then claims a release version.
+version = "0.0.0"
+edition = "2024"
+# See docs/en/specs/architecture.md, "Rust".
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/itsakeyfut/cuno"
+# Nothing goes to crates.io until distribution is decided (M4).
+publish = false
+
+[workspace.lints.rust]
+# `deny` rather than `forbid`: a small Windows integration module may need an
+# explicitly allowed `unsafe` block later, and `forbid` cannot be overridden.
+unsafe_code = "deny"
+missing_docs = "warn"
