@@ -18,7 +18,7 @@ inputs:
     default: "22.1.8"
   sha256:
     description: SHA-256 of LLVM-<version>-win64.exe.
-    default: "16e5709785fef73c854646241c4a92c5cd574318d1b33c63330dd7721903e55c"
+    default: "0000000000000000000000000000000000000000000000000000000000000000"
 runs:
   using: composite
   steps:
