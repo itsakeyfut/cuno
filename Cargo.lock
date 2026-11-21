@@ -132,6 +132,10 @@ version = "0.0.0"
 [[package]]
 name = "cuno-manifest"
 version = "0.0.0"
+dependencies = [
+ "cuno-core",
+ "tempfile",
+]
 
 [[package]]
 name = "cuno-test"
