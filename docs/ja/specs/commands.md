@@ -203,7 +203,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - `Using`: 使う MSVC のツールセット（cl のバージョンと Visual Studio の場所。MSVC を選んだときは `Selected` の行が兼ねる）と Windows SDK。
 - `Accepted`: Clang を選んだとき、MSVC 標準ライブラリがそれを受け付けたこと（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。
 - `Found`: clang-format と clang-tidy。
-- `Info`: 選ばれていないコンパイラ（見つからなければ `not found`）。終了コードに影響しない。ただし `[toolchain.paths]` に書いたものが使えない場合は、`Info` の代わりに問題として出す（そのコンパイラに切り替えたときに初めて分かるのを防ぐため）。
+- `Info`: 選ぼうとしたもの以外のコンパイラ。そのコンパイラを選んだら使われるもののバージョン、見つからなければ `not found`、見つかったが使えなければ `not usable` とその理由（cuno の最低バージョンを満たさない、など）。判定は選択と同じで、`[toolchain.version]` だけは当てない（実際に使うコンパイラにだけ当てるため）。終了コードに影響しない。ただし `[toolchain.paths]` に書いたものが使えない場合は、`Info` の代わりに問題として出す（そのコンパイラに切り替えたときに初めて分かるのを防ぐため）。
 - 問題は、見つかった場所で `error:` と `help:` の行として出し、診断は続ける。設定ファイルの警告は `warning:` として最初に出す。
 - 最後の行は `Finished no problems found`、問題があれば `Finished <数> problems found`（1 件なら `problem`）。
 

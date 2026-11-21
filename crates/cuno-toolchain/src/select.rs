@@ -123,6 +123,23 @@ pub struct ProjectChoices {
 }
 
 impl Choices {
+    /// The compiler asked for and where the request came from: the
+    /// highest-precedence name given, else the platform's default. An
+    /// unknown or unsupported name is an error naming where it was given.
+    pub fn kind(&self, host: HostOs) -> Result<(CompilerKind, Source), ToolchainError> {
+        match self.requested() {
+            Some((name, source)) => Ok((CompilerKind::parse(name, source)?, source)),
+            None => match host {
+                HostOs::Windows => Ok((CompilerKind::Msvc, Source::Automatic)),
+                // GCC on Linux and Apple Clang on macOS come after the MVP.
+                HostOs::Other => Err(ToolchainError::UnsupportedCompiler {
+                    name: "gcc".to_owned(),
+                    source: Source::Automatic.to_string(),
+                }),
+            },
+        }
+    }
+
     /// The highest-precedence name given, and where it came from.
     fn requested(&self) -> Option<(&str, Source)> {
         let project = self.project.as_ref();
@@ -278,19 +295,41 @@ pub fn select(
     constraints: &Constraints,
     host: HostOs,
 ) -> Result<Selected, ToolchainError> {
-    let (kind, source) = match choices.requested() {
-        Some((name, source)) => (CompilerKind::parse(name, source)?, source),
-        None => match host {
-            HostOs::Windows => (CompilerKind::Msvc, Source::Automatic),
-            // GCC on Linux and Apple Clang on macOS come after the MVP.
-            HostOs::Other => {
-                return Err(ToolchainError::UnsupportedCompiler {
-                    name: "gcc".to_owned(),
-                    source: Source::Automatic.to_string(),
-                });
-            }
-        },
+    let (kind, source) = choices.kind(host)?;
+    // On Windows every compiler uses an MSVC toolset (`toolchain.md`,
+    // "Environment resolution on Windows"), so Visual Studio is required
+    // even for Clang.
+    let newest_toolset = match host {
+        HostOs::Windows => {
+            let toolsets = usable_toolsets(found)?;
+            first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned()
+        }
+        HostOs::Other => None,
     };
+    let (executable, version, msvc) = copy_of(kind, found, constraints, host)?;
+    Ok(Selected {
+        kind,
+        executable,
+        version,
+        // A Clang gets the newest toolset; MSVC is its own.
+        msvc: msvc.or(newest_toolset),
+        source,
+    })
+}
+
+/// The copy of `kind` that selecting it would use, and its version (with
+/// its own toolset for MSVC), or why there is none: the one written in
+/// `[toolchain.paths]` when there is one, which must be usable, otherwise
+/// the newest eligible copy; cuno's minimum and `constraints` apply either
+/// way. The one answer `select` and `cuno doctor`'s `Info` lines share. A
+/// Clang is answered without Visual Studio, which `select` requires
+/// separately.
+pub fn copy_of(
+    kind: CompilerKind,
+    found: Found<'_>,
+    constraints: &Constraints,
+    host: HostOs,
+) -> Result<(PathBuf, Version, Option<MsvcToolset>), ToolchainError> {
     let requirement = constraints.of(kind);
     let acceptable = |version: &Version| {
         *version >= kind.minimum() && requirement.is_none_or(|r| r.matches(version))
@@ -299,15 +338,6 @@ pub fn select(
     if let Some(r) = requirement {
         requirements.push(format!("{r} ([toolchain.version] {})", kind.name()));
     }
-
-    // On Windows every compiler uses an MSVC toolset (`toolchain.md`,
-    // "Environment resolution on Windows"), so Visual Studio is required
-    // even for Clang.
-    let toolsets = match host {
-        HostOs::Windows => usable_toolsets(found)?,
-        HostOs::Other => Vec::new(),
-    };
-    let newest_toolset = first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned();
 
     let mut candidates: Vec<(PathBuf, Version, Option<MsvcToolset>)> = Vec::new();
     // Copies found but not eligible, with why, for the error.
@@ -318,9 +348,9 @@ pub fn select(
                 return Err(ToolchainError::NoVisualStudio);
             }
             candidates.extend(
-                toolsets
-                    .iter()
-                    .map(|t| (t.cl(), t.cl_version, Some(t.clone()))),
+                usable_toolsets(found)?
+                    .into_iter()
+                    .map(|t| (t.cl(), t.cl_version, Some(t))),
             );
         }
         CompilerKind::Clang | CompilerKind::ClangCl => {
@@ -349,15 +379,12 @@ pub fn select(
                         ),
                     });
                 }
-                candidates.push((chosen.path, chosen.version, newest_toolset.clone()));
-            } else {
-                for t in found.llvm.iter().filter(|t| t.tool == tool) {
-                    match release_for(t, host) {
-                        Ok(version) => {
-                            candidates.push((t.path.clone(), version, newest_toolset.clone()))
-                        }
-                        Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
-                    }
+                return Ok((chosen.path, chosen.version, None));
+            }
+            for t in found.llvm.iter().filter(|t| t.tool == tool) {
+                match release_for(t, host) {
+                    Ok(version) => candidates.push((t.path.clone(), version, None)),
+                    Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
                 }
             }
         }
@@ -380,20 +407,14 @@ pub fn select(
             .filter(|c| acceptable(&c.1))
             .map(|c| (c, c.1)),
     );
-    let Some((executable, version, msvc)) = best.cloned() else {
-        return Err(ToolchainError::NoMatchingVersion {
+    match best.cloned() {
+        Some(best) => Ok(best),
+        None => Err(ToolchainError::NoMatchingVersion {
             compiler: kind.name(),
             requirements,
             found: candidates.iter().map(|c| c.1).collect(),
-        });
-    };
-    Ok(Selected {
-        kind,
-        executable,
-        version,
-        msvc,
-        source,
-    })
+        }),
+    }
 }
 
 /// The item with the highest version; among equals, the first, so that
@@ -1340,6 +1361,97 @@ mod tests {
         elsewhere.msvc = None;
         check(&elsewhere, &Env::default(), inputs, &never).unwrap();
         assert_eq!(*never.calls.borrow(), 0);
+    }
+
+    /// MSVC keeps the toolset of the cl selected, even when
+    /// `[toolchain.version]` leaves out a newer one; a Clang gets the newest.
+    ///
+    /// Mutation: give MSVC the newest toolset instead of its own, or a Clang
+    /// none; this test fails.
+    #[test]
+    fn msvc_keeps_its_own_toolset_and_clang_gets_the_newest() {
+        let installs = [install("VS", &[v(19, 44, 1), v(19, 52, 1)])];
+        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8))];
+        let older = Constraints {
+            msvc: Some(VersionReq::parse("msvc", "<19.50").unwrap()),
+            ..Default::default()
+        };
+        let msvc = pick(&asking("msvc"), found(&installs, &llvm), &older).unwrap();
+        assert_eq!(msvc.version, v(19, 44, 1));
+        let toolset = msvc.msvc.unwrap();
+        assert_eq!(
+            (toolset.cl_version, toolset.cl()),
+            (v(19, 44, 1), msvc.executable)
+        );
+
+        let clang = pick(&asking("clang"), found(&installs, &llvm), &older).unwrap();
+        assert_eq!(clang.msvc.unwrap().cl_version, v(19, 52, 1));
+    }
+
+    /// `copy_of` answers a Clang without Visual Studio (doctor's `Info`
+    /// lines need it when Visual Studio is missing), holds every copy to
+    /// cuno's minimum and to the constraints passed, and gives MSVC its own
+    /// toolset; `Choices::kind` names the kind asked for even when its
+    /// selection would fail.
+    ///
+    /// Mutation: require Visual Studio for a Clang in `copy_of`, drop cuno's
+    /// minimum or the constraints, or make `kind` fail when selection would;
+    /// this test fails.
+    #[test]
+    fn copy_of_is_the_answer_selection_and_doctor_share() {
+        let none = Constraints::default();
+        let llvm = [clang(Tool::Clang, "found", v(22, 1, 8))];
+        let without_vs = found(&[], &llvm);
+        assert_eq!(
+            copy_of(CompilerKind::Clang, without_vs, &none, HostOs::Windows).unwrap(),
+            (PathBuf::from("found"), v(22, 1, 8), None)
+        );
+        assert!(matches!(
+            copy_of(CompilerKind::Msvc, without_vs, &none, HostOs::Windows),
+            Err(ToolchainError::NoVisualStudio)
+        ));
+
+        let old = [clang(Tool::Clang, "old", v(16, 0, 6))];
+        assert!(matches!(
+            copy_of(
+                CompilerKind::Clang,
+                found(&[], &old),
+                &none,
+                HostOs::Windows
+            ),
+            Err(ToolchainError::NoMatchingVersion { .. })
+        ));
+        let required = Constraints {
+            clang: Some(VersionReq::parse("clang", ">=30").unwrap()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            copy_of(CompilerKind::Clang, without_vs, &required, HostOs::Windows),
+            Err(ToolchainError::NoMatchingVersion { .. })
+        ));
+
+        let installs = [install("VS", &[v(19, 44, 1), v(19, 52, 1)])];
+        let (cl, version, toolset) = copy_of(
+            CompilerKind::Msvc,
+            found(&installs, &[]),
+            &none,
+            HostOs::Windows,
+        )
+        .unwrap();
+        assert_eq!(version, v(19, 52, 1));
+        assert_eq!(toolset.unwrap().cl(), cl);
+
+        // Asked for clang with no Visual Studio: selection fails, the kind
+        // asked for is still clang.
+        assert!(pick(&asking("clang"), without_vs, &none).is_err());
+        assert_eq!(
+            asking("clang").kind(HostOs::Windows).unwrap(),
+            (CompilerKind::Clang, Source::CommandLine)
+        );
+        assert_eq!(
+            Choices::default().kind(HostOs::Windows).unwrap(),
+            (CompilerKind::Msvc, Source::Automatic)
+        );
     }
 
     /// A configured clang or clang-cl is the only copy selection takes, with

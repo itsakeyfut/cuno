@@ -13,22 +13,14 @@ use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, CompilerKind, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
-/// Prints `error:` and `help:` and counts problems, each once: a configured
-/// tool that cannot be used is found both by selection and by the `Info`
-/// lines.
+/// Prints `error:` and `help:` and counts problems.
 struct Problems<'a> {
     shell: &'a mut Shell,
     count: usize,
-    seen: Vec<String>,
 }
 
 impl Problems<'_> {
     fn report(&mut self, error: &dyn CunoError) {
-        let message = error.to_string();
-        if self.seen.contains(&message) {
-            return;
-        }
-        self.seen.push(message);
         self.shell.error(error);
         if let Some(help) = error.help() {
             self.shell.help(help);
@@ -46,11 +38,7 @@ pub fn doctor(
     host: HostOs,
     shell: &mut Shell,
 ) -> usize {
-    let mut problems = Problems {
-        shell,
-        count: 0,
-        seen: Vec::new(),
-    };
+    let mut problems = Problems { shell, count: 0 };
     let runner = SystemRunner::new();
 
     let cli = CliSettings {
@@ -114,7 +102,7 @@ pub fn doctor(
     if !no_llvm {
         tools(&llvm, diagnosed.stl.as_ref(), host, &runner, &mut problems);
     }
-    others(diagnosed.selected, found, !no_llvm, host, &mut problems);
+    others(&diagnosed, found, !no_llvm, host, &mut problems);
 
     let count = problems.count;
     problems.shell.status("Finished", finished(count));
@@ -133,8 +121,13 @@ fn finished(count: usize) -> String {
 /// What the selected compiler's diagnosis leaves for the rest.
 #[derive(Default)]
 struct Diagnosed {
-    /// The compiler selected, if one was.
-    selected: Option<CompilerKind>,
+    /// The compiler asked for (selected, or reported as a problem), if the
+    /// name given was one cuno knows.
+    attempted: Option<CompilerKind>,
+    /// Whether selection already reported that the Visual Studio in
+    /// `[toolchain.paths] msvc` cannot be used, which the MSVC `Info` line
+    /// would only repeat.
+    vs_reported: bool,
     /// What clang-tidy's standard library check needs, when it is to be
     /// made: a compiler, a Windows environment and a C++ project or none.
     stl: Option<StlInputs>,
@@ -173,18 +166,42 @@ fn diagnose(
             user: None,
         });
 
+    // The kind asked for is diagnosed here, and so has no `Info` line, even
+    // when its selection fails.
+    let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
     let constraints = settings.map(|s| s.constraints.clone()).unwrap_or_default();
     let selected = match select::select(&choices, found, &constraints, host) {
         Ok(selected) => selected,
-        // Already reported: no Visual Studio is what vswhere's failure means.
-        Err(ToolchainError::NoVisualStudio) if no_visual_studio => return Diagnosed::default(),
         Err(error) => {
-            problems.report(&error);
-            return Diagnosed::default();
+            let vs_error = matches!(
+                error,
+                ToolchainError::NoVisualStudio | ToolchainError::VisualStudioNotAt { .. }
+            );
+            // Already reported: no Visual Studio is what vswhere's failure
+            // means.
+            if !(no_visual_studio && matches!(error, ToolchainError::NoVisualStudio)) {
+                problems.report(&error);
+            }
+            // Selection stops at Visual Studio before it looks at a Clang, and
+            // the kind asked for has no `Info` line: a configured copy of it
+            // that cannot be used is reported here, or nowhere.
+            if vs_error
+                && let Some(kind @ (CompilerKind::Clang | CompilerKind::ClangCl)) = attempted
+                && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
+                    select::copy_of(kind, found, &constraints, host)
+            {
+                problems.report(&unusable);
+            }
+            return Diagnosed {
+                attempted,
+                vs_reported: matches!(error, ToolchainError::VisualStudioNotAt { .. }),
+                stl: None,
+            };
         }
     };
     let mut diagnosed = Diagnosed {
-        selected: Some(selected.kind),
+        attempted,
+        vs_reported: false,
         stl: None,
     };
     // Without a readable configuration, automatic selection is not what the
@@ -311,13 +328,16 @@ fn tools(
     }
 }
 
-/// An `Info` line for each compiler that was not selected: the version
-/// selecting it would use, or that none was found. Never a problem. Version
-/// requirements are not applied, cuno's minimums are. Without `looked_for_llvm`
-/// (a configured LLVM path had no file, already reported), no Clang line is
-/// printed: nothing was looked for.
+/// An `Info` line for each compiler other than the one asked for: the
+/// version of the copy selecting it would use, `not found`, or `not usable`
+/// with the reason. cuno's minimum applies, `[toolchain.version]` does not
+/// (only the compiler used is held to it). Never a problem, except a copy
+/// written in `[toolchain.paths]` that cannot be used (commands.md, "`cuno
+/// doctor`"), which is reported once: no MSVC line follows selection's own
+/// report of the configured Visual Studio. Without `looked_for_llvm` (a configured LLVM path had no file,
+/// already reported), no Clang line is printed: nothing was looked for.
 fn others(
-    selected: Option<CompilerKind>,
+    diagnosed: &Diagnosed,
     found: Found<'_>,
     looked_for_llvm: bool,
     host: HostOs,
@@ -328,42 +348,25 @@ fn others(
         CompilerKind::Clang,
         CompilerKind::ClangCl,
     ] {
-        if Some(kind) == selected || (kind != CompilerKind::Msvc && !looked_for_llvm) {
+        if Some(kind) == diagnosed.attempted
+            || (kind != CompilerKind::Msvc && !looked_for_llvm)
+            || (kind == CompilerKind::Msvc && diagnosed.vs_reported)
+        {
             continue;
         }
-        // A Clang is reported by the copy selection would use, whether or not
-        // Visual Studio (which selecting it needs) was found.
-        let version = match kind {
-            CompilerKind::Msvc => {
-                let choices = Choices {
-                    cli: Some(kind.name().to_owned()),
-                    ..Default::default()
-                };
-                select::select(&choices, found, &Default::default(), host)
-                    .ok()
-                    .map(|s| s.version)
+        let line = match select::copy_of(kind, found, &Default::default(), host) {
+            Ok((_, version, _)) => format!("{} {version} (not selected)", kind.name()),
+            Err(
+                error @ (ToolchainError::ConfiguredToolUnusable { .. }
+                | ToolchainError::VisualStudioNotAt { .. }),
+            ) => {
+                problems.report(&error);
+                continue;
             }
-            CompilerKind::Clang | CompilerKind::ClangCl => {
-                let tool = if kind == CompilerKind::Clang {
-                    Tool::Clang
-                } else {
-                    Tool::ClangCl
-                };
-                match select::select_tool(tool, found.llvm, host) {
-                    Ok(chosen) => Some(chosen.version),
-                    // What `[toolchain.paths]` names is a problem even unused
-                    // (commands.md, "`cuno doctor`").
-                    Err(error @ ToolchainError::ConfiguredToolUnusable { .. }) => {
-                        problems.report(&error);
-                        continue;
-                    }
-                    Err(_) => None,
-                }
+            Err(ToolchainError::CompilerNotFound { .. } | ToolchainError::NoVisualStudio) => {
+                format!("{} not found", kind.name())
             }
-        };
-        let line = match version {
-            Some(version) => format!("{} {version} (not selected)", kind.name()),
-            None => format!("{} not found", kind.name()),
+            Err(error) => format!("{} not usable: {error}", kind.name()),
         };
         problems.shell.status("Info", line);
     }

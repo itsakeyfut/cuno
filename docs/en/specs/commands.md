@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob dc999a7b9fccf084d1efeacf1e37029ed05d6fab -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob dadac57333eac02449f3b74a4c276d00f9d249ff -->
 
 # Commands
 
@@ -205,7 +205,7 @@ One line per item, in the same form as the status lines of the other commands ([
 - `Using`: the MSVC toolset used (cl's version and the Visual Studio location; when MSVC is selected, the `Selected` line serves for it) and the Windows SDK.
 - `Accepted`: when Clang is selected, that the MSVC standard library accepts it ([toolchain.md](toolchain.md#minimum-compiler-versions)).
 - `Found`: clang-format and clang-tidy.
-- `Info`: the compilers not selected (`not found` when absent). They do not affect the exit code. But when the one written in `[toolchain.paths]` cannot be used, it is printed as a problem instead of `Info` (so that it is not first found when switching to that compiler).
+- `Info`: the compilers other than the one asked for: the version of the copy selecting it would use, `not found` when there is none, or `not usable` with the reason when one is found but cannot be used (below cuno's minimum, for example). It is judged as selection judges, except that `[toolchain.version]` is not applied (it applies only to the compiler actually used). They do not affect the exit code. But when the one written in `[toolchain.paths]` cannot be used, it is printed as a problem instead of `Info` (so that it is not first found when switching to that compiler).
 - A problem is printed where it is found, as an `error:` and a `help:` line, and diagnosis continues. Warnings about configuration files come first, as `warning:`.
 - The last line is `Finished no problems found`, or `Finished <n> problems found` (`problem` for one).
 
