@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 8d253060bafa346656d60313e154abedc9ae7562 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob bf2e321488c5bc3b13e1d1aa9332fd6aadb61bd8 -->
 
 # Configuration Files
 
@@ -120,6 +120,8 @@ Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `c
   - `include-dirs` / `lib-dirs` etc. in `cuno.toml`: relative to the project root.
   - `target-dir` etc. in `.cuno/config.toml`: relative to the parent of `.cuno/` (the project root).
   - User-level config.toml: relative to `<cuno home>`.
+- On Windows, a path that starts with `\` or `/` without a drive (e.g. `/inc`), or that has a drive with no separator after it (e.g. `C:inc`), is an error (exit code 3). Write an absolute path or a relative one.
+  - Rationale: where either points depends on the current drive or directory at the time, not on where the file is. Resolving it silently could let a build succeed while looking in a place the user did not mean.
 
 ## Item reference
 

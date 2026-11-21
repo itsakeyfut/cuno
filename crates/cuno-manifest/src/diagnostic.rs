@@ -19,9 +19,15 @@ pub struct Location {
 }
 
 impl Location {
-    /// The line and column of byte `offset` in `text`, in `file`.
+    /// The line and column of byte `offset` in `text`, in `file`. An offset
+    /// past the end, or inside a character, counts as where the text ends or
+    /// that character starts, so this never panics.
     pub fn at(file: &Path, text: &str, offset: usize) -> Location {
-        let before = &text[..offset.min(text.len())];
+        let mut offset = offset.min(text.len());
+        while !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        let before = &text[..offset];
         let line_start = before.rfind('\n').map_or(0, |i| i + 1);
         Location {
             file: file.to_owned(),
@@ -103,8 +109,9 @@ impl CunoError for ConfigError {
 mod tests {
     use super::*;
 
-    /// Mutation: count lines or columns from 0, count columns in bytes, or
-    /// drop the location line; this test fails.
+    /// Mutation: count lines or columns from 0, count columns in bytes, slice
+    /// inside a character or past the end, or drop the location line; this
+    /// test fails.
     #[test]
     fn messages_point_at_the_line_and_column() {
         let text = "[build]\nwanings = \"all\"\n  é = 1\n";
@@ -116,6 +123,12 @@ mod tests {
             Location::at(file, text, accented).to_string(),
             "cuno.toml:3:5"
         );
+        let inside = text.find('é').unwrap() + 1;
+        assert_eq!(
+            Location::at(file, text, inside).to_string(),
+            "cuno.toml:3:3"
+        );
+        assert_eq!(Location::at(file, text, 999).to_string(), "cuno.toml:4:1");
 
         let warning = ConfigWarning {
             message: "unknown key `build.wanings` in cuno.toml, ignored".into(),

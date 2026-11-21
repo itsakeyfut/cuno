@@ -1,7 +1,9 @@
 //! Finding the project and resolving the paths written in its settings. See
 //! `docs/en/specs/manifest.md`, "Locating the project and resolving paths".
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use crate::ConfigError;
 
 /// A project: the directory holding its `cuno.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,9 +42,24 @@ pub fn find_project(cwd: &Path) -> Option<Project> {
 /// the user-level config, the current directory for the command line).
 ///
 /// Joined, not canonicalized, so a path through a symlink stays as written;
-/// joining an absolute path gives that path.
-pub fn resolve_path(value: &Path, base: &Path) -> PathBuf {
-    base.join(value)
+/// joining an absolute path gives that path. A Windows path rooted without a
+/// drive (`/inc`) or with a drive and no root (`C:inc`) is an error, without
+/// a location: the caller knows where it was written.
+pub fn resolve_path(value: &Path, base: &Path) -> Result<PathBuf, ConfigError> {
+    let drive_only = matches!(value.components().next(), Some(Component::Prefix(_)));
+    if !value.is_absolute() && (value.has_root() || drive_only) {
+        return Err(ConfigError {
+            message: format!(
+                "`{}` is neither absolute nor relative: where it points depends on the current drive",
+                value.display()
+            ),
+            location: None,
+            help: Some(
+                "write an absolute path, or a path relative to the file it is in".to_owned(),
+            ),
+        });
+    }
+    Ok(base.join(value))
 }
 
 #[cfg(test)]
@@ -103,10 +120,27 @@ mod tests {
         for base in ["project", "home", "cwd"] {
             let base = root.path().join(base);
             assert_eq!(
-                resolve_path(Path::new("inc/x"), &base),
+                resolve_path(Path::new("inc/x"), &base).unwrap(),
                 base.join("inc").join("x")
             );
-            assert_eq!(resolve_path(&absolute, &base), absolute);
+            assert_eq!(resolve_path(&absolute, &base).unwrap(), absolute);
         }
+    }
+
+    /// Mutation: join a path rooted without a drive, or one with a drive and
+    /// no root, instead of rejecting it; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_that_depend_on_the_current_drive_are_errors() {
+        let base = Path::new(r"C:\p\q");
+        for value in [r"\inc", "/inc", "C:inc"] {
+            let err = resolve_path(Path::new(value), base).unwrap_err();
+            assert!(err.message.contains(value), "{err}");
+            assert!(err.help.is_some());
+        }
+        assert_eq!(
+            resolve_path(Path::new(r"D:\x"), base).unwrap(),
+            Path::new(r"D:\x")
+        );
     }
 }
