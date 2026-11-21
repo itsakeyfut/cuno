@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
-use crate::llvm::{LlvmTool, Probe, Tool};
+use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
 use crate::{HostOs, Runner, ToolchainError, Version};
 
@@ -413,23 +413,30 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     canonical(a) == canonical(b)
 }
 
-/// The version of a tool that ran, is a release, and on Windows targets MSVC
-/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
-/// it is not eligible.
-fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
-    let (version, target) = match &tool.probe {
-        Probe::Failed => return Err("it did not run".to_owned()),
-        Probe::NoVersion => return Err("it printed no version".to_owned()),
+/// The version of a tool that ran and is a release, or why it is not one.
+fn release(tool: &LlvmTool) -> Result<Version, String> {
+    match &tool.probe {
+        Probe::Failed => Err("it did not run".to_owned()),
+        Probe::NoVersion => Err("it printed no version".to_owned()),
         Probe::Ran {
             version,
             prerelease: true,
             ..
-        } => return Err(format!("{version} is a preview")),
-        Probe::Ran {
-            version, target, ..
-        } => (*version, target),
-    };
+        } => Err(format!("{version} is a preview")),
+        Probe::Ran { version, .. } => Ok(*version),
+    }
+}
+
+/// The version of a tool that ran, is a release, and on Windows targets MSVC
+/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
+/// it is not eligible.
+fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
+    let version = release(tool)?;
     if host == HostOs::Windows {
+        let target = match &tool.probe {
+            Probe::Ran { target, .. } => target,
+            _ => &None,
+        };
         match target.as_deref() {
             Some(t) if t.ends_with("-windows-msvc") => {}
             Some(t) => return Err(format!("it targets {t}, not MSVC")),
@@ -574,34 +581,50 @@ pub struct LlvmChoice {
     pub version: Version,
 }
 
-/// The clang-format or clang-tidy to use among those detected: the newest
-/// that ran and is a release; among equals, the first in search order
-/// (`toolchain.md`, "LLVM"). Unlike a compiler, its default target does not
-/// matter (clang-tidy prints none), and no minimum applies.
-pub fn select_tool(tool: Tool, llvm: &[LlvmTool]) -> Result<LlvmChoice, ToolchainError> {
+/// The copy of `tool` to use among those detected (`toolchain.md`, "LLVM"):
+/// the one written in `[toolchain.paths]` when there is one, which must be
+/// eligible, or else the newest eligible copy; among equals, the first in
+/// search order. Eligible is a release that ran, and for clang and clang-cl
+/// on Windows one targeting MSVC; clang-format and clang-tidy have no target
+/// to check (clang-tidy prints none). No version requirement applies here.
+pub fn select_tool(
+    tool: Tool,
+    llvm: &[LlvmTool],
+    host: HostOs,
+) -> Result<LlvmChoice, ToolchainError> {
+    let eligible = |t: &LlvmTool| match tool {
+        Tool::Clang | Tool::ClangCl => release_for(t, host),
+        Tool::ClangFormat | Tool::ClangTidy => release(t),
+    };
+    let copies = || llvm.iter().filter(|t| t.tool == tool);
+    if let Some(configured) = copies().find(|t| t.origin == Origin::Configured) {
+        return match eligible(configured) {
+            Ok(version) => Ok(LlvmChoice {
+                path: configured.path.clone(),
+                version,
+            }),
+            Err(why) => Err(ToolchainError::ConfiguredToolUnusable {
+                setting: format!("[toolchain.paths] {}", tool.name()),
+                path: configured.path.clone(),
+                why,
+            }),
+        };
+    }
     let mut excluded = Vec::new();
     let mut candidates = Vec::new();
-    for t in llvm.iter().filter(|t| t.tool == tool) {
-        match &t.probe {
-            Probe::Ran {
+    for t in copies() {
+        match eligible(t) {
+            Ok(version) => candidates.push((
+                LlvmChoice {
+                    path: t.path.clone(),
+                    version,
+                },
                 version,
-                prerelease: false,
-                ..
-            } => candidates.push(LlvmChoice {
-                path: t.path.clone(),
-                version: *version,
-            }),
-            Probe::Ran { version, .. } => {
-                excluded.push(format!("{} ({version} is a preview)", t.path.display()))
-            }
-            Probe::NoVersion => {
-                excluded.push(format!("{} (it printed no version)", t.path.display()))
-            }
-            Probe::Failed => excluded.push(format!("{} (it did not run)", t.path.display())),
+            )),
+            Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
         }
     }
-    let versions: Vec<_> = candidates.iter().map(|c| c.version).collect();
-    match first_newest(candidates.into_iter().zip(versions)) {
+    match first_newest(candidates.into_iter()) {
         Some(best) => Ok(best),
         None if excluded.is_empty() => Err(ToolchainError::CompilerNotFound {
             compiler: tool.name(),
@@ -1296,6 +1319,55 @@ mod tests {
         assert_eq!(*never.calls.borrow(), 0);
     }
 
+    /// A configured copy is the only one used, even when older, and is an
+    /// error naming the setting when it cannot be used; a Clang must target
+    /// MSVC.
+    ///
+    /// Mutation: let a newer found copy win over the configured one, fall
+    /// back to another copy when the configured one did not run, or drop the
+    /// MSVC-target rule for clang; this test fails.
+    #[test]
+    fn a_configured_tool_is_used_or_is_an_error() {
+        let configured = |probe| LlvmTool {
+            origin: Origin::Configured,
+            ..tool(Tool::ClangTidy, "mine", probe)
+        };
+        let newer = tool(Tool::ClangTidy, "found", ran(v(22, 1, 8), false, None));
+        let llvm = [configured(ran(v(19, 1, 0), false, None)), newer.clone()];
+        assert_eq!(
+            select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap(),
+            LlvmChoice {
+                path: "mine".into(),
+                version: v(19, 1, 0)
+            }
+        );
+        let llvm = [configured(Probe::Failed), newer];
+        let err = select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "[toolchain.paths] clang-tidy is mine, but it did not run"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).unwrap(),
+            "correct [toolchain.paths] clang-tidy, or remove it to let cuno find the tool"
+        );
+
+        let clangs = [
+            tool(
+                Tool::Clang,
+                "mingw",
+                ran(v(23, 1, 0), false, Some("x86_64-w64-windows-gnu")),
+            ),
+            clang(Tool::Clang, "msvc", v(22, 1, 8)),
+        ];
+        assert_eq!(
+            select_tool(Tool::Clang, &clangs, HostOs::Windows)
+                .unwrap()
+                .path,
+            PathBuf::from("msvc")
+        );
+    }
+
     /// Mutation: pick the first copy rather than the newest, accept a preview
     /// or a copy that did not run, demand an MSVC target of clang-tidy (it
     /// prints none), or say "not found" when copies were left out; this test
@@ -1310,14 +1382,14 @@ mod tests {
             tool(Tool::ClangFormat, "format", ran(v(18, 1, 0), false, None)),
         ];
         assert_eq!(
-            select_tool(Tool::ClangTidy, &llvm).unwrap(),
+            select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap(),
             LlvmChoice {
                 path: "new".into(),
                 version: v(22, 1, 8)
             }
         );
         assert!(matches!(
-            select_tool(Tool::Clang, &llvm),
+            select_tool(Tool::Clang, &llvm, HostOs::Windows),
             Err(ToolchainError::CompilerNotFound { compiler: "clang" })
         ));
         let unusable = [
@@ -1325,7 +1397,7 @@ mod tests {
             tool(Tool::ClangFormat, "silent", Probe::NoVersion),
             tool(Tool::ClangFormat, "broken", Probe::Failed),
         ];
-        let err = select_tool(Tool::ClangFormat, &unusable).unwrap_err();
+        let err = select_tool(Tool::ClangFormat, &unusable, HostOs::Windows).unwrap_err();
         assert_eq!(
             err.to_string(),
             "no usable clang-format was found; left out: preview (23.0.0 is a preview); \

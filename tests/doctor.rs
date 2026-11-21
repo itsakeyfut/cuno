@@ -89,7 +89,7 @@ fn found_tools() -> String {
     let (_, llvm) = detected();
     let mut out = String::new();
     for tool in [Tool::ClangFormat, Tool::ClangTidy] {
-        let chosen = select::select_tool(tool, &llvm).unwrap();
+        let chosen = select::select_tool(tool, &llvm, HostOs::Windows).unwrap();
         out += &format!("       Found {} {}\n", tool.name(), chosen.version);
     }
     out
@@ -101,8 +101,16 @@ fn info(kind: select::CompilerKind) -> String {
     let (_, llvm) = detected();
     let version = match kind {
         select::CompilerKind::Msvc => selected("msvc").version,
-        select::CompilerKind::Clang => select::select_tool(Tool::Clang, &llvm).unwrap().version,
-        select::CompilerKind::ClangCl => select::select_tool(Tool::ClangCl, &llvm).unwrap().version,
+        select::CompilerKind::Clang => {
+            select::select_tool(Tool::Clang, &llvm, HostOs::Windows)
+                .unwrap()
+                .version
+        }
+        select::CompilerKind::ClangCl => {
+            select::select_tool(Tool::ClangCl, &llvm, HostOs::Windows)
+                .unwrap()
+                .version
+        }
     };
     format!("        Info {} {version} (not selected)\n", kind.name())
 }
@@ -126,7 +134,7 @@ fn llvm_tools_here() -> bool {
     let (_, llvm) = detected();
     [Tool::ClangFormat, Tool::ClangTidy]
         .into_iter()
-        .all(|t| select::select_tool(t, &llvm).is_ok())
+        .all(|t| select::select_tool(t, &llvm, HostOs::Windows).is_ok())
 }
 
 /// Outside a project, each compiler named by `--compiler` is diagnosed with
@@ -332,10 +340,12 @@ fn configuration_warnings_come_first() {
 }
 
 /// `[toolchain.version]` and `[toolchain.paths]` decide what is diagnosed,
-/// as they decide what a build uses.
+/// as they decide what a build uses. When a configured LLVM path has no
+/// file, nothing was looked for, so no Clang is said to be missing.
 ///
 /// Mutation: pass doctor's selection no constraints, no LLVM paths or no
-/// MSVC path; this test fails.
+/// MSVC path, or print `Info clang not found` after the configured path
+/// failed; this test fails.
 #[test]
 fn the_toolchain_settings_constrain_the_selection() {
     if !llvm_tools_here() || require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
@@ -370,9 +380,7 @@ fn the_toolchain_settings_constrain_the_selection() {
              help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
              error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
              help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n        \
-             Info msvc not found\n        \
-             Info clang not found\n        \
-             Info clang-cl not found\n    \
+             Info msvc not found\n    \
              Finished 2 problems found\n",
         );
 }
@@ -484,8 +492,8 @@ fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
 /// A temporary directory that does not exist is a problem saying so, with
 /// its own help, and is not created.
 ///
-/// Mutation: create the directory with its parents, or report it with the
-/// probe's help; this test fails.
+/// Mutation: create the directory with its parents, report it with the
+/// probe's help, or name the wrong check; this test fails.
 #[test]
 fn a_missing_temporary_directory_is_reported_not_created() {
     if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
@@ -507,8 +515,10 @@ fn a_missing_temporary_directory_is_reported_not_created() {
         .unwrap_or_else(|| panic!("{}", run.stderr));
     let error = format!("error: cannot create {}\\cuno-doctor-", temp.display());
     assert!(rest.starts_with(&error), "{rest}");
-    // Once for the compiler's check, once for clang-tidy's.
+    // Once for the compiler's check, once for clang-tidy's, each named.
     assert_eq!(rest.matches(&error).count(), 2, "{rest}");
+    assert_eq!(rest.matches(" to check clang: ").count(), 1, "{rest}");
+    assert_eq!(rest.matches(" to check clang-tidy: ").count(), 1, "{rest}");
     assert_eq!(
         rest.matches("help: set TEMP to a directory that exists and can be written\n")
             .count(),
@@ -536,7 +546,9 @@ fn clang_tidy_is_checked_against_the_standard_library() {
         return;
     }
     let (_, llvm) = detected();
-    let tidy = select::select_tool(Tool::ClangTidy, &llvm).unwrap().version;
+    let tidy = select::select_tool(Tool::ClangTidy, &llvm, HostOs::Windows)
+        .unwrap()
+        .version;
     let expected = healthy(&selected("msvc"), "--compiler")
         .replace(
             &format!("       Found clang-tidy {tidy}\n"),
@@ -616,4 +628,137 @@ fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
             llvm_help("clang-tidy"),
         ),
     );
+}
+
+/// A batch file standing in for an LLVM tool: it prints `version` (the
+/// lines `--version` would) and exits with `code`, whatever it is asked.
+fn fake_tool(version: &str, code: i32) -> String {
+    let lines: String = version.lines().map(|l| format!("echo {l}\r\n")).collect();
+    format!("@echo off\r\n{lines}exit /b {code}\r\n")
+}
+
+/// `[toolchain.paths]` entries for `tools` in `project`, each a batch file.
+fn configured(project: &Project, tools: &[(&str, &str)]) -> String {
+    let mut out = String::from("[toolchain.paths]\n");
+    for (tool, _) in tools {
+        let path = project.path().join(format!("fake/{tool}.cmd"));
+        out += &format!("{tool} = '{}'\n", path.display());
+    }
+    out
+}
+
+/// Each `Found` and `Info` line names the copy that tool's own selection
+/// picks: a configured one, even when older than the copy installed, with
+/// its version, and never another tool's.
+///
+/// Mutation: report one tool's copy for another (clang-cl's for clang, or
+/// clang-tidy's for clang-format), or let a newer copy found win over the
+/// configured one; this test fails.
+#[test]
+fn each_tool_line_names_its_own_configured_copy() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let tools = [
+        ("clang-format", "clang-format version 19.1.1"),
+        ("clang-tidy", "LLVM version 19.1.2"),
+        (
+            "clang",
+            "clang version 18.1.3\nTarget: x86_64-pc-windows-msvc",
+        ),
+        (
+            "clang-cl",
+            "clang version 18.1.4\nTarget: x86_64-pc-windows-msvc",
+        ),
+    ];
+    let mut project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &tools);
+    for (tool, version) in tools {
+        project = project.file(&format!("fake/{tool}.cmd"), &fake_tool(version, 0));
+    }
+    let msvc = selected("msvc");
+    let expected = format!(
+        "    Selected msvc {} (--compiler)\n             {}\n       \
+         Using Windows SDK {}\n       \
+         Found clang-format 19.1.1\n       \
+         Found clang-tidy 19.1.2\n        \
+         Info clang 18.1.3 (not selected)\n        \
+         Info clang-cl 18.1.4 (not selected)\n    \
+         Finished no problems found\n",
+        msvc.version,
+        msvc.executable.display(),
+        sdk()
+    );
+    project
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(0, "", &expected);
+}
+
+/// A configured clang-tidy that does not run is a problem naming the
+/// setting; the clang-tidy installed is not used in its place.
+///
+/// Mutation: fall back to another copy when the configured one did not
+/// run; this test fails.
+#[test]
+fn a_configured_tool_that_does_not_run_is_a_problem() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang-tidy", "")]);
+    let fake = project.path().join("fake/clang-tidy.cmd");
+    let project = project
+        .file("fake/clang-tidy.cmd", &fake_tool("", 1))
+        .file(".cuno/config.toml", &config);
+    let (_, llvm) = detected();
+    let format = select::select_tool(Tool::ClangFormat, &llvm, HostOs::Windows)
+        .unwrap()
+        .version;
+    let healthy = healthy(&selected("msvc"), "--compiler");
+    let (before, _) = healthy.split_once("       Found").unwrap();
+    let expected = format!(
+        "{before}       Found clang-format {format}\n\
+         error: [toolchain.paths] clang-tidy is {}, but it did not run\n\
+         help: correct [toolchain.paths] clang-tidy, or remove it to let cuno find the tool\n{}    \
+         Finished 1 problem found\n",
+        fake.display(),
+        others(Some(select::CompilerKind::Msvc))
+    );
+    project
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(1, "", &expected);
+}
+
+/// The standard library checks compile as the project's C++ edition: a
+/// `src/yvals_core.h` that fails naming the `__cplusplus` it sees tells
+/// which edition reached them.
+///
+/// Mutation: probe every project as one fixed edition; this test fails.
+#[test]
+fn the_checks_use_the_projects_edition() {
+    if !llvm_tools_here() || require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let header = "#if __cplusplus == 201703L\n#error probed as c++17\n\
+                  #elif __cplusplus == 202002L\n#error probed as c++20\n\
+                  #else\n#error probed as another edition\n#endif\n";
+    for (edition, seen) in [("c++17", "probed as c++17"), ("c++20", "probed as c++20")] {
+        let run = Project::new()
+            .file(
+                "cuno.toml",
+                &manifest(&format!("edition = \"{edition}\"\n")),
+            )
+            .file("src/yvals_core.h", header)
+            .cuno(&["doctor", "--compiler", "clang"]);
+        assert_eq!(run.code, Some(1), "{}", run.stderr);
+        // Once from clang's check, once from clang-tidy's.
+        assert_eq!(
+            run.stderr.matches(seen).count(),
+            4,
+            "{edition}: {}",
+            run.stderr
+        );
+        assert!(!run.stderr.contains("another edition"), "{}", run.stderr);
+    }
 }

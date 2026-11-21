@@ -7,7 +7,7 @@ use std::path::Path;
 
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{CliSettings, CompilerName, Inputs, Lang, Os, Profile, Settings};
-use cuno_toolchain::flags::{CompileInput, Edition, Mode, check_edition, compile_flags};
+use cuno_toolchain::flags::{CompileInput, Mode, check_edition, compile_flags};
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, CompilerKind, Found, ProbeInputs};
@@ -100,9 +100,9 @@ pub fn doctor(
     // A configured path with no file is already reported; every tool
     // missing after it would only repeat it.
     if !no_llvm {
-        tools(&llvm, diagnosed.stl.as_ref(), &runner, &mut problems);
+        tools(&llvm, diagnosed.stl.as_ref(), host, &runner, &mut problems);
     }
-    others(diagnosed.selected, found, host, &mut problems);
+    others(diagnosed.selected, found, !no_llvm, host, &mut problems);
 
     let count = problems.count;
     problems.shell.status("Finished", finished(count));
@@ -237,7 +237,7 @@ fn diagnose(
         flags,
     };
     if selected.kind != CompilerKind::Msvc {
-        let result = in_scratch(|scratch| {
+        let result = in_scratch(selected.kind.name(), |scratch| {
             select::check(
                 &selected,
                 &stl.env,
@@ -264,11 +264,12 @@ fn diagnose(
 fn tools(
     llvm: &[cuno_toolchain::llvm::LlvmTool],
     stl: Option<&StlInputs>,
+    host: HostOs,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
 ) {
     for tool in [Tool::ClangFormat, Tool::ClangTidy] {
-        let chosen = match select::select_tool(tool, llvm) {
+        let chosen = match select::select_tool(tool, llvm, host) {
             Ok(chosen) => chosen,
             Err(error) => {
                 problems.report(&error);
@@ -280,7 +281,7 @@ fn tools(
             .status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
             && let Some(stl) = stl
-            && let Err(error) = in_scratch(|scratch| {
+            && let Err(error) = in_scratch("clang-tidy", |scratch| {
                 select::check_tidy(
                     &chosen,
                     stl.kind,
@@ -298,12 +299,15 @@ fn tools(
     }
 }
 
-/// An `Info` line for each compiler that was not selected: its version, or
-/// that none was found. Never a problem. Version requirements are not
-/// applied: this says what is installed.
+/// An `Info` line for each compiler that was not selected: the version
+/// selecting it would use, or that none was found. Never a problem. Version
+/// requirements are not applied, cuno's minimums are. Without `looked_for_llvm`
+/// (a configured LLVM path had no file, already reported), no Clang line is
+/// printed: nothing was looked for.
 fn others(
     selected: Option<CompilerKind>,
     found: Found<'_>,
+    looked_for_llvm: bool,
     host: HostOs,
     problems: &mut Problems<'_>,
 ) {
@@ -312,11 +316,11 @@ fn others(
         CompilerKind::Clang,
         CompilerKind::ClangCl,
     ] {
-        if Some(kind) == selected {
+        if Some(kind) == selected || (kind != CompilerKind::Msvc && !looked_for_llvm) {
             continue;
         }
-        // A Clang is reported by the copy that runs, whether or not Visual
-        // Studio (which selecting it needs) was found.
+        // A Clang is reported by the copy selection would use, whether or not
+        // Visual Studio (which selecting it needs) was found.
         let version = match kind {
             CompilerKind::Msvc => {
                 let choices = Choices {
@@ -327,10 +331,10 @@ fn others(
                     .ok()
                     .map(|s| s.version)
             }
-            CompilerKind::Clang => select::select_tool(Tool::Clang, found.llvm)
+            CompilerKind::Clang => select::select_tool(Tool::Clang, found.llvm, host)
                 .ok()
                 .map(|t| t.version),
-            CompilerKind::ClangCl => select::select_tool(Tool::ClangCl, found.llvm)
+            CompilerKind::ClangCl => select::select_tool(Tool::ClangCl, found.llvm, host)
                 .ok()
                 .map(|t| t.version),
         };
@@ -370,15 +374,12 @@ fn probe_flags(
     };
     let build = manifest.build_settings(Os::Windows, name, Profile::Dev);
     let profile = manifest.profile_settings(Profile::Dev);
-    let edition = match manifest.package.edition {
-        e @ (Edition::Cxx17 | Edition::Cxx20 | Edition::Cxx23) => e,
-        _ => Edition::Cxx20,
-    };
     let include_dirs: Vec<_> = root.map(|r| r.join("src")).into_iter().collect();
     Ok(compile_flags(&CompileInput {
         kind,
         lang: Lang::Cxx,
-        edition,
+        // Only C++ projects (and none) are probed, so this is a C++ edition.
+        edition: manifest.package.edition,
         build: &build,
         profile: &profile,
         include_dirs: &include_dirs,
@@ -387,9 +388,10 @@ fn probe_flags(
     }))
 }
 
-/// Runs `check` with a scratch directory of this process's own in the
-/// temporary directory, removed afterwards.
+/// Runs the check of `what` with a scratch directory of this process's own
+/// in the temporary directory, removed afterwards.
 fn in_scratch(
+    what: &'static str,
     check: impl FnOnce(&Path) -> Result<(), ToolchainError>,
 ) -> Result<(), Box<dyn CunoError>> {
     // `create_dir`, not `create_dir_all`: a temporary directory that does not
@@ -397,6 +399,7 @@ fn in_scratch(
     let scratch = std::env::temp_dir().join(format!("cuno-doctor-{}", std::process::id()));
     std::fs::create_dir(&scratch).map_err(|e| {
         Box::new(ScratchError {
+            what,
             dir: scratch.clone(),
             reason: e.to_string(),
         }) as Box<dyn CunoError>
@@ -410,6 +413,7 @@ fn in_scratch(
 /// directory (`TEMP` names one that does not exist or cannot be written).
 #[derive(Debug)]
 struct ScratchError {
+    what: &'static str,
     dir: std::path::PathBuf,
     reason: String,
 }
@@ -418,8 +422,9 @@ impl std::fmt::Display for ScratchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "cannot create {} to check the compiler: {}",
+            "cannot create {} to check {}: {}",
             self.dir.display(),
+            self.what,
             self.reason
         )
     }

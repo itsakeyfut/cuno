@@ -119,6 +119,16 @@ pub enum ToolchainError {
         /// The path it gives.
         path: PathBuf,
     },
+    /// A tool path the user configured names a tool that cannot be used (it
+    /// does not run, prints no version, is a preview, or targets MinGW).
+    ConfiguredToolUnusable {
+        /// The setting, such as `[toolchain.paths] clang-tidy`.
+        setting: String,
+        /// The path it gives.
+        path: PathBuf,
+        /// Why it cannot be used, such as `it did not run`.
+        why: String,
+    },
 }
 
 impl fmt::Display for ToolchainError {
@@ -201,6 +211,9 @@ impl fmt::Display for ToolchainError {
                 f,
                 "{compiler} {version} does not support edition = \"{edition}\""
             ),
+            ToolchainError::ConfiguredToolUnusable { setting, path, why } => {
+                write!(f, "{setting} is {}, but {why}", path.display())
+            }
             ToolchainError::ConfiguredToolMissing { setting, path } => {
                 write!(
                     f,
@@ -261,7 +274,8 @@ impl CunoError for ToolchainError {
             } => Some(format!(
                 "use {compiler} {needed} or newer, or choose another edition or compiler"
             )),
-            ToolchainError::ConfiguredToolMissing { setting, .. } => Some(format!(
+            ToolchainError::ConfiguredToolMissing { setting, .. }
+            | ToolchainError::ConfiguredToolUnusable { setting, .. } => Some(format!(
                 "correct {setting}, or remove it to let cuno find the tool"
             )),
             ToolchainError::VswhereMissing { .. } | ToolchainError::NoVisualStudio => {
