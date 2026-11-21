@@ -10,6 +10,11 @@ publish.workspace = true
 
 [dependencies]
 cuno-core.workspace = true
+cuno-toolchain.workspace = true
+serde.workspace = true
+serde_ignored.workspace = true
+semver.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

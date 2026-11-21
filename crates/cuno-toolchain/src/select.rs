@@ -223,7 +223,7 @@ impl fmt::Display for VersionReq {
 }
 
 /// `[toolchain.version]`, for the compilers cuno can build with.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Constraints {
     /// `msvc`.
     pub msvc: Option<VersionReq>,
