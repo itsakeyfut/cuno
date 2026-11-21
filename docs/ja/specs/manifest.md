@@ -90,7 +90,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 **警告して無視する**（無視しても、ビルド結果の意味は変わらないもの）:
 
-- `[build] unity`、`[build] precompiled-header`
+- `[build] unity`、`[build] precompiled-header`（既定値の `false` / `""` のままなら、何も無視しないので警告しない）
 - `.cuno/config.toml` の `[alias]`、`[build] cache`（MVP ではビルドキャッシュを使わない。既定値 `auto` も MVP では効かない）
 
 **エラーにする**（終了コード 3。無視すると、利用者の意図と違うものが黙ってビルドされるもの）:
@@ -99,7 +99,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - 独自プロファイル（`inherits`、および `dev` / `release` 以外の `--profile`）
 - `[lib]`
-- `[[build.rule]]`（カスタムルール）
+- `[[build.rule]]`（カスタムルール。`[platform.<OS>.build]` / `[profile.<name>.build]` の下に書いた場合も同じ）
 - `.cuno/config.toml` の `[target.<ビルド対象環境>]`、`--target`
 - `[dependencies]`
 
