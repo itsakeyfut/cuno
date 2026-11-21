@@ -64,15 +64,18 @@
 
 | 設定 | MSVC | clang-cl | clang |
 |---|---|---|---|
+| 常に | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` |
 | リンカ | `link.exe`（`/link` の後に引数） | `-fuse-ld=lld`、`lld-link`（`/link` の後に引数） | `-fuse-ld=lld` |
 | 出力 | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
 | `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
 | `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
+| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` |
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
-| `debug-info = true` | `/DEBUG` | `/DEBUG` | `-g` |
-| `lto = true` | `/LTCG` | `-flto` | `-flto` |
-| `runtime` | なし（オブジェクトが指定する） | なし（オブジェクトが指定する） | コンパイルと同じ `-fms-runtime-lib=` |
-| `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | `-Wl,<flag>` として最後に |
+| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` |
+| `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` |
+| `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | ひとつずつ `-Xlinker <flag>` として最後に |
+
+- `<n>` は `opt-level`（`0` / `1` / `2` / `3`、`"s"` は `2`）。
 
 ### 理由
 
@@ -83,7 +86,11 @@
 - `c++23` と `c23` は、どのコンパイラでも規格を名前で指定する。「最新」（`/std:c++latest`、`/std:clatest` を C++ に使うこと）は使わない。cl 19.52 と clang-cl 22 の `/std:c++latest` はすでに C++26 の作業草案（`__cplusplus` が `202400`）で、同じ `cuno.toml` でも clang とは違う規格になり、通るプログラムも変わるため。
   - cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。そのため、規格を受け付けるかは cl のバージョンで判定し、足りなければエラーにする（[toolchain.md](toolchain.md)）。`/std:c++23` は確かめた最も古い cl 19.52 以上（受け付ける版が公式の文書にないため。より古い版で確かめられれば下げる）、`/std:clatest`（C の最新、C23 を含む）は Visual Studio 2022 17.7（cl 19.37）以上。
   - clang-cl は `/std:c++23` と `/std:c23` を無視するため、`/clang:` で clang の指定を渡す。C23 は Clang 17 でも通る `c2x` と書く（`c23` は Clang 18 から）。
-- `-fms-runtime-lib`: GNU 形式の `clang` は、指定しないと静的な C ランタイムを使い、`runtime = "dynamic"` の既定と食い違う。
+- `-fms-runtime-lib`: GNU 形式の `clang` は、指定しないと静的な C ランタイムを使い、`runtime = "dynamic"` の既定と食い違う。効くのはコンパイル時だけ（どの C ランタイムを使うかはオブジェクトに記録され、リンカはそれに従う）なので、リンクには付けない。
+- `/SUBSYSTEM:CONSOLE`: 指定しないと、リンカは `main` がなく `WinMain` があるプログラムを GUI として黙ってリンクし、コンソールのないプログラムができる。明示すると `main` がないことがリンクエラーとして分かる。
+- `-Xlinker`: `-Wl,` は値をカンマで分けるため、`/OPT:REF,ICF` のようなカンマを含むリンカのフラグが壊れる。
+- `/opt:lldlto=<n>`: LTO ではリンク時に最適化し直す。lld はこれを指定しないと `opt-level` によらず `2` で最適化する。
+- `/INCREMENTAL:NO`: MSVC のリンカは `/DEBUG` で既定でインクリメンタルリンクになり、`.ilk` を作る（lld はしない）。コンパイラによらず同じ出力にするため。
 - `_HAS_EXCEPTIONS=0`: 例外を無効にしたとき、コンパイラによらず標準ライブラリが例外を投げない実装を使うようにする。
 - `/we4530`、`/we4541`、`-Werror=rtti`: 例外や RTTI を無効にしたとき、clang は `try` / `throw` や `typeid` / `dynamic_cast` をエラーにするが、cl と clang-cl は警告だけ出して、デストラクタが実行されない・実行時に落ちるプログラムを作る。どのコンパイラでもビルドの段階で止めるため。ただし cl は、`try` のない `throw` だけはどのフラグでも検出できない。
 - `pedantic` は規格への厳密な準拠を求めるため、clang・clang-cl は Windows SDK の `IID_PPV_ARGS` 等が使う `__uuidof` を拡張として指摘する（`warnings-as-errors` と合わせるとエラー）。cl は指摘しない。cl では `/std:c++20` 以降と C の規格指定がすでに `/permissive-` を含むため、`pedantic` と `all` の違いは小さい。

@@ -653,6 +653,27 @@ impl Check<'_> {
     }
 
     fn build_table(&mut self, prefix: &str, raw: RawBuild) -> Result<BuildTable, ConfigError> {
+        // A library is named without `.lib`: cl and clang-cl would look for
+        // `user32.lib.lib` (manifest.md, `links`).
+        if let Some(lib) = raw
+            .links
+            .iter()
+            .flatten()
+            .find(|lib| lib.to_ascii_lowercase().ends_with(".lib"))
+        {
+            let path = format!("{prefix}.links");
+            return Err(self.doc.error(
+                &path,
+                format!(
+                    "`{path}` names \"{lib}\" in {}, with `.lib`",
+                    self.doc.file.display()
+                ),
+                Some(format!(
+                    "write the name alone, \"{}\"; cuno adds what each compiler needs",
+                    &lib[..lib.len() - 4]
+                )),
+            ));
+        }
         let not_supported = "it is not supported yet";
         // Left at its default, a key ignores nothing, so it is not warned
         // about (manifest.md, "Implemented in MVP").
@@ -1002,6 +1023,16 @@ indent-width = 2
                 "[[bin]]\nsubsystem = \"gui\"\n",
                 5,
                 "not one of console, windows",
+            ),
+            (
+                "[build]\nlinks = [\"user32\", \"gdi32.LIB\"]\n",
+                5,
+                "names \"gdi32.LIB\"",
+            ),
+            (
+                "[platform.windows.build]\nlinks = [\"d3d12.lib\"]\n",
+                5,
+                "`platform.windows.build.links` names",
             ),
             (
                 "[profile.dev]\nopt-level = 4\n",
