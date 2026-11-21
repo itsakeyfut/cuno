@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 8009773809148be7e3338e1f786df340832f1e0c -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 39535907a2a89bfc8b45f983e7f75c907f258922 -->
 
 # Build
 
@@ -84,7 +84,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - `/utf-8`: prevents UTF-8 sources from being read as CP932 on Japanese Windows.
 - `/Zc:__cplusplus`: without it, cl sets `__cplusplus` to `199711` even with `/std:c++20`.
 - `--target=x86_64-pc-windows-msvc`: builds with the same ABI as MSVC, so libraries built with MSVC can be linked in ([toolchain.md](toolchain.md)).
-- `/TC` / `/TP`, `-x c` / `-x c++`: compile in the package's language whatever the extension (the same way [dev-tools.md](dev-tools.md) treats `.h` as the package's language).
+- `/TC` / `/TP`, `-x c` / `-x c++`: each source is compiled as the language its extension gives ([project-layout.md](project-layout.md#target-files)), stated explicitly. A file in a language other than the package's gets that language's default standard, and none of the C++-only settings (exceptions, RTTI).
 - `c++23` and `c23` name their standard on every compiler. "Latest" (`/std:c++latest`, or `/std:clatest` used for C++) is not used: on cl 19.52 and clang-cl 22, `/std:c++latest` is already the C++26 working draft (`__cplusplus` is `202400`), so the same `cuno.toml` would get a different standard than with clang, and different programs would build.
   - cl only warns about a `/std` it does not know and compiles with the old standard. So whether the standard is accepted is decided from cl's version, and it is an error when that is too old ([toolchain.md](toolchain.md)). `/std:c++23` needs cl 19.52 or later, the oldest version checked (no official document says which version accepts it; this is lowered if an older one is confirmed), and `/std:clatest` (the latest C, which includes C23) needs Visual Studio 2022 17.7 (cl 19.37) or later.
   - clang-cl ignores `/std:c++23` and `/std:c23`, so clang's switch is passed through `/clang:`. C23 is written `c2x`, which Clang 17 also accepts (`c23` is from Clang 18).

@@ -82,7 +82,7 @@
 - `/utf-8`: 日本語版 Windows で UTF-8 のソースが CP932 として読まれるのを防ぐ。
 - `/Zc:__cplusplus`: これがないと cl は `/std:c++20` でも `__cplusplus` を `199711` にする。
 - `--target=x86_64-pc-windows-msvc`: MSVC と同じ ABI でビルドし、MSVC でビルドしたライブラリと混ぜてリンクできるようにする（[toolchain.md](toolchain.md)）。
-- `/TC` / `/TP`、`-x c` / `-x c++`: 拡張子によらずパッケージの言語でコンパイルする（`.h` を言語どおりに扱う [dev-tools.md](dev-tools.md) と同じ）。
+- `/TC` / `/TP`、`-x c` / `-x c++`: 各ソースを、拡張子で決まる言語（[project-layout.md](project-layout.md#対象ファイル)）として明示してコンパイルする。パッケージの言語と違うファイルには、その言語の既定の規格を使い、C++ だけの設定（例外・RTTI）は付けない。
 - `c++23` と `c23` は、どのコンパイラでも規格を名前で指定する。「最新」（`/std:c++latest`、`/std:clatest` を C++ に使うこと）は使わない。cl 19.52 と clang-cl 22 の `/std:c++latest` はすでに C++26 の作業草案（`__cplusplus` が `202400`）で、同じ `cuno.toml` でも clang とは違う規格になり、通るプログラムも変わるため。
   - cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。そのため、規格を受け付けるかは cl のバージョンで判定し、足りなければエラーにする（[toolchain.md](toolchain.md)）。`/std:c++23` は確かめた最も古い cl 19.52 以上（受け付ける版が公式の文書にないため。より古い版で確かめられれば下げる）、`/std:clatest`（C の最新、C23 を含む）は Visual Studio 2022 17.7（cl 19.37）以上。
   - clang-cl は `/std:c++23` と `/std:c23` を無視するため、`/clang:` で clang の指定を渡す。C23 は Clang 17 でも通る `c2x` と書く（`c23` は Clang 18 から）。
