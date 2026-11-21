@@ -187,7 +187,10 @@ fn diagnose(
             // the kind asked for has no `Info` line: a configured copy of it
             // that cannot be used is reported here, or nowhere.
             if vs_error
-                && let Some(kind) = attempted.filter(|k| k.family() == Family::Llvm)
+                && let Some(kind) = attempted.filter(|k| match k.family() {
+                    Family::Llvm => true,
+                    Family::Msvc => false,
+                })
                 && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
                     select::copy_of(kind, found, &constraints, host)
             {
@@ -229,7 +232,13 @@ fn diagnose(
     let Some(toolset) = &selected.msvc else {
         return diagnosed;
     };
-    if selected.kind.family() == Family::Llvm {
+    // An LLVM compiler borrows a toolset, named here, and is checked against
+    // its standard library below; MSVC's own is on its `Selected` line.
+    let borrows_msvc = match selected.kind.family() {
+        Family::Llvm => true,
+        Family::Msvc => false,
+    };
+    if borrows_msvc {
         // <VS>\VC\Tools\MSVC\<version>
         let install = toolset.dir.ancestors().nth(4).unwrap_or(&toolset.dir);
         problems.shell.status(
@@ -266,7 +275,7 @@ fn diagnose(
         env: msvc::resolve(toolset, &sdk).apply(env),
         flags,
     };
-    if selected.kind.family() == Family::Llvm {
+    if borrows_msvc {
         let result = in_scratch(selected.kind.name(), |scratch| {
             select::check(
                 &selected,

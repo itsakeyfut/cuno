@@ -1087,3 +1087,82 @@ fn the_info_lines_ignore_toolchain_version() {
         .cuno(&["doctor", "--compiler", "msvc"])
         .assert(0, "", &expected);
 }
+
+/// The clang-cl asked for is checked like clang when Visual Studio stops
+/// selection: a configured clang-cl that cannot be used is reported.
+///
+/// Mutation: check only clang there, not every LLVM compiler; this test
+/// fails.
+#[test]
+fn a_configured_clang_cl_is_reported_when_visual_studio_stops_selection() {
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang-cl", "")]);
+    let fake = project.path().join("fake/clang-cl.cmd");
+    let empty = project.home().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let project = project
+        .file(
+            "fake/clang-cl.cmd",
+            &fake_tool("clang version 16.0.6\nTarget: x86_64-pc-windows-msvc", 0),
+        )
+        .file(".cuno/config.toml", &config);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["doctor", "--compiler", "clang-cl"])
+        .env("ProgramFiles(x86)", &empty);
+    let run = project.run_command(cmd);
+    let below = format!(
+        "error: [toolchain.paths] clang-cl is {}, but 16.0.6 does not satisfy >=17.0.0 (cuno's minimum)\n",
+        fake.display()
+    );
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert_eq!(run.stderr.matches(&below).count(), 1, "{}", run.stderr);
+}
+
+/// The standard library check takes the selected compiler's own
+/// `[build.<compiler>] flags`: a define written only there reaches a
+/// `src/yvals_core.h` that fails on it, and one written for another
+/// compiler does not.
+///
+/// Mutation: build the probe's flags from another compiler's table; this
+/// test fails.
+#[test]
+fn the_check_takes_the_selected_compilers_own_flags() {
+    let header = "#ifdef OWN_FLAGS\n#error own flags reached the probe\n#endif\n\
+                  #ifdef OTHER_FLAGS\n#error another compiler's flags reached the probe\n#endif\n";
+    for (name, compiler, own, other) in [
+        ("clang", Compiler::Clang, "-DOWN_FLAGS", "/DOTHER_FLAGS"),
+        (
+            "clang-cl",
+            Compiler::ClangCl,
+            "/DOWN_FLAGS",
+            "-DOTHER_FLAGS",
+        ),
+    ] {
+        if require(compiler, Language::C, "x.c", "x.exe").is_none() {
+            continue;
+        }
+        let others: String = ["msvc", "clang", "clang-cl"]
+            .into_iter()
+            .filter(|n| *n != name)
+            .map(|n| format!("[build.{n}]\nflags = [\"{other}\"]\n"))
+            .collect();
+        let run = Project::new()
+            .file(
+                "cuno.toml",
+                &manifest(&format!("[build.{name}]\nflags = [\"{own}\"]\n{others}")),
+            )
+            .file("src/yvals_core.h", header)
+            .cuno(&["doctor", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+        assert!(
+            run.stderr.contains("own flags reached the probe"),
+            "{name}: {}",
+            run.stderr
+        );
+        assert!(
+            !run.stderr.contains("another compiler's flags"),
+            "{name}: {}",
+            run.stderr
+        );
+    }
+}

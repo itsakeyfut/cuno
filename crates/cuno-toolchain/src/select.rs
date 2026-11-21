@@ -464,8 +464,9 @@ pub fn check(
     run: &dyn Runner,
 ) -> Result<(), ToolchainError> {
     // Only an LLVM compiler using the MSVC standard library is checked.
-    if selected.kind.family() == Family::Msvc || selected.msvc.is_none() {
-        return Ok(());
+    match selected.kind.family() {
+        Family::Llvm if selected.msvc.is_some() => {}
+        Family::Llvm | Family::Msvc => return Ok(()),
     }
     let switches: &[&str] = match selected.kind.syntax() {
         Syntax::Cl => &["/nologo", "/TP", "/Zs"],
@@ -504,7 +505,11 @@ pub fn check_tidy(
             probe.into(),
             "--".into(),
         ];
-        if kind.syntax() == Syntax::Cl {
+        let cl_syntax = match kind.syntax() {
+            Syntax::Cl => true,
+            Syntax::Gnu => false,
+        };
+        if cl_syntax {
             // clang-tidy reads flags as the GNU-style driver unless told.
             args.push("--driver-mode=cl".into());
         }
