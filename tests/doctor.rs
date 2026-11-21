@@ -11,7 +11,7 @@ mod support;
 use std::process::Command;
 
 use cuno_core::Env;
-use cuno_toolchain::llvm::{ExplicitPaths, find_llvm_tools};
+use cuno_toolchain::llvm::{ExplicitPaths, LlvmTool, Tool, find_llvm_tools};
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, Found, Selected};
 use cuno_toolchain::{HostOs, SystemRunner};
@@ -24,8 +24,8 @@ fn env() -> Env {
     Env::from_process().without(&["CUNO_COMPILER", "CUNO_TARGET_DIR"])
 }
 
-/// What cuno's selection gives for `name` here.
-fn selected(name: &str) -> Selected {
+/// What cuno detects here.
+fn detected() -> (Vec<msvc::VsInstallation>, Vec<LlvmTool>) {
     let env = env();
     let runner = SystemRunner::new();
     let installs = msvc::find_installations(&env, &runner).unwrap();
@@ -37,6 +37,12 @@ fn selected(name: &str) -> Selected {
         &runner,
     )
     .unwrap();
+    (installs, llvm)
+}
+
+/// What cuno's selection gives for `name` here.
+fn selected(name: &str) -> Selected {
+    let (installs, llvm) = detected();
     let choices = Choices {
         cli: Some(name.to_owned()),
         ..Default::default()
@@ -75,7 +81,60 @@ fn healthy(selected: &Selected, source: &str) -> String {
     if selected.kind != select::CompilerKind::Msvc {
         out += "    Accepted by the MSVC standard library\n";
     }
-    out + "    Finished no problems found\n"
+    out + &found_tools() + &others(Some(selected.kind)) + "    Finished no problems found\n"
+}
+
+/// The `Found` lines for clang-format and clang-tidy, as found here.
+fn found_tools() -> String {
+    let (_, llvm) = detected();
+    let mut out = String::new();
+    for tool in [Tool::ClangFormat, Tool::ClangTidy] {
+        let chosen = select::select_tool(tool, &llvm, HostOs::Windows).unwrap();
+        out += &format!("       Found {} {}\n", tool.name(), chosen.version);
+    }
+    out
+}
+
+/// The `Info` line for `kind`: MSVC as selected with Visual Studio, a Clang
+/// by the copy detected.
+fn info(kind: select::CompilerKind) -> String {
+    let (_, llvm) = detected();
+    let version = match kind {
+        select::CompilerKind::Msvc => selected("msvc").version,
+        select::CompilerKind::Clang => {
+            select::select_tool(Tool::Clang, &llvm, HostOs::Windows)
+                .unwrap()
+                .version
+        }
+        select::CompilerKind::ClangCl => {
+            select::select_tool(Tool::ClangCl, &llvm, HostOs::Windows)
+                .unwrap()
+                .version
+        }
+    };
+    format!("        Info {} {version} (not selected)\n", kind.name())
+}
+
+/// The `Info` lines for the compilers other than `selected`.
+fn others(selected: Option<select::CompilerKind>) -> String {
+    [
+        select::CompilerKind::Msvc,
+        select::CompilerKind::Clang,
+        select::CompilerKind::ClangCl,
+    ]
+    .into_iter()
+    .filter(|k| Some(*k) != selected)
+    .map(info)
+    .collect()
+}
+
+/// Whether clang-format and clang-tidy are here; the tests whose output
+/// lists them are skipped without.
+fn llvm_tools_here() -> bool {
+    let (_, llvm) = detected();
+    [Tool::ClangFormat, Tool::ClangTidy]
+        .into_iter()
+        .all(|t| select::select_tool(t, &llvm, HostOs::Windows).is_ok())
 }
 
 /// Outside a project, each compiler named by `--compiler` is diagnosed with
@@ -135,14 +194,21 @@ fn inside_a_project_its_choice_is_diagnosed() {
 /// test fails.
 #[test]
 fn an_unsupported_compiler_is_a_problem() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
     Project::new()
         .cuno(&["doctor", "--compiler", "gcc"])
         .assert(
             1,
             "",
-            "error: gcc is not supported yet (chosen by --compiler)\n\
-         help: choose msvc, clang or clang-cl\n    \
-         Finished 1 problem found\n",
+            &format!(
+                "error: gcc is not supported yet (chosen by --compiler)\n\
+                 help: choose msvc, clang or clang-cl\n{}{}    \
+                 Finished 1 problem found\n",
+                found_tools(),
+                others(None)
+            ),
         );
 }
 
@@ -162,14 +228,55 @@ fn a_missing_visual_studio_is_reported_not_fatal() {
         .env("ProgramFiles(x86)", &empty);
     let run: Run = project.run_command(cmd);
     let vswhere = empty.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
-    let help = "help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/\n";
+    let help = "help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+";
+
+    // Without Visual Studio its bundled LLVM is not found either (on CI it
+    // is the only one), so what is expected is what is found without it.
+    let llvm = find_llvm_tools(
+        &env(),
+        HostOs::Windows,
+        &ExplicitPaths::default(),
+        &[],
+        &SystemRunner::new(),
+    )
+    .unwrap();
+    let mut problems = 1;
+    let mut tools = String::new();
+    for tool in [Tool::ClangFormat, Tool::ClangTidy] {
+        tools += &match select::select_tool(tool, &llvm, HostOs::Windows) {
+            Ok(chosen) => format!("       Found {} {}\n", tool.name(), chosen.version),
+            Err(error) => {
+                use cuno_core::CunoError;
+                problems += 1;
+                format!("error: {error}\nhelp: {}\n", error.help().unwrap())
+            }
+        };
+    }
+    let mut info = String::new();
+    for tool in [Tool::Clang, Tool::ClangCl] {
+        info += &match select::select_tool(tool, &llvm, HostOs::Windows) {
+            Ok(chosen) => format!(
+                "        Info {} {} (not selected)\n",
+                tool.name(),
+                chosen.version
+            ),
+            Err(_) => format!("        Info {} not found\n", tool.name()),
+        };
+    }
+    let finished = if problems == 1 {
+        "1 problem found".to_owned()
+    } else {
+        format!("{problems} problems found")
+    };
     run.assert(
         1,
         "",
         &format!(
-            "error: vswhere.exe was not found at {}\n{help}    \
-             Finished 1 problem found\n",
-            vswhere.display()
+            "error: vswhere.exe was not found at {}\n{help}{tools}        \
+             Info msvc not found\n{info}    \
+             Finished {finished}\n",
+            vswhere.display(),
         ),
     );
 }
@@ -267,13 +374,15 @@ fn configuration_warnings_come_first() {
 }
 
 /// `[toolchain.version]` and `[toolchain.paths]` decide what is diagnosed,
-/// as they decide what a build uses.
+/// as they decide what a build uses. When a configured LLVM path has no
+/// file, nothing was looked for, so no Clang is said to be missing.
 ///
 /// Mutation: pass doctor's selection no constraints, no LLVM paths or no
-/// MSVC path; this test fails.
+/// MSVC path, or print `Info clang not found` after the configured path
+/// failed; this test fails.
 #[test]
 fn the_toolchain_settings_constrain_the_selection() {
-    if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+    if !llvm_tools_here() || require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
     let version = selected("clang").version;
@@ -285,8 +394,10 @@ fn the_toolchain_settings_constrain_the_selection() {
             "",
             &format!(
                 "error: no clang found satisfies >=17.0.0 (cuno's minimum) and >=99 ([toolchain.version] clang); found {version}\n\
-                 help: install a clang that satisfies it, or change [toolchain.version] clang\n    \
-                 Finished 1 problem found\n"
+                 help: install a clang that satisfies it, or change [toolchain.version] clang\n{}{}    \
+                 Finished 1 problem found\n",
+                found_tools(),
+                others(None)
             ),
         );
     Project::new()
@@ -302,7 +413,8 @@ fn the_toolchain_settings_constrain_the_selection() {
             "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n\
              help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
              error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
-             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n    \
+             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n        \
+             Info msvc not found\n    \
              Finished 2 problems found\n",
         );
 }
@@ -337,10 +449,11 @@ fn an_edition_the_compiler_lacks_is_a_problem() {
         .assert(code, "", &expected);
 }
 
-/// In a C project the standard library check is not made (toolchain.md,
-/// "Minimum compiler versions").
+/// In a C project the standard library check is not made, for the compiler
+/// or for clang-tidy (toolchain.md, "Minimum compiler versions"): a
+/// `src/yvals_core.h` that would reject both is never read.
 ///
-/// Mutation: make the check in C projects too; this test fails.
+/// Mutation: make either check in C projects too; this test fails.
 #[test]
 fn a_c_project_is_not_checked_against_the_standard_library() {
     if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
@@ -350,6 +463,7 @@ fn a_c_project_is_not_checked_against_the_standard_library() {
         .replace("    Accepted by the MSVC standard library\n", "");
     Project::new()
         .file("cuno.toml", &manifest("edition = \"c11\"\nlang = \"c\"\n"))
+        .file("src/yvals_core.h", STL1000)
         .cuno(&["doctor", "--compiler", "clang"])
         .assert(0, "", &expected);
 }
@@ -360,7 +474,8 @@ fn a_c_project_is_not_checked_against_the_standard_library() {
 /// problem whose help points at the flags.
 ///
 /// Mutation: probe with the release profile, without `src`, or treat the
-/// probe's failure as passing; this test fails.
+/// probe's failure as passing, for the compiler or for clang-tidy; this
+/// test fails.
 #[test]
 fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
     if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_none() {
@@ -390,19 +505,29 @@ fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
         "{rest}"
     );
     assert!(
-        rest.ends_with(
-            "help: check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations\n    \
-             Finished 1 problem found\n"
+        rest.contains(
+            "error: could not tell whether clang-tidy works with the MSVC standard library:\n"
         ),
         "{rest}"
     );
+    assert_eq!(
+        rest.matches("dev flags reached the probe").count(),
+        4,
+        "{rest}"
+    );
+    assert_eq!(
+        rest.matches("help: check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations\n").count(),
+        2,
+        "{rest}"
+    );
+    assert!(rest.ends_with("    Finished 2 problems found\n"), "{rest}");
 }
 
 /// A temporary directory that does not exist is a problem saying so, with
 /// its own help, and is not created.
 ///
-/// Mutation: create the directory with its parents, or report it with the
-/// probe's help; this test fails.
+/// Mutation: create the directory with its parents, report it with the
+/// probe's help, or name the wrong check; this test fails.
 #[test]
 fn a_missing_temporary_directory_is_reported_not_created() {
     if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
@@ -424,12 +549,250 @@ fn a_missing_temporary_directory_is_reported_not_created() {
         .unwrap_or_else(|| panic!("{}", run.stderr));
     let error = format!("error: cannot create {}\\cuno-doctor-", temp.display());
     assert!(rest.starts_with(&error), "{rest}");
-    assert!(
-        rest.ends_with(
-            "help: set TEMP to a directory that exists and can be written\n    \
-             Finished 1 problem found\n"
-        ),
+    // Once for the compiler's check, once for clang-tidy's, each named.
+    assert_eq!(rest.matches(&error).count(), 2, "{rest}");
+    assert_eq!(rest.matches(" to check clang: ").count(), 1, "{rest}");
+    assert_eq!(rest.matches(" to check clang-tidy: ").count(), 1, "{rest}");
+    assert_eq!(
+        rest.matches("help: set TEMP to a directory that exists and can be written\n")
+            .count(),
+        2,
         "{rest}"
     );
+    assert!(rest.ends_with("    Finished 2 problems found\n"), "{rest}");
     assert!(!missing.exists(), "the temporary directory was created");
+}
+
+/// A `src/yvals_core.h` that rejects every compiler as the MSVC standard
+/// library does, for a project's checks to read.
+const STL1000: &str =
+    "#error STL1000: Unexpected compiler version, expected Clang 99.0.0 or newer.\n";
+
+/// clang-tidy is checked against the standard library with the build's
+/// flags even when MSVC is selected, and a rejection is a problem with the
+/// version to install.
+///
+/// Mutation: skip clang-tidy's check, run it only for Clang, give it no
+/// `src`, or report it as the compiler; this test fails.
+#[test]
+fn clang_tidy_is_checked_against_the_standard_library() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let (_, llvm) = detected();
+    let tidy = select::select_tool(Tool::ClangTidy, &llvm, HostOs::Windows)
+        .unwrap()
+        .version;
+    let expected = healthy(&selected("msvc"), "--compiler")
+        .replace(
+            &format!("       Found clang-tidy {tidy}\n"),
+            &format!(
+                "       Found clang-tidy {tidy}\n\
+                 error: clang-tidy {tidy} is not accepted by the MSVC standard library in use (STL1000)\n\
+                 help: install clang-tidy 99.0.0 or newer\n"
+            ),
+        )
+        .replace("no problems found", "1 problem found");
+    Project::new()
+        .file("cuno.toml", &manifest(""))
+        .file("src/yvals_core.h", STL1000)
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(1, "", &expected);
+}
+
+/// Without LLVM anywhere cuno looks, clang-format and clang-tidy missing
+/// are problems with their help, and the Clangs not selected are only
+/// information.
+///
+/// Mutation: make a missing clang-format or clang-tidy information, or a
+/// missing unselected compiler a problem; this test fails.
+#[test]
+fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
+    let project = Project::new();
+    let empty = project.home().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    // PATH without any directory holding an LLVM tool.
+    let path: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .filter(|dir| {
+            ![
+                "clang.exe",
+                "clang-cl.exe",
+                "clang-format.exe",
+                "clang-tidy.exe",
+            ]
+            .iter()
+            .any(|tool| dir.join(tool).is_file())
+        })
+        .collect();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    // Removed under the name it is inherited by (`Path` on Windows), or the
+    // child would see the original beside the one set here.
+    for (name, _) in std::env::vars_os() {
+        if name.eq_ignore_ascii_case("PATH") {
+            cmd.env_remove(name);
+        }
+    }
+    cmd.args(["doctor", "--compiler", "msvc"])
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .env("ProgramFiles", &empty)
+        // Windows gives a 64-bit process `ProgramFiles` from this one.
+        .env("ProgramW6432", &empty)
+        .env("ProgramFiles(x86)", &empty);
+    let run = project.run_command(cmd);
+    let vswhere = empty.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    let llvm_help = |tool: &str| {
+        format!(
+            "help: install LLVM (https://github.com/llvm/llvm-project/releases), or write where {tool} is in [toolchain.paths] {tool}\n"
+        )
+    };
+    run.assert(
+        1,
+        "",
+        &format!(
+            "error: vswhere.exe was not found at {}\n\
+             help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/\n\
+             error: no clang-format was found\n{}\
+             error: no clang-tidy was found\n{}        \
+             Info msvc not found\n        \
+             Info clang not found\n        \
+             Info clang-cl not found\n    \
+             Finished 3 problems found\n",
+            vswhere.display(),
+            llvm_help("clang-format"),
+            llvm_help("clang-tidy"),
+        ),
+    );
+}
+
+/// A batch file standing in for an LLVM tool: it prints `version` (the
+/// lines `--version` would) and exits with `code`, whatever it is asked.
+fn fake_tool(version: &str, code: i32) -> String {
+    let lines: String = version.lines().map(|l| format!("echo {l}\r\n")).collect();
+    format!("@echo off\r\n{lines}exit /b {code}\r\n")
+}
+
+/// `[toolchain.paths]` entries for `tools` in `project`, each a batch file.
+fn configured(project: &Project, tools: &[(&str, &str)]) -> String {
+    let mut out = String::from("[toolchain.paths]\n");
+    for (tool, _) in tools {
+        let path = project.path().join(format!("fake/{tool}.cmd"));
+        out += &format!("{tool} = '{}'\n", path.display());
+    }
+    out
+}
+
+/// Each `Found` and `Info` line names the copy that tool's own selection
+/// picks: a configured one, even when older than the copy installed, with
+/// its version, and never another tool's.
+///
+/// Mutation: report one tool's copy for another (clang-cl's for clang, or
+/// clang-tidy's for clang-format), or let a newer copy found win over the
+/// configured one; this test fails.
+#[test]
+fn each_tool_line_names_its_own_configured_copy() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let tools = [
+        ("clang-format", "clang-format version 19.1.1"),
+        ("clang-tidy", "LLVM version 19.1.2"),
+        (
+            "clang",
+            "clang version 18.1.3\nTarget: x86_64-pc-windows-msvc",
+        ),
+        (
+            "clang-cl",
+            "clang version 18.1.4\nTarget: x86_64-pc-windows-msvc",
+        ),
+    ];
+    let mut project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &tools);
+    for (tool, version) in tools {
+        project = project.file(&format!("fake/{tool}.cmd"), &fake_tool(version, 0));
+    }
+    let msvc = selected("msvc");
+    let expected = format!(
+        "    Selected msvc {} (--compiler)\n             {}\n       \
+         Using Windows SDK {}\n       \
+         Found clang-format 19.1.1\n       \
+         Found clang-tidy 19.1.2\n        \
+         Info clang 18.1.3 (not selected)\n        \
+         Info clang-cl 18.1.4 (not selected)\n    \
+         Finished no problems found\n",
+        msvc.version,
+        msvc.executable.display(),
+        sdk()
+    );
+    project
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(0, "", &expected);
+}
+
+/// A configured clang-tidy that does not run is a problem naming the
+/// setting; the clang-tidy installed is not used in its place.
+///
+/// Mutation: fall back to another copy when the configured one did not
+/// run; this test fails.
+#[test]
+fn a_configured_tool_that_does_not_run_is_a_problem() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang-tidy", "")]);
+    let fake = project.path().join("fake/clang-tidy.cmd");
+    let project = project
+        .file("fake/clang-tidy.cmd", &fake_tool("", 1))
+        .file(".cuno/config.toml", &config);
+    let (_, llvm) = detected();
+    let format = select::select_tool(Tool::ClangFormat, &llvm, HostOs::Windows)
+        .unwrap()
+        .version;
+    let healthy = healthy(&selected("msvc"), "--compiler");
+    let (before, _) = healthy.split_once("       Found").unwrap();
+    let expected = format!(
+        "{before}       Found clang-format {format}\n\
+         error: [toolchain.paths] clang-tidy is {}, but it did not run\n\
+         help: correct [toolchain.paths] clang-tidy, or remove it to let cuno find the tool\n{}    \
+         Finished 1 problem found\n",
+        fake.display(),
+        others(Some(select::CompilerKind::Msvc))
+    );
+    project
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(1, "", &expected);
+}
+
+/// The standard library checks compile as the project's C++ edition: a
+/// `src/yvals_core.h` that fails naming the `__cplusplus` it sees tells
+/// which edition reached them.
+///
+/// Mutation: probe every project as one fixed edition; this test fails.
+#[test]
+fn the_checks_use_the_projects_edition() {
+    if !llvm_tools_here() || require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let header = "#if __cplusplus == 201703L\n#error probed as c++17\n\
+                  #elif __cplusplus == 202002L\n#error probed as c++20\n\
+                  #else\n#error probed as another edition\n#endif\n";
+    for (edition, seen) in [("c++17", "probed as c++17"), ("c++20", "probed as c++20")] {
+        let run = Project::new()
+            .file(
+                "cuno.toml",
+                &manifest(&format!("edition = \"{edition}\"\n")),
+            )
+            .file("src/yvals_core.h", header)
+            .cuno(&["doctor", "--compiler", "clang"]);
+        assert_eq!(run.code, Some(1), "{}", run.stderr);
+        // Once from clang's check, once from clang-tidy's.
+        assert_eq!(
+            run.stderr.matches(seen).count(),
+            4,
+            "{edition}: {}",
+            run.stderr
+        );
+        assert!(!run.stderr.contains("another edition"), "{}", run.stderr);
+    }
 }

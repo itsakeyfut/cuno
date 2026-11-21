@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
-use crate::llvm::{LlvmTool, Probe, Tool};
+use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
 use crate::{HostOs, Runner, ToolchainError, Version};
 
@@ -413,23 +413,30 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     canonical(a) == canonical(b)
 }
 
-/// The version of a tool that ran, is a release, and on Windows targets MSVC
-/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
-/// it is not eligible.
-fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
-    let (version, target) = match &tool.probe {
-        Probe::Failed => return Err("it did not run".to_owned()),
-        Probe::NoVersion => return Err("it printed no version".to_owned()),
+/// The version of a tool that ran and is a release, or why it is not one.
+fn release(tool: &LlvmTool) -> Result<Version, String> {
+    match &tool.probe {
+        Probe::Failed => Err("it did not run".to_owned()),
+        Probe::NoVersion => Err("it printed no version".to_owned()),
         Probe::Ran {
             version,
             prerelease: true,
             ..
-        } => return Err(format!("{version} is a preview")),
-        Probe::Ran {
-            version, target, ..
-        } => (*version, target),
-    };
+        } => Err(format!("{version} is a preview")),
+        Probe::Ran { version, .. } => Ok(*version),
+    }
+}
+
+/// The version of a tool that ran, is a release, and on Windows targets MSVC
+/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
+/// it is not eligible.
+fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
+    let version = release(tool)?;
     if host == HostOs::Windows {
+        let target = match &tool.probe {
+            Probe::Ran { target, .. } => target,
+            _ => &None,
+        };
         match target.as_deref() {
             Some(t) if t.ends_with("-windows-msvc") => {}
             Some(t) => return Err(format!("it targets {t}, not MSVC")),
@@ -469,29 +476,81 @@ pub fn check(
     if selected.kind == CompilerKind::Msvc || selected.msvc.is_none() {
         return Ok(());
     }
+    let switches: &[&str] = match selected.kind {
+        CompilerKind::ClangCl => &["/nologo", "/TP", "/Zs"],
+        _ => &["-x", "c++", "-fsyntax-only"],
+    };
+    stl_probe(
+        selected.kind.name(),
+        selected.version,
+        inputs.scratch,
+        |probe| {
+            let mut args: Vec<OsString> = switches.iter().map(OsString::from).collect();
+            args.push("--target=x86_64-pc-windows-msvc".into());
+            args.extend(inputs.flags.iter().cloned());
+            args.push(probe.into());
+            run.run(&selected.executable, &as_args(&args), env)
+        },
+    )
+}
+
+/// Whether `tidy` is accepted by the MSVC standard library: the same probe
+/// as [`check`], analysed by clang-tidy with one harmless check enabled
+/// (with none it stops without analysing) and, after `--`, the build's
+/// compile flags for `kind`, in `kind`'s syntax (`toolchain.md`, "Minimum
+/// compiler versions"). The project's `.clang-tidy` is not read.
+pub fn check_tidy(
+    tidy: &LlvmChoice,
+    kind: CompilerKind,
+    env: &Env,
+    inputs: ProbeInputs<'_>,
+    run: &dyn Runner,
+) -> Result<(), ToolchainError> {
+    stl_probe("clang-tidy", tidy.version, inputs.scratch, |probe| {
+        let mut args: Vec<OsString> = vec![
+            "--checks=-*,readability-braces-around-statements".into(),
+            "--config={}".into(),
+            probe.into(),
+            "--".into(),
+        ];
+        if kind != CompilerKind::Clang {
+            // clang-tidy reads flags as the GNU-style driver unless told.
+            args.push("--driver-mode=cl".into());
+        }
+        args.push("--target=x86_64-pc-windows-msvc".into());
+        args.extend(inputs.flags.iter().cloned());
+        run.run(&tidy.path, &as_args(&args), env)
+    })
+}
+
+fn as_args(args: &[OsString]) -> Vec<&OsStr> {
+    args.iter().map(|a| a.as_os_str()).collect()
+}
+
+/// Writes the probe file to `scratch`, runs `invoke` on it, and reads the
+/// standard library's verdict: `STL1000:` on stdout (clang-tidy) or stderr
+/// (the compilers) is a rejection; any other failure decides nothing.
+fn stl_probe(
+    name: &'static str,
+    version: Version,
+    scratch: &Path,
+    invoke: impl FnOnce(&Path) -> std::io::Result<crate::Output>,
+) -> Result<(), ToolchainError> {
     let failed = |output: String| ToolchainError::ProbeFailed {
-        compiler: selected.kind.name(),
+        compiler: name,
         output,
     };
     // A name of its own, so that two cuno processes sharing `scratch` do not
     // write or remove each other's file.
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let probe = inputs.scratch.join(format!(
+    let probe = scratch.join(format!(
         "cuno-stl-probe-{}-{}.cpp",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::write(&probe, "#include <yvals_core.h>\n")
         .map_err(|e| failed(format!("could not write {}: {e}", probe.display())))?;
-    let mut args: Vec<OsString> = match selected.kind {
-        CompilerKind::ClangCl => vec!["/nologo".into(), "/TP".into(), "/Zs".into()],
-        _ => vec!["-x".into(), "c++".into(), "-fsyntax-only".into()],
-    };
-    args.push("--target=x86_64-pc-windows-msvc".into());
-    args.extend(inputs.flags.iter().cloned());
-    args.push(probe.clone().into());
-    let args: Vec<&OsStr> = args.iter().map(|a| a.as_os_str()).collect();
-    let output = run.run(&selected.executable, &args, env);
+    let output = invoke(&probe);
     let _ = std::fs::remove_file(&probe);
     let output = output.map_err(|e| failed(e.to_string()))?;
     if output.success {
@@ -504,12 +563,76 @@ pub fn check(
     );
     match text.lines().find(|line| line.contains("STL1000:")) {
         Some(line) => Err(ToolchainError::RejectedByStl {
-            compiler: selected.kind.name(),
-            version: selected.version,
+            compiler: name,
+            version,
             needed: needed_clang(line),
             message: line.trim().to_owned(),
         }),
         None => Err(failed(text.trim().to_owned())),
+    }
+}
+
+/// A clang-format or clang-tidy to use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlvmChoice {
+    /// The executable.
+    pub path: PathBuf,
+    /// Its version.
+    pub version: Version,
+}
+
+/// The copy of `tool` to use among those detected (`toolchain.md`, "LLVM"):
+/// the one written in `[toolchain.paths]` when there is one, which must be
+/// eligible, or else the newest eligible copy; among equals, the first in
+/// search order. Eligible is a release that ran, and for clang and clang-cl
+/// on Windows one targeting MSVC; clang-format and clang-tidy have no target
+/// to check (clang-tidy prints none). No version requirement applies here.
+pub fn select_tool(
+    tool: Tool,
+    llvm: &[LlvmTool],
+    host: HostOs,
+) -> Result<LlvmChoice, ToolchainError> {
+    let eligible = |t: &LlvmTool| match tool {
+        Tool::Clang | Tool::ClangCl => release_for(t, host),
+        Tool::ClangFormat | Tool::ClangTidy => release(t),
+    };
+    let copies = || llvm.iter().filter(|t| t.tool == tool);
+    if let Some(configured) = copies().find(|t| t.origin == Origin::Configured) {
+        return match eligible(configured) {
+            Ok(version) => Ok(LlvmChoice {
+                path: configured.path.clone(),
+                version,
+            }),
+            Err(why) => Err(ToolchainError::ConfiguredToolUnusable {
+                setting: format!("[toolchain.paths] {}", tool.name()),
+                path: configured.path.clone(),
+                why,
+            }),
+        };
+    }
+    let mut excluded = Vec::new();
+    let mut candidates = Vec::new();
+    for t in copies() {
+        match eligible(t) {
+            Ok(version) => candidates.push((
+                LlvmChoice {
+                    path: t.path.clone(),
+                    version,
+                },
+                version,
+            )),
+            Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
+        }
+    }
+    match first_newest(candidates.into_iter()) {
+        Some(best) => Ok(best),
+        None if excluded.is_empty() => Err(ToolchainError::CompilerNotFound {
+            compiler: tool.name(),
+        }),
+        None => Err(ToolchainError::NoUsableCompiler {
+            compiler: tool.name(),
+            excluded,
+        }),
     }
 }
 
@@ -1194,5 +1317,150 @@ mod tests {
         elsewhere.msvc = None;
         check(&elsewhere, &Env::default(), inputs, &never).unwrap();
         assert_eq!(*never.calls.borrow(), 0);
+    }
+
+    /// A configured copy is the only one used, even when older, and is an
+    /// error naming the setting when it cannot be used; a Clang must target
+    /// MSVC.
+    ///
+    /// Mutation: let a newer found copy win over the configured one, fall
+    /// back to another copy when the configured one did not run, or drop the
+    /// MSVC-target rule for clang; this test fails.
+    #[test]
+    fn a_configured_tool_is_used_or_is_an_error() {
+        let configured = |probe| LlvmTool {
+            origin: Origin::Configured,
+            ..tool(Tool::ClangTidy, "mine", probe)
+        };
+        let newer = tool(Tool::ClangTidy, "found", ran(v(22, 1, 8), false, None));
+        let llvm = [configured(ran(v(19, 1, 0), false, None)), newer.clone()];
+        assert_eq!(
+            select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap(),
+            LlvmChoice {
+                path: "mine".into(),
+                version: v(19, 1, 0)
+            }
+        );
+        let llvm = [configured(Probe::Failed), newer];
+        let err = select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "[toolchain.paths] clang-tidy is mine, but it did not run"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).unwrap(),
+            "correct [toolchain.paths] clang-tidy, or remove it to let cuno find the tool"
+        );
+
+        let clangs = [
+            tool(
+                Tool::Clang,
+                "mingw",
+                ran(v(23, 1, 0), false, Some("x86_64-w64-windows-gnu")),
+            ),
+            clang(Tool::Clang, "msvc", v(22, 1, 8)),
+        ];
+        assert_eq!(
+            select_tool(Tool::Clang, &clangs, HostOs::Windows)
+                .unwrap()
+                .path,
+            PathBuf::from("msvc")
+        );
+    }
+
+    /// Mutation: pick the first copy rather than the newest, accept a preview
+    /// or a copy that did not run, demand an MSVC target of clang-tidy (it
+    /// prints none), or say "not found" when copies were left out; this test
+    /// fails.
+    #[test]
+    fn the_newest_release_of_a_tool_is_used() {
+        let llvm = [
+            tool(Tool::ClangTidy, "old", ran(v(19, 1, 0), false, None)),
+            tool(Tool::ClangTidy, "new", ran(v(22, 1, 8), false, None)),
+            tool(Tool::ClangTidy, "preview", ran(v(23, 0, 0), true, None)),
+            tool(Tool::ClangTidy, "broken", Probe::Failed),
+            tool(Tool::ClangFormat, "format", ran(v(18, 1, 0), false, None)),
+        ];
+        assert_eq!(
+            select_tool(Tool::ClangTidy, &llvm, HostOs::Windows).unwrap(),
+            LlvmChoice {
+                path: "new".into(),
+                version: v(22, 1, 8)
+            }
+        );
+        assert!(matches!(
+            select_tool(Tool::Clang, &llvm, HostOs::Windows),
+            Err(ToolchainError::CompilerNotFound { compiler: "clang" })
+        ));
+        let unusable = [
+            tool(Tool::ClangFormat, "preview", ran(v(23, 0, 0), true, None)),
+            tool(Tool::ClangFormat, "silent", Probe::NoVersion),
+            tool(Tool::ClangFormat, "broken", Probe::Failed),
+        ];
+        let err = select_tool(Tool::ClangFormat, &unusable, HostOs::Windows).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "no usable clang-format was found; left out: preview (23.0.0 is a preview); \
+             silent (it printed no version); broken (it did not run)"
+        );
+    }
+
+    /// Mutation: read only stderr (clang-tidy reports STL1000 on stdout),
+    /// name the compiler instead of clang-tidy, leave out the one check or
+    /// `--`, give the build's flags before `--`, or put cl-style flags
+    /// through clang-tidy without `--driver-mode=cl` (or GNU-style ones
+    /// with it); this test fails.
+    #[test]
+    fn clang_tidy_is_asked_the_standard_librarys_verdict() {
+        let root = tempfile::tempdir().unwrap();
+        let flags: Vec<OsString> = vec!["/GR-".into()];
+        let inputs = ProbeInputs {
+            scratch: root.path(),
+            flags: &flags,
+        };
+        let tidy = LlvmChoice {
+            path: "clang-tidy".into(),
+            version: v(20, 1, 8),
+        };
+        let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer. [clang-diagnostic-error]\n";
+        let err = check_tidy(
+            &tidy,
+            CompilerKind::Msvc,
+            &Env::default(),
+            inputs,
+            &answers(false, stl, ""),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "clang-tidy 20.1.8 is not accepted by the MSVC standard library in use (STL1000)"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).unwrap(),
+            "install clang-tidy 22 or newer"
+        );
+
+        for (kind, mode) in [
+            (CompilerKind::Msvc, &["--driver-mode=cl"][..]),
+            (CompilerKind::ClangCl, &["--driver-mode=cl"][..]),
+            (CompilerKind::Clang, &[][..]),
+        ] {
+            let run = answers(true, "", "");
+            check_tidy(&tidy, kind, &Env::default(), inputs, &run).unwrap();
+            let args = run.args.borrow().clone();
+            assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
+            assert!(args[2].ends_with(".cpp"), "{args:?}");
+            assert_eq!(
+                args[3..],
+                [
+                    &["--"][..],
+                    mode,
+                    &["--target=x86_64-pc-windows-msvc", "/GR-"]
+                ]
+                .concat(),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 66106b2fa54157aa8d67f66782d6f1f5363b8c9f -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob b0585c19a8b86381d93674d0ca09b8d2265895b7 -->
 
 # Toolchain
 
@@ -162,7 +162,10 @@ A compiler must accept a C++20 specification.
   - If there is a `Target:` line, its default target (such as `x86_64-pc-windows-msvc`) is recorded.
   - A tool that cannot be started, or exits with an error, is recorded as "failed to run", and no version is read. One with no version line is recorded as "no version". Both stay in the list (so that `cuno doctor` can show them).
 - Which one is used when several are found is decided by "Selection". It chooses, among those that run, are not pre-releases and, on Windows, have an MSVC default target (`*-windows-msvc`), the newest that satisfies the version conditions (a Clang for MinGW cannot be linked together with MSVC; the list keeps this search order).
-- If the path written in `[toolchain.paths]` has no file, it is an error (exit code 3) naming that setting, so that a tool the user named is never silently replaced by another.
+  - For clang-format and clang-tidy the default target does not matter (clang-tidy prints none).
+- **A tool whose path is written in `[toolchain.paths]` is used from that file only.** Other copies found are not used, even if they are newer.
+  - If the written path has no file, or the tool written does not meet the conditions above (it does not run, prints no version, is a pre-release, is a Clang not targeting MSVC, or does not satisfy the version conditions), it is an error (exit code 3; a problem in `cuno doctor`) naming the setting and the reason.
+  - Rationale: silently using another tool in place of the one written would build or lint with a tool other than the one the user named and report success.
 - A tool not being found is not itself an error in detection. Whether it is needed is decided by each command that uses it (`cuno doctor`, `cuno fmt` / `cuno lint`, the build commands).
 
 ## Selection
