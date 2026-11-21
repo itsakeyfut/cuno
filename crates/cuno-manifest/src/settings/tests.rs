@@ -349,3 +349,211 @@ fn profiles_start_from_their_defaults() {
         }
     );
 }
+
+fn resolve_err(_f: &Fixture, cwd: &Path, env: &Env, cli: &CliSettings) -> ConfigError {
+    resolve(Inputs { cwd, env, cli }).unwrap_err()
+}
+
+/// Mutation: let the output directory be the project root or above it, by
+/// any layer or spelling, or name another source in the message; this test
+/// fails.
+#[test]
+fn the_output_directory_never_holds_the_project() {
+    let f = Fixture::new();
+    let src = f.root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let none = CliSettings::default();
+
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \".\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &none);
+    assert!(
+        err.message
+            .contains("(`build.target-dir` in cuno.toml) is the project root"),
+        "{err}"
+    );
+    assert!(err.help.unwrap().contains("cuno clean"));
+    f.write("project/cuno.toml", MANIFEST);
+
+    f.write(
+        "project/.cuno/config.toml",
+        "[build]\ntarget-dir = \"a/../..\"\n",
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &none);
+    assert!(err.message.contains(".cuno"), "{err}");
+    std::fs::remove_file(f.root.join(".cuno/config.toml")).unwrap();
+
+    let cli = |dir: &str| CliSettings {
+        target_dir: Some(dir.into()),
+        ..Default::default()
+    };
+    let err = resolve_err(&f, &src, &f.env(&[]), &cli(".."));
+    assert!(
+        err.message.contains("(--target-dir) is the project root"),
+        "{err}"
+    );
+    let err = resolve_err(&f, &f.outside, &f.env(&[]), &cli("."));
+    assert!(err.message.contains("is the current directory"), "{err}");
+    let err = resolve_err(&f, &src, &f.env(&[("CUNO_TARGET_DIR", "..")]), &none);
+    assert!(err.message.contains("(CUNO_TARGET_DIR)"), "{err}");
+
+    // Inside the project, below its root, is fine.
+    let s = f.resolve(&src, &f.env(&[]), &cli("out")).value;
+    assert_eq!(s.target_dir, src.join("out"));
+}
+
+/// Mutation: accept an empty output directory from the command line or a
+/// file, or describe a bad command-line path as written in a file; this
+/// test fails.
+#[test]
+fn an_empty_or_drive_dependent_output_directory_is_an_error() {
+    let f = Fixture::new();
+    let src = f.root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let cli = CliSettings {
+        target_dir: Some("".into()),
+        ..Default::default()
+    };
+    let err = resolve_err(&f, &src, &f.env(&[]), &cli);
+    assert_eq!(err.message, "--target-dir is ``, which is empty");
+    assert!(
+        err.help
+            .unwrap()
+            .contains("relative to the current directory")
+    );
+
+    f.write(
+        "project/.cuno/config.toml",
+        "\n[build]\ntarget-dir = \"\"\n",
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
+    assert!(err.message.contains("is empty"), "{err}");
+    assert_eq!(err.location.unwrap().line, 3);
+    std::fs::remove_file(f.root.join(".cuno/config.toml")).unwrap();
+
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \"\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
+    assert_eq!(err.location.unwrap().line, 5);
+    f.write("project/cuno.toml", MANIFEST);
+
+    if cfg!(windows) {
+        let err = resolve_err(
+            &f,
+            &src,
+            &f.env(&[("CUNO_TARGET_DIR", "C:x")]),
+            &CliSettings::default(),
+        );
+        assert_eq!(
+            err.message,
+            "CUNO_TARGET_DIR is `C:x`, which depends on the current drive"
+        );
+    }
+}
+
+/// Mutation: read the project's `.cuno/config.toml` again as the user-level
+/// file when the cuno home is that `.cuno`; this test fails.
+#[test]
+fn one_file_serving_both_layers_is_read_once() {
+    let f = Fixture::new();
+    f.write("project/.cuno/config.toml", "[build]\nnope = 1\n");
+    let home = f.root.join(".cuno");
+    let env = Env::from_pairs(
+        [("CUNO_HOME".into(), home.into_os_string())],
+        NameCase::Insensitive,
+    );
+    let loaded = f.resolve(&f.root, &env, &CliSettings::default());
+    assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+}
+
+/// Mutation: lose why the cuno home cannot be used; this test fails.
+#[test]
+fn a_relative_cuno_home_stops_resolution() {
+    let f = Fixture::new();
+    let env = Env::from_pairs([("CUNO_HOME".into(), "rel".into())], NameCase::Insensitive);
+    let err = resolve_err(&f, &f.root, &env, &CliSettings::default());
+    assert_eq!(
+        err.message,
+        "CUNO_HOME is `rel`, which is not an absolute path"
+    );
+    assert!(err.help.unwrap().contains("absolute path"));
+}
+
+/// Mutation: drop the project's `verbose` in favour of the user's, or leave
+/// out the clang-format path; this test fails.
+#[test]
+fn the_project_config_wins_for_verbose_and_every_tool() {
+    let f = Fixture::new();
+    f.write(
+        "project/.cuno/config.toml",
+        "[term]\nverbose = false\n[toolchain.paths]\nclang-format = \"fmt\"\n",
+    );
+    f.write("home/config.toml", "[term]\nverbose = true\n");
+    let s = f
+        .resolve(&f.root, &f.env(&[]), &CliSettings::default())
+        .value;
+    assert!(!s.verbose);
+    assert_eq!(s.llvm_paths().clang_format, Some(f.root.join("fmt")));
+}
+
+/// Mutation: drop any list from the layering, or let a layer's boolean be
+/// ignored; this test fails.
+#[test]
+fn every_build_key_is_layered() {
+    let text = concat!(
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        "[build]\ninclude-dirs = [\"i1\"]\nlinks = [\"l1\"]\nlib-dirs = [\"d1\"]\nlink-flags = [\"f1\"]\nwarnings-as-errors = true\nexceptions = false\n",
+        "[platform.windows.build]\ninclude-dirs = [\"i2\"]\nlinks = [\"l2\"]\nlib-dirs = [\"d2\"]\nlink-flags = [\"f2\"]\n",
+        "[profile.dev.build]\ninclude-dirs = [\"i3\"]\nwarnings-as-errors = false\nexceptions = true\n",
+    );
+    let m = crate::parse_manifest(text, Path::new("cuno.toml"), Path::new("r"))
+        .unwrap()
+        .value;
+    let r = Path::new("r");
+    let dev = m.build_settings(Os::Windows, CompilerName::Msvc, Profile::Dev);
+    assert_eq!(dev.include_dirs, [r.join("i1"), r.join("i2"), r.join("i3")]);
+    assert_eq!(dev.links, ["l1", "l2"]);
+    assert_eq!(dev.lib_dirs, [r.join("d1"), r.join("d2")]);
+    assert_eq!(dev.link_flags, ["f1", "f2"]);
+    assert!(!dev.warnings_as_errors);
+    assert!(dev.exceptions);
+    let release = m.build_settings(Os::Linux, CompilerName::Msvc, Profile::Release);
+    assert!(release.warnings_as_errors);
+    assert!(!release.exceptions);
+    assert_eq!(release.include_dirs, [r.join("i1")]);
+}
+
+/// Mutation: ignore `debug-info` or `debug-assertions` in either profile;
+/// this test fails.
+#[test]
+fn every_profile_key_overrides_its_default() {
+    let text = concat!(
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        "[profile.dev]\nopt-level = 3\ndebug-info = false\ndebug-assertions = false\n",
+        "[profile.release]\ndebug-info = true\ndebug-assertions = true\n",
+    );
+    let m = crate::parse_manifest(text, Path::new("cuno.toml"), Path::new("r"))
+        .unwrap()
+        .value;
+    let dev = m.profile_settings(Profile::Dev);
+    assert_eq!(
+        (dev.opt_level, dev.debug_info, dev.debug_assertions),
+        (OptLevel::O3, false, false)
+    );
+    let release = m.profile_settings(Profile::Release);
+    assert_eq!((release.debug_info, release.debug_assertions), (true, true));
+}
+
+/// Mutation: compare paths that do not exist as written, without resolving
+/// `.` and `..`; this test fails.
+#[test]
+fn paths_that_do_not_exist_are_compared_after_resolving_dots() {
+    let base = Path::new("no-such-dir-for-cuno");
+    assert!(holds(&base.join("y").join(".."), &base.join("y").join("z")));
+    assert!(holds(&base.join("."), base));
+    assert!(!holds(&base.join("y").join("out"), base));
+}

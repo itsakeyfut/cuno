@@ -169,6 +169,18 @@ pub fn parse_config(text: &str, file: &Path, base: &Path) -> Result<Loaded<Confi
             )
         })?),
     };
+    // An empty output directory would be the base itself (build.md).
+    if build
+        .target_dir
+        .as_ref()
+        .is_some_and(|dir| dir.as_os_str().is_empty())
+    {
+        return Err(doc.error(
+            "build.target-dir",
+            format!("`build.target-dir` in {shown} is empty"),
+            Some("write the output directory, such as \"target\"".to_owned()),
+        ));
+    }
     let target_dir = build
         .target_dir
         .map(|dir| path("build.target-dir", &dir))

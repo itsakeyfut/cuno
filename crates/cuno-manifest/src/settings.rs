@@ -13,8 +13,9 @@ use cuno_toolchain::llvm::ExplicitPaths;
 use cuno_toolchain::select::{Choices, Constraints, ProjectChoices};
 
 use crate::{
-    CompilerName, ConfigError, ConfigWarning, Loaded, Manifest, OptLevel, Os, Profile, Project,
-    Runtime, Tool, Warnings, find_project, load_config, load_manifest, resolve_path, shown_path,
+    CompilerName, Config, ConfigError, ConfigWarning, Loaded, Manifest, OptLevel, Os, Profile,
+    Project, Runtime, Tool, Warnings, find_project, load_config, load_manifest, resolve_path,
+    shown_path,
 };
 
 /// What the binary gathers from the process for [`resolve`].
@@ -86,7 +87,7 @@ impl Settings {
 /// user-level file's.
 pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let Inputs { cwd, env, cli } = inputs;
-    let home = cuno_home(env, cwd).map_err(|e| ConfigError {
+    let home = cuno_home(env).map_err(|e| ConfigError {
         message: e.to_string(),
         location: None,
         help: e.help(),
@@ -105,9 +106,19 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         None => None,
     };
     let user_file = home.join("config.toml");
-    let user = load_config(&user_file, &shown_path(&user_file, cwd), &home)?;
-    warnings.extend(user.warnings);
-    let user = user.value;
+    // A project whose `.cuno` is the cuno home (one at the user's home
+    // directory) has one file for both layers: it is read once, as the
+    // project's.
+    let same_file = project
+        .as_ref()
+        .is_some_and(|(p, _, _)| same_path(&p.config(), &user_file));
+    let user = if same_file {
+        Config::default()
+    } else {
+        let user = load_config(&user_file, &shown_path(&user_file, cwd), &home)?;
+        warnings.extend(user.warnings);
+        user.value
+    };
 
     let manifest = project.as_ref().map(|(_, m, _)| m);
     let local = project.as_ref().map(|(_, _, c)| c);
@@ -118,26 +129,71 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     };
 
     // Highest first: command line, environment, project config, cuno.toml,
-    // user config.
-    let target_dir = cli
+    // user config. The first two are relative to the current directory.
+    let from_command = cli
         .target_dir
         .clone()
-        .map(|dir| (dir, cwd.to_owned()))
-        .or_else(|| from_env("CUNO_TARGET_DIR").map(|dir| (dir.into(), cwd.to_owned())))
-        .map(|(dir, base)| {
-            resolve_path(&dir, &base).map_err(|e| ConfigError {
-                message: format!("{} (the output directory)", e.message),
-                ..e
-            })
-        })
-        .transpose()?
-        .or_else(|| local.and_then(|c| c.target_dir.clone()))
-        .or_else(|| manifest.and_then(|m| m.target_dir.clone()))
-        .or_else(|| user.target_dir.clone())
-        .unwrap_or_else(|| {
-            let base = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
-            base.join("target")
+        .map(|dir| ("--target-dir", dir))
+        .or_else(|| from_env("CUNO_TARGET_DIR").map(|dir| ("CUNO_TARGET_DIR", dir.into())));
+    let (target_dir, source) = match from_command {
+        Some((name, dir)) => {
+            let invalid = |why: String| ConfigError {
+                message: format!("{name} is `{}`, {why}", dir.display()),
+                location: None,
+                help: Some(
+                    "write an absolute path, or a path relative to the current directory"
+                        .to_owned(),
+                ),
+            };
+            if dir.as_os_str().is_empty() {
+                return Err(invalid("which is empty".to_owned()));
+            }
+            let resolved = resolve_path(&dir, cwd)
+                .map_err(|_| invalid("which depends on the current drive".to_owned()))?;
+            (resolved, name.to_owned())
+        }
+        None => {
+            let shown = |file: PathBuf| {
+                format!("`build.target-dir` in {}", shown_path(&file, cwd).display())
+            };
+            let from_files = project
+                .as_ref()
+                .and_then(|(p, m, c)| {
+                    c.target_dir
+                        .clone()
+                        .map(|dir| (dir, shown(p.config())))
+                        .or_else(|| m.target_dir.clone().map(|dir| (dir, shown(p.manifest()))))
+                })
+                .or_else(|| {
+                    user.target_dir
+                        .clone()
+                        .map(|dir| (dir, shown(user_file.clone())))
+                });
+            match from_files {
+                Some(found) => found,
+                None => {
+                    let base = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
+                    (base.join("target"), "the default".to_owned())
+                }
+            }
+        }
+    };
+    // `cuno clean` deletes the output directory, so it must not hold the
+    // project, or the current directory outside one (build.md).
+    let kept = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
+    if holds(&target_dir, kept) {
+        return Err(ConfigError {
+            message: format!(
+                "the output directory `{}` ({source}) is {} or a directory above it",
+                target_dir.display(),
+                if project.is_some() { "the project root" } else { "the current directory" },
+            ),
+            location: None,
+            help: Some(
+                "choose a directory inside the project, such as `target`; `cuno clean` deletes the output directory".to_owned(),
+            ),
         });
+    }
 
     let mut paths = user.paths.clone();
     if let Some(local) = local {
@@ -175,6 +231,37 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         value: settings,
         warnings,
     })
+}
+
+/// Whether `outer` is `inner` or one of its ancestors: compared after
+/// resolving `.` and `..`, and as the file system sees them when both exist.
+fn holds(outer: &Path, inner: &Path) -> bool {
+    let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+    if let (Some(outer), Some(inner)) = (canonical(outer), canonical(inner)) {
+        return inner.starts_with(outer);
+    }
+    lexical(inner).starts_with(lexical(outer))
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| lexical(p));
+    canonical(a) == canonical(b)
+}
+
+/// `path` with `.` dropped and each `..` taking the part before it away.
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The build settings for one build, with every layer applied and the
