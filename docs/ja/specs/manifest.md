@@ -95,7 +95,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 **エラーにする**（終了コード 3。無視すると、利用者の意図と違うものが黙ってビルドされるもの）:
 
-- `compiler = "gcc"` / `"safec"`（`--compiler`、`CUNO_COMPILER`、config.toml での指定を含む）
+- `compiler = "gcc"` / `"safec"`（`--compiler`、`CUNO_COMPILER`、config.toml での指定を含む）。使うコンパイラとして選ばれたときだけエラーにする。上位の層で別のコンパイラに上書きされていればエラーにしない（`[toolchain.version]` が使うコンパイラの制約だけを見るのと同じ）。
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - 独自プロファイル（`inherits`、および `dev` / `release` 以外の `--profile`）
 - `[lib]`
@@ -109,6 +109,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 - `cuno.toml` / `config.toml` に cuno が知らないキーがあれば、**警告**を出して続行する（エラーにしない）。
 - 理由: 新しい cuno で追加された項目を古い cuno で読んでも止まらないようにするため（cargo と同じ）。
+- 設定ファイルについての警告とエラーには、ファイルと行・列を示す（例: `--> cuno.toml:12:1`）。綴りの誤りなどをすぐ直せるようにするため。
 
 ### プロジェクトの探し方とパスの基準
 
@@ -193,6 +194,7 @@ clang = ">=17"
 | `rtti` | `true` | C++ の RTTI を使うか（C では無視） |
 | `precompiled-header` | なし | プリコンパイルヘッダとして扱うヘッダのパス |
 | `unity` | `false` | ユニティビルドを使うか |
+| `target-dir` | `target/` | 出力先（[build.md](build.md)）。`[build]` にだけ書ける（`[platform.<OS>.build]` / `[profile.<name>.build]` には書けない） |
 
 `warnings` の値（各コンパイラでの対応は初期案）:
 

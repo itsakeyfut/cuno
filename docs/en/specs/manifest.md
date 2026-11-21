@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 95e2775cab93a2d7c93db7d1f271265955352a8e -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 8d253060bafa346656d60313e154abedc9ae7562 -->
 
 # Configuration Files
 
@@ -97,7 +97,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 
 **Error** (exit code 3. Ignoring them would silently build something different from what the user intended):
 
-- `compiler = "gcc"` / `"safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml)
+- `compiler = "gcc"` / `"safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml). It is an error only when it is the compiler selected; if a higher layer overrides it with another compiler, it is not an error (just as `[toolchain.version]` checks only the constraint of the compiler used).
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - Custom profiles (`inherits`, and `--profile` other than `dev` / `release`)
 - `[lib]`
@@ -111,6 +111,7 @@ Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `c
 
 - If `cuno.toml` / `config.toml` contains a key cuno does not know, it emits a **warning** and continues (not an error).
 - Reason: so that an older cuno does not stop when reading items added in a newer cuno (same as Cargo).
+- Warnings and errors about a configuration file show the file, line and column (e.g. `--> cuno.toml:12:1`), so that a misspelling and the like can be fixed at once.
 
 ### Locating the project and resolving paths
 
@@ -195,6 +196,7 @@ Values of `compiler`:
 | `rtti` | `true` | Whether to use C++ RTTI (ignored for C) |
 | `precompiled-header` | none | Path of the header to treat as the precompiled header |
 | `unity` | `false` | Whether to use a unity build |
+| `target-dir` | `target/` | Output directory ([build.md](build.md)). Only in `[build]` (not in `[platform.<OS>.build]` / `[profile.<name>.build]`) |
 
 Values of `warnings` (the per-compiler mapping is an initial proposal):
 
