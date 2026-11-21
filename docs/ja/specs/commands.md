@@ -168,6 +168,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 - プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合はプロジェクトの層がない優先順位で選ぶ（[toolchain.md](toolchain.md#選択)）。
 - 設定ファイル（`cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、MVP で未対応のコンパイラ（`gcc` / `safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
+  - 設定ファイルを読めないときは、`--compiler`、`CUNO_COMPILER` と自動選択だけでコンパイラを選ぶ。自動選択になった場合は、設定で選んだコンパイラと取り違えないよう、`Selected` の理由に `automatic selection; the configuration could not be read` と書く。
   - 理由: `doctor` は環境や設定がおかしいときに実行するものなので、設定の誤りで止まると役に立たない。
 
 | 判定 | 条件 | 終了コード |

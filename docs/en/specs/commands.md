@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 7e22694c2398b64e9f1a8417eb0a05d1babecc67 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 30b815409aad56374547b23465d98b1d08463019 -->
 
 # Commands
 
@@ -170,6 +170,7 @@ Diagnoses the environment and shows a fix for each problem.
 
 - Can be run outside a project (where no `cuno.toml` is found). In that case, the compiler is chosen by the precedence without the project layers ([toolchain.md](toolchain.md#selection)).
 - Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported in the MVP (`gcc` / `safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
+  - When a configuration file cannot be read, the compiler is chosen from `--compiler`, `CUNO_COMPILER` and automatic selection only. When that comes to automatic selection, the reason on the `Selected` line says `automatic selection; the configuration could not be read`, so it is not taken for the compiler the configuration chose.
   - Rationale: `doctor` is what users run when the environment or settings are wrong, so stopping at a configuration error would make it useless.
 
 | Result | Condition | Exit code |

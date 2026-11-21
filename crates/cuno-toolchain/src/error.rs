@@ -249,7 +249,7 @@ impl CunoError for ToolchainError {
                 None => format!("the standard library says: {message}"),
             }),
             ToolchainError::ProbeFailed { .. } => Some(
-                "check the Visual Studio and LLVM installations with `cuno doctor`".to_owned(),
+                "check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations".to_owned(),
             ),
             ToolchainError::EditionNotSupported {
                 compiler, needed, ..
@@ -486,7 +486,7 @@ mod tests {
                     output: "fatal error: x".into(),
                 },
                 "whether clang-cl works with the MSVC standard library:\nfatal error: x",
-                "cuno doctor",
+                "[build.<compiler>] flags",
             ),
         ];
         for (error, in_message, in_help) in cases {

@@ -146,10 +146,12 @@ fn an_unsupported_compiler_is_a_problem() {
         );
 }
 
-/// Without Visual Studio, both the missing vswhere and the missing Visual
-/// Studio are problems with their help, and doctor still finishes.
+/// Without Visual Studio, the missing vswhere is one problem with its help,
+/// not repeated as "no Visual Studio" by the selection, and doctor still
+/// finishes.
 ///
-/// Mutation: stop at the first problem, or exit 0; this test fails.
+/// Mutation: stop at the first problem, report the selection's
+/// `NoVisualStudio` as well, or exit 0; this test fails.
 #[test]
 fn a_missing_visual_studio_is_reported_not_fatal() {
     let project = Project::new();
@@ -165,9 +167,8 @@ fn a_missing_visual_studio_is_reported_not_fatal() {
         1,
         "",
         &format!(
-            "error: vswhere.exe was not found at {}\n{help}\
-             error: no Visual Studio or Build Tools with the C++ x64 tools was found\n{help}    \
-             Finished 2 problems found\n",
+            "error: vswhere.exe was not found at {}\n{help}    \
+             Finished 1 problem found\n",
             vswhere.display()
         ),
     );
@@ -193,4 +194,242 @@ fn a_broken_configuration_is_reported_and_diagnosis_goes_on() {
         "error: invalid type: integer `1`, expected a string in cuno.toml\n --> cuno.toml:2:8\n";
     assert_eq!(run.code, Some(1), "{}", run.stderr);
     assert_eq!(run.stderr, format!("{first}{expected}"));
+}
+
+/// A manifest for the tests' projects, with `extra` appended.
+fn manifest(extra: &str) -> String {
+    format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n{extra}")
+}
+
+/// The part of `healthy`'s output before the standard library check.
+fn before_check(healthy: &str) -> &str {
+    healthy.split_once("    Accepted").unwrap().0
+}
+
+/// When a configuration file cannot be read and nothing outside the files
+/// names a compiler, the automatic selection says it is not the
+/// configuration's choice; `CUNO_COMPILER` still applies.
+///
+/// Mutation: print the plain `automatic selection`, or drop `CUNO_COMPILER`
+/// from the fallback; this test fails.
+#[test]
+fn an_unreadable_configuration_does_not_pass_for_its_choice() {
+    let broken = "error: key with no value, expected `=` in .cuno\\config.toml\n --> .cuno\\config.toml:1:4\n";
+    let project = || {
+        Project::new()
+            .file(
+                "cuno.toml",
+                &manifest("[toolchain]\ncompiler = \"clang\"\n"),
+            )
+            .file(".cuno/config.toml", "bad[\n")
+    };
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_some() {
+        let expected = healthy(
+            &selected("msvc"),
+            "automatic selection; the configuration could not be read",
+        )
+        .replace("no problems found", "1 problem found");
+        project()
+            .cuno(&["doctor"])
+            .assert(1, "", &format!("{broken}{expected}"));
+    }
+    if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_some() {
+        let expected = healthy(&selected("clang-cl"), "CUNO_COMPILER")
+            .replace("no problems found", "1 problem found");
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.arg("doctor");
+        project()
+            .run_command_with(cmd, &[("CUNO_COMPILER", "clang-cl")])
+            .assert(1, "", &format!("{broken}{expected}"));
+    }
+}
+
+/// A configuration warning is printed with its place before the diagnosis,
+/// and is not a problem.
+///
+/// Mutation: drop the warnings, or count them as problems; this test fails.
+#[test]
+fn configuration_warnings_come_first() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let expected = healthy(&selected("msvc"), "--compiler");
+    Project::new()
+        .file("cuno.toml", &manifest("foo = 1\n"))
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(
+            0,
+            "",
+            &format!(
+                "warning: unknown key `package.foo` in cuno.toml, ignored\n --> cuno.toml:4:1\n{expected}"
+            ),
+        );
+}
+
+/// `[toolchain.version]` and `[toolchain.paths]` decide what is diagnosed,
+/// as they decide what a build uses.
+///
+/// Mutation: pass doctor's selection no constraints, no LLVM paths or no
+/// MSVC path; this test fails.
+#[test]
+fn the_toolchain_settings_constrain_the_selection() {
+    if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let version = selected("clang").version;
+    Project::new()
+        .file("cuno.toml", &manifest("[toolchain.version]\nclang = \">=99\"\n"))
+        .cuno(&["doctor", "--compiler", "clang"])
+        .assert(
+            1,
+            "",
+            &format!(
+                "error: no clang found satisfies >=17.0.0 (cuno's minimum) and >=99 ([toolchain.version] clang); found {version}\n\
+                 help: install a clang that satisfies it, or change [toolchain.version] clang\n    \
+                 Finished 1 problem found\n"
+            ),
+        );
+    Project::new()
+        .file("cuno.toml", &manifest(""))
+        .file(
+            ".cuno/config.toml",
+            "[toolchain.paths]\nclang = \"C:/nope/clang.exe\"\nmsvc = \"C:/nope/VS\"\n",
+        )
+        .cuno(&["doctor", "--compiler", "clang"])
+        .assert(
+            1,
+            "",
+            "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n\
+             help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
+             error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
+             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n    \
+             Finished 2 problems found\n",
+        );
+}
+
+/// A C++23 project is a problem on a cl older than 19.52 and fine on a newer
+/// one: what the build would refuse, doctor reports.
+///
+/// Mutation: check another edition than the project's, or drop the check;
+/// this test fails on a cl older than 19.52 (as on CI).
+#[test]
+fn an_edition_the_compiler_lacks_is_a_problem() {
+    use cuno_core::CunoError;
+    use cuno_toolchain::flags::{Edition, check_edition};
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let msvc = selected("msvc");
+    let healthy = healthy(&msvc, "--compiler");
+    let (code, expected) = match check_edition(msvc.kind, msvc.version, Edition::Cxx23) {
+        Ok(()) => (0, healthy),
+        Err(error) => {
+            // After the Selected line and the executable's line.
+            let at = healthy.match_indices('\n').nth(1).unwrap().0 + 1;
+            let problem = format!("error: {error}\nhelp: {}\n", error.help().unwrap());
+            let out = format!("{}{problem}{}", &healthy[..at], &healthy[at..]);
+            (1, out.replace("no problems found", "1 problem found"))
+        }
+    };
+    Project::new()
+        .file("cuno.toml", &manifest("edition = \"c++23\"\n"))
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(code, "", &expected);
+}
+
+/// In a C project the standard library check is not made (toolchain.md,
+/// "Minimum compiler versions").
+///
+/// Mutation: make the check in C projects too; this test fails.
+#[test]
+fn a_c_project_is_not_checked_against_the_standard_library() {
+    if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let expected = healthy(&selected("clang"), "--compiler")
+        .replace("    Accepted by the MSVC standard library\n", "");
+    Project::new()
+        .file("cuno.toml", &manifest("edition = \"c11\"\nlang = \"c\"\n"))
+        .cuno(&["doctor", "--compiler", "clang"])
+        .assert(0, "", &expected);
+}
+
+/// The standard library check compiles with the project's dev-profile flags
+/// and `src` on the include path: a `src/yvals_core.h` failing with a
+/// message that tells the profiles apart is what doctor reports, as a
+/// problem whose help points at the flags.
+///
+/// Mutation: probe with the release profile, without `src`, or treat the
+/// probe's failure as passing; this test fails.
+#[test]
+fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
+    if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let run = Project::new()
+        .file("cuno.toml", &manifest(""))
+        .file(
+            "src/yvals_core.h",
+            "#ifdef NDEBUG\n#error release flags reached the probe\n#else\n#error dev flags reached the probe\n#endif\n",
+        )
+        .cuno(&["doctor", "--compiler", "clang-cl"]);
+    let healthy = healthy(&selected("clang-cl"), "--compiler");
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    let rest = run
+        .stderr
+        .strip_prefix(before_check(&healthy))
+        .unwrap_or_else(|| panic!("{}", run.stderr));
+    assert!(
+        rest.starts_with(
+            "error: could not tell whether clang-cl works with the MSVC standard library:\n"
+        ),
+        "{rest}"
+    );
+    assert!(
+        rest.contains("error: dev flags reached the probe"),
+        "{rest}"
+    );
+    assert!(
+        rest.ends_with(
+            "help: check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations\n    \
+             Finished 1 problem found\n"
+        ),
+        "{rest}"
+    );
+}
+
+/// A temporary directory that does not exist is a problem saying so, with
+/// its own help, and is not created.
+///
+/// Mutation: create the directory with its parents, or report it with the
+/// probe's help; this test fails.
+#[test]
+fn a_missing_temporary_directory_is_reported_not_created() {
+    if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new();
+    let missing = project.home().join("missing");
+    let temp = missing.join("temp");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["doctor", "--compiler", "clang"])
+        .env("TEMP", &temp)
+        .env("TMP", &temp);
+    let run = project.run_command(cmd);
+    let healthy = healthy(&selected("clang"), "--compiler");
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    let rest = run
+        .stderr
+        .strip_prefix(before_check(&healthy))
+        .unwrap_or_else(|| panic!("{}", run.stderr));
+    let error = format!("error: cannot create {}\\cuno-doctor-", temp.display());
+    assert!(rest.starts_with(&error), "{rest}");
+    assert!(
+        rest.ends_with(
+            "help: set TEMP to a directory that exists and can be written\n    \
+             Finished 1 problem found\n"
+        ),
+        "{rest}"
+    );
+    assert!(!missing.exists(), "the temporary directory was created");
 }

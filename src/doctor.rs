@@ -10,7 +10,7 @@ use cuno_manifest::{CliSettings, CompilerName, Inputs, Lang, Os, Profile, Settin
 use cuno_toolchain::flags::{CompileInput, Edition, Mode, check_edition, compile_flags};
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, CompilerKind, Found, ProbeInputs, Selected};
-use cuno_toolchain::{HostOs, SystemRunner};
+use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
 /// Prints `error:` and `help:` and counts problems.
 struct Problems<'a> {
@@ -105,9 +105,11 @@ fn diagnose(
             user: None,
         });
 
+    let mut no_visual_studio = false;
     let installs = if host == HostOs::Windows {
         msvc::find_installations(env, runner).unwrap_or_else(|error| {
             problems.report(&error);
+            no_visual_studio = true;
             Vec::new()
         })
     } else {
@@ -127,16 +129,21 @@ fn diagnose(
     let constraints = settings.map(|s| s.constraints.clone()).unwrap_or_default();
     let selected = match select::select(&choices, found, &constraints, host) {
         Ok(selected) => selected,
+        // Already reported: no Visual Studio is what vswhere's failure means.
+        Err(ToolchainError::NoVisualStudio) if no_visual_studio => return,
         Err(error) => return problems.report(&error),
+    };
+    // Without a readable configuration, automatic selection is not what the
+    // configuration chose (commands.md, "`cuno doctor`").
+    let source = match (selected.source, settings) {
+        (select::Source::Automatic, None) => {
+            "automatic selection; the configuration could not be read".to_owned()
+        }
+        (source, _) => source.to_string(),
     };
     problems.shell.status(
         "Selected",
-        format!(
-            "{} {} ({})",
-            selected.kind.name(),
-            selected.version,
-            selected.source
-        ),
+        format!("{} {} ({source})", selected.kind.name(), selected.version),
     );
     problems.shell.status("", selected.executable.display());
 
@@ -230,11 +237,13 @@ fn probe(
         test: false,
         mode: Mode::Check,
     });
+    // `create_dir`, not `create_dir_all`: a temporary directory that does not
+    // exist is a problem to report, not a tree to make.
     let scratch = std::env::temp_dir().join(format!("cuno-doctor-{}", std::process::id()));
-    std::fs::create_dir_all(&scratch).map_err(|e| {
-        Box::new(cuno_toolchain::ToolchainError::ProbeFailed {
-            compiler: selected.kind.name(),
-            output: format!("could not create {}: {e}", scratch.display()),
+    std::fs::create_dir(&scratch).map_err(|e| {
+        Box::new(ScratchError {
+            dir: scratch.clone(),
+            reason: e.to_string(),
         }) as Box<dyn CunoError>
     })?;
     let result = select::check(
@@ -248,6 +257,36 @@ fn probe(
     );
     let _ = std::fs::remove_dir_all(&scratch);
     result.map_err(|e| Box::new(e) as Box<dyn CunoError>)
+}
+
+/// The probe's scratch directory cannot be made in the temporary
+/// directory (`TEMP` names one that does not exist or cannot be written).
+#[derive(Debug)]
+struct ScratchError {
+    dir: std::path::PathBuf,
+    reason: String,
+}
+
+impl std::fmt::Display for ScratchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cannot create {} to check the compiler: {}",
+            self.dir.display(),
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for ScratchError {}
+
+impl CunoError for ScratchError {
+    fn exit_class(&self) -> cuno_core::ExitClass {
+        cuno_core::ExitClass::Setup
+    }
+    fn help(&self) -> Option<String> {
+        Some("set TEMP to a directory that exists and can be written".to_owned())
+    }
 }
 
 #[cfg(test)]
