@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 0dc682bb490f67768a8bcc31ac7e766fe36c82e0 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob ca7371fe1a981422b8f06179ea781ba28e527a4b -->
 
 # Build
 
@@ -105,6 +105,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   4. `[build] target-dir` in `cuno.toml`
   5. User-level `<cuno home>/config.toml`
   6. Default value `target/`
+- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3), whichever layer sets it.
+  - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
 - `cuno new` adds the output directory to `.gitignore`.
 
 ## Profiles

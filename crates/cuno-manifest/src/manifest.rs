@@ -481,6 +481,18 @@ impl Check<'_> {
         if build.rule.is_some() {
             return Err(self.not_yet("build.rule", "`[[build.rule]]`"));
         }
+        // An empty output directory would be the project root (build.md).
+        if build
+            .target_dir
+            .as_ref()
+            .is_some_and(|dir| dir.as_os_str().is_empty())
+        {
+            return Err(self.doc.error(
+                "build.target-dir",
+                format!("`build.target-dir` in {} is empty", self.doc.file.display()),
+                Some("write the output directory, such as \"target\"".to_owned()),
+            ));
+        }
         let target_dir = build
             .target_dir
             .take()

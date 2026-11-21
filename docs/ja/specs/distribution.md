@@ -18,7 +18,8 @@
 ## 管理ディレクトリ
 
 - 全 OS で `~/.cuno`（Windows は `%USERPROFILE%\.cuno`）。
-- 環境変数 `CUNO_HOME` で変更できる（cargo の `CARGO_HOME` と同じ）。
+- 環境変数 `CUNO_HOME` で変更できる（cargo の `CARGO_HOME` と同じ）。絶対パスで書く。相対パスや、Windows でドライブに依存するパス（`/x`、`C:x`）はエラー（終了コード 3）。
+  - 理由: 相対パスを許すと、cuno を実行するディレクトリによって管理ディレクトリ（とユーザー単位の設定）が変わってしまう。
 - 理由: 場所が 1 か所で説明しやすく、消すのも簡単。cargo / rustup と同じ形。OS 流の場所（Windows の `%LOCALAPPDATA%`、Linux の XDG）は作法に沿うが、OS ごとに場所が変わり分散するため採用しない。
 
 | 中身 | 内容 |
