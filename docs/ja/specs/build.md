@@ -64,6 +64,7 @@
 
 | 設定 | MSVC | clang-cl | clang |
 |---|---|---|---|
+| 常に | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` |
 | リンカ | `link.exe`（`/link` の後に引数） | `-fuse-ld=lld`、`lld-link`（`/link` の後に引数） | `-fuse-ld=lld` |
 | 出力 | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
 | `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |

@@ -11,8 +11,8 @@ use std::process::Command;
 
 use cuno_core::Env;
 use cuno_toolchain::flags::{
-    BuildSettings, CompileInput, Edition, Lang, Mode, OptLevel, ProfileSettings, Runtime, Warnings,
-    check_edition, compile_args,
+    BuildSettings, CompileInput, Edition, Lang, LinkInput, Mode, OptLevel, ProfileSettings,
+    Runtime, Subsystem, Warnings, check_edition, compile_args, link_args,
 };
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::CompilerKind;
@@ -102,15 +102,17 @@ int main() {
 
 const C: &str = "#include <stdio.h>\nint main(void) { printf(\"std=%ld\\n\", (long)__STDC_VERSION__); return 0; }\n";
 
-/// Compiles `text` with `input`'s arguments, links it plainly, runs it and
-/// returns what it printed.
-fn build_and_run(
+/// Compiles `text` with `input`'s arguments and links it with the link
+/// arguments for `subsystem`, in a new directory, which is returned with
+/// the executable.
+fn build(
     kind: CompilerKind,
     program: &Path,
     env: &Env,
     input: &CompileInput<'_>,
+    subsystem: Subsystem,
     text: &str,
-) -> String {
+) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join(if input.lang == Lang::C {
         "main.c"
@@ -130,37 +132,45 @@ fn build_and_run(
             .unwrap();
         assert!(
             output.status.success(),
-            "{kind:?} {args:?}\n{}{}",
+            "{kind:?} {args:?}
+{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8_lossy(&output.stdout).into_owned()
     };
     run(compile_args(input, &source, Some(&object)));
-    // A plain link, until the link arguments exist (#62).
-    let mut link: Vec<std::ffi::OsString> = vec![object.into()];
-    match kind {
-        CompilerKind::Clang => {
-            link.push("--target=x86_64-pc-windows-msvc".into());
-            link.push(
-                match input.build.runtime {
-                    Runtime::Dynamic => "-fms-runtime-lib=dll",
-                    Runtime::Static => "-fms-runtime-lib=static",
-                }
-                .into(),
-            );
-            link.extend(["-o".into(), exe.clone().into()]);
-        }
-        _ => {
-            link.push("/nologo".into());
-            let mut out = std::ffi::OsString::from("/Fe:");
-            out.push(&exe);
-            link.push(out);
-        }
-    }
-    run(link);
+    let link = LinkInput {
+        kind,
+        build: input.build,
+        profile: input.profile,
+        subsystem,
+    };
+    run(link_args(&link, &[object], &exe));
+    (dir, exe)
+}
+
+/// [`build`] as a console program, run, and what it printed.
+fn build_and_run(
+    kind: CompilerKind,
+    program: &Path,
+    env: &Env,
+    input: &CompileInput<'_>,
+    text: &str,
+) -> String {
+    let (_dir, exe) = build(kind, program, env, input, Subsystem::Console, text);
     let output = Command::new(&exe).output().unwrap();
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// The PE subsystem an executable was linked for: 2 for Windows GUI, 3 for
+/// console.
+fn pe_subsystem(exe: &Path) -> u16 {
+    let bytes = std::fs::read(exe).unwrap();
+    let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+    // The signature (4 bytes), the file header (20), then the optional
+    // header, whose Subsystem field is at 68 in PE32+.
+    let at = pe + 4 + 20 + 68;
+    u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap())
 }
 
 /// Every edition compiles with each driver and the program reports that
@@ -316,6 +326,50 @@ fn disabled_exceptions_and_rtti_are_refused_by_every_driver() {
             assert!(
                 !output.status.success(),
                 "{kind:?} exceptions={exceptions} rtti={rtti} compiled"
+            );
+        }
+    }
+}
+
+/// A program calling a system library links with each driver from the link
+/// arguments, as a console and as a `windows` program, with debug
+/// information (a `.pdb`) and with LTO, and runs.
+///
+/// Mutation: drop the library, `/ENTRY:mainCRTStartup`, the subsystem,
+/// `/DEBUG` or `-g` at link time, or `-fuse-ld=lld` for clang-cl with LTO;
+/// this test fails.
+#[test]
+fn programs_link_and_run_with_every_setting() {
+    let text = "#include <windows.h>
+int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
+";
+    let (mut build_settings, mut profile) = settings();
+    build_settings.links = vec!["user32".into()];
+    for (kind, program, env, _) in drivers() {
+        for (subsystem, expected, debug, lto) in [
+            (Subsystem::Console, 3, true, false),
+            (Subsystem::Windows, 2, false, true),
+        ] {
+            profile.debug_info = debug;
+            profile.lto = lto;
+            let input = CompileInput {
+                kind,
+                lang: Lang::Cxx,
+                edition: Edition::Cxx20,
+                build: &build_settings,
+                profile: &profile,
+                include_dirs: &[],
+                test: false,
+                mode: Mode::Compile,
+            };
+            let (dir, exe) = build(kind, &program, &env, &input, subsystem, text);
+            assert_eq!(pe_subsystem(&exe), expected, "{kind:?} {subsystem:?}");
+            let status = Command::new(&exe).status().unwrap();
+            assert!(status.success(), "{kind:?} {subsystem:?} {status}");
+            assert_eq!(
+                dir.path().join("main.pdb").is_file(),
+                debug,
+                "{kind:?} {subsystem:?}"
             );
         }
     }

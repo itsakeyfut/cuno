@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob d17f5df94d78736db17101117c89b81de11f718b -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 2e21658ef0fff1e4c24a6483e0ce4f49c5cc4c11 -->
 
 # Build
 
@@ -66,6 +66,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 
 | Setting | MSVC | clang-cl | clang |
 |---|---|---|---|
+| Always | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` |
 | Linker | `link.exe` (arguments after `/link`) | `-fuse-ld=lld`, `lld-link` (arguments after `/link`) | `-fuse-ld=lld` |
 | Output | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
 | `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
