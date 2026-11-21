@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use cuno_core::{ColorChoice, CunoError, Env, cuno_home};
+use cuno_toolchain::flags::{BuildSettings, ProfileSettings};
 use cuno_toolchain::llvm::ExplicitPaths;
 use cuno_toolchain::select::{Choices, Constraints, ProjectChoices};
 
@@ -262,47 +263,6 @@ fn lexical(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-/// The build settings for one build, with every layer applied and the
-/// defaults of `manifest.md` filled in.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BuildSettings {
-    /// `warnings`.
-    pub warnings: Warnings,
-    /// `warnings-as-errors`.
-    pub warnings_as_errors: bool,
-    /// `defines`.
-    pub defines: Vec<String>,
-    /// `include-dirs`.
-    pub include_dirs: Vec<PathBuf>,
-    /// `links`.
-    pub links: Vec<String>,
-    /// `lib-dirs`.
-    pub lib_dirs: Vec<PathBuf>,
-    /// `link-flags`.
-    pub link_flags: Vec<String>,
-    /// `[build.<compiler>] flags`.
-    pub flags: Vec<String>,
-    /// `runtime`.
-    pub runtime: Runtime,
-    /// `exceptions`.
-    pub exceptions: bool,
-    /// `rtti`.
-    pub rtti: bool,
-}
-
-/// A profile's settings with the defaults of `manifest.md` filled in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProfileSettings {
-    /// `opt-level`.
-    pub opt_level: OptLevel,
-    /// `debug-info`.
-    pub debug_info: bool,
-    /// `debug-assertions`.
-    pub debug_assertions: bool,
-    /// `lto`.
-    pub lto: bool,
 }
 
 impl Manifest {
