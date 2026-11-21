@@ -35,6 +35,9 @@
 | C++ のとき | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
 | ビルド / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | 言語（ソースごと） | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
+| オブジェクトファイル（ビルドのとき） | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
+
+- ヘッダの依存関係を調べるフラグ（`/showIncludes` 等）は、ビルドエンジン（M2）と合わせて決める（[architecture.md](architecture.md)）。この表には含めない。
 
 ### コンパイル
 

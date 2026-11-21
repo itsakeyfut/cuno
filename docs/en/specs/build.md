@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 19711d5409926b90b0669882b06b32eb5c11203d -->
+<!-- translated-from: docs/ja/specs/build.md @ blob bdaf89c7d1ec4710c128e0f3a167e3961a49a96f -->
 
 # Build
 
@@ -37,6 +37,9 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
 | Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
+| Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
+
+- The flags that find header dependencies (`/showIncludes` etc.) are decided with the build engine (M2) ([architecture.md](architecture.md)), and are not in this table.
 
 ### Compiling
 
