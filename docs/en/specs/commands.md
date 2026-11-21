@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob b7666e669991d9fcfec28aa59254202e26ff2afa -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 4558c38c230634a9138461fd5f1869de081a261d -->
 
 # Commands
 
@@ -12,7 +12,7 @@ The command structure is based on cargo, with additions for C/C++ and for circum
 | | `init` | Turn an existing directory into a project | Right after MVP |
 | Build | `build` | Build only | MVP |
 | | `run` | Build and run | MVP |
-| | `check` | Syntax and type check only (`-fsyntax-only` for GCC / Clang, `/Zs` for MSVC / clang-cl). Fast, since no object files are produced. Also checks test code (with `CUNO_TEST` defined, and `tests/`) and entry files | MVP |
+| | `check` | Syntax and type check only (flags in [build.md](build.md#settings-and-flags)). Fast, since no object files are produced. Also checks test code (with `CUNO_TEST` defined, and `tests/`) and entry files | MVP |
 | | `clean` | Delete the output directory | MVP |
 | Test | `test` | Run tests | MVP |
 | | `bench` | Run benchmarks | Later |

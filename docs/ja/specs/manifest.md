@@ -188,7 +188,7 @@ clang = ">=17"
 | `warnings-as-errors` | `false` | 警告をエラーとして扱うか |
 | `defines` | `[]` | プリプロセッサ定義（例: `["GAME_DEBUG", "VERSION=3"]`） |
 | `include-dirs` | `[]` | 追加のインクルードパス |
-| `links` | `[]` | リンクするシステムライブラリ。名前だけ書けば、cuno が各コンパイラの形式（MSVC: `d3d12.lib`、GCC / Clang: `-ld3d12`）に変換する |
+| `links` | `[]` | リンクするシステムライブラリ。名前だけ書けば、cuno が各コンパイラの形式に変換する（[build.md](build.md#設定とフラグの対応)） |
 | `lib-dirs` | `[]` | ライブラリの検索パス |
 | `link-flags` | `[]` | リンカにそのまま渡すフラグ（逃げ道） |
 | `runtime` | `"dynamic"` | C ランタイムのリンク方式 |
@@ -198,31 +198,31 @@ clang = ">=17"
 | `unity` | `false` | ユニティビルドを使うか |
 | `target-dir` | `target/` | 出力先（[build.md](build.md)）。`[build]` にだけ書ける（`[platform.<OS>.build]` / `[profile.<name>.build]` には書けない） |
 
-`warnings` の値（各コンパイラでの対応は初期案）:
+`warnings` の値（フラグは [build.md](build.md#設定とフラグの対応) を参照）:
 
 - `default`: コンパイラの既定の警告のみ。
-- `all`: 一般的に推奨される警告を有効にする（MSVC: `/W4`、GCC / Clang: `-Wall -Wextra`）。既定値。新規プロジェクトは厳しめから始める方が後で楽なため。
-- `pedantic`: `all` に加え、規格への厳密な準拠を求める（MSVC: `/W4 /permissive-`、GCC / Clang: `-Wall -Wextra -Wpedantic`）。
+- `all`: 一般的に推奨される警告を有効にする。既定値。新規プロジェクトは厳しめから始める方が後で楽なため。
+- `pedantic`: `all` に加え、規格への厳密な準拠を求める。
 
 `warnings-as-errors`:
 
-- `true`: 警告をエラーにする（MSVC: `/WX`、GCC / Clang: `-Werror`）。CI での利用を想定。
+- `true`: 警告をエラーにする。CI での利用を想定。
 - `false`: 警告は警告のまま。既定値。書きかけのコードでビルドが止まらないようにするため。
 
 `runtime` の値:
 
-- `dynamic`: C ランタイムを DLL としてリンクする（MSVC: `/MD`）。既定値。全プロファイルでリリース版の C ランタイムを使う（デバッグ版 `/MDd` は既定にしない。ビルド済みの依存と混ぜるとリンクエラーになるため。Rust と同じ方針）。
-- `static`: C ランタイムを実行ファイルに取り込む（MSVC: `/MT`）。配布時にランタイムの同梱が不要になる。
+- `dynamic`: C ランタイムを DLL としてリンクする。既定値。全プロファイルでリリース版の C ランタイムを使う（デバッグ版は既定にしない。理由は [build.md](build.md#設定とフラグの対応)）。
+- `static`: C ランタイムを実行ファイルに取り込む。配布時にランタイムの同梱が不要になる。
 
 `exceptions`:
 
-- `true`: C++ の例外を使う（MSVC: `/EHsc`）。既定値。
-- `false`: 例外を無効にする（MSVC: `/EHsc` を付けず `_HAS_EXCEPTIONS=0` を定義、GCC / Clang: `-fno-exceptions`）。ゲーム開発で多い設定。
+- `true`: C++ の例外を使う。既定値。
+- `false`: 例外を無効にする。ゲーム開発で多い設定。
 
 `rtti`:
 
 - `true`: RTTI（`dynamic_cast` / `typeid`）を使う。既定値。
-- `false`: RTTI を無効にする（MSVC: `/GR-`、GCC / Clang: `-fno-rtti`）。
+- `false`: RTTI を無効にする。
 
 ### `[build.<compiler>]`
 
@@ -294,7 +294,7 @@ defines = ["GAME_DEBUG"]   # dev プロファイルのときだけ追加
 `subsystem` の値:
 
 - `console`: コンソールアプリとして起動する。既定値。
-- `windows`: コンソールウィンドウを出さずに起動する（MSVC: `/SUBSYSTEM:WINDOWS`）。ゲームで必須。`WinMain` ではなく通常の `main` のまま書けるよう、cuno が `/ENTRY:mainCRTStartup` も付ける。
+- `windows`: コンソールウィンドウを出さずに起動する。ゲームで必須。`WinMain` ではなく通常の `main` のまま書けるよう、cuno がエントリポイントも指定する（[build.md](build.md#設定とフラグの対応)）。
 
 - `[[bin]]` を 1 つも書かない場合: 既定の実行ファイル（`src/main.cpp` / `src/main.c`）と、`src/bin/` 直下の C/C++ ソース（`*.c` / `*.cpp` / `*.cc` / `*.cxx`。1 ファイル = 1 実行ファイル、ファイル名が実行ファイル名）を自動検出する。
 - `[[bin]]` を 1 つでも書いた場合: **自動検出はしない**。書いたものだけが実行ファイルになる（既定の `src/main.cpp` が意図せずエントリファイル扱いにならず、`main` が重複するのを防ぐため）。
@@ -341,17 +341,17 @@ MVP では使わない。項目名のみ予約。
 | `lto` | `false` | `false` | リンク時最適化を使うか |
 | `inherits` | — | — | 継承元プロファイル（独自プロファイルのみ） |
 
-`opt-level` の値（各コンパイラでの対応は初期案）:
+`opt-level` の値（フラグは [build.md](build.md#設定とフラグの対応) を参照）:
 
-- `0`: 最適化なし（MSVC: `/Od`、GCC / Clang: `-O0`）。
-- `1`: 軽い最適化（MSVC: `/O2`、GCC / Clang: `-O1`）。MSVC には同等の段階がないため `/O2` に対応付ける。
-- `2`: 標準的な最適化（MSVC: `/O2`、GCC / Clang: `-O2`）。
-- `3`: 最大の最適化（MSVC: `/O2`、GCC / Clang: `-O3`）。
-- `"s"`: サイズ優先の最適化（MSVC: `/O1`、GCC / Clang: `-Os`）。
+- `0`: 最適化なし。
+- `1`: 軽い最適化。
+- `2`: 標準的な最適化。
+- `3`: 最大の最適化。
+- `"s"`: サイズ優先の最適化。
 
 `debug-info`:
 
-- `true`: デバッグ情報を出す（MSVC: コンパイル時 `/Z7` + リンク時 `/DEBUG`、GCC / Clang: `-g`）。MSVC で `/Zi` を使わないのは、並列ビルドで PDB への書き込みが競合し、sccache でキャッシュできないため。
+- `true`: デバッグ情報を出す。
 - `false`: 出さない。
 
 `debug-assertions`（cargo と同じ名前）:
@@ -361,7 +361,7 @@ MVP では使わない。項目名のみ予約。
 
 `lto`:
 
-- `true`: リンク時最適化を使う（MSVC: `/GL` + `/LTCG`、GCC / Clang: `-flto`）。リンク時間が長くなるため opt-in。
+- `true`: リンク時最適化を使う。リンク時間が長くなるため opt-in。
 - `false`: 使わない。既定値（cargo と同じ）。
 
 ## .cuno/config.toml

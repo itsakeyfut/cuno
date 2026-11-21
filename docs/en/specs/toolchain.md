@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 984c4607cf8d7ca5fa025feb7eb1a091b2f166b6 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 17e6a8247f279d28f5c37766ebc480b1b0bff566 -->
 
 # Toolchain
 
@@ -40,8 +40,8 @@ All three major families are supported.
 | C++ | C++17 | C++20 |
 | C | C11 | C17 |
 
-- If the compiler in use does not accept the standard specified in `edition` (e.g. `c++23` on an old MSVC), it is an error, and cuno indicates the required compiler version.
-- The mapping table from `edition` to each compiler's standard flag (`/std:c++20`, `-std=c++20`, etc.) will be created during implementation and written back into this spec.
+- If the compiler in use does not accept the standard specified in `edition` (e.g. `c23` on an old MSVC without `/std:clatest`), it is an error, and cuno indicates the required compiler version. cl only warns about a `/std` it does not know and ignores it, so whether it is accepted is decided from the compiler's version.
+- The mapping from `edition` to each compiler's standard flag is in [build.md](build.md#settings-and-flags).
 
 ### Minimum compiler versions
 

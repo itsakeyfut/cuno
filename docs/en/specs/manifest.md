@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob fd087a752f060fc6a9552a057852e05a55b2045e -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 928eb2031279bf579718a4e6d3474c129515bd2e -->
 
 # Configuration Files
 
@@ -190,7 +190,7 @@ Values of `compiler`:
 | `warnings-as-errors` | `false` | Whether to treat warnings as errors |
 | `defines` | `[]` | Preprocessor definitions (e.g. `["GAME_DEBUG", "VERSION=3"]`) |
 | `include-dirs` | `[]` | Additional include paths |
-| `links` | `[]` | System libraries to link. Write just the name, and cuno converts it to each compiler's form (MSVC: `d3d12.lib`, GCC / Clang: `-ld3d12`) |
+| `links` | `[]` | System libraries to link. Write just the name, and cuno converts it to each compiler's form ([build.md](build.md#settings-and-flags)) |
 | `lib-dirs` | `[]` | Library search paths |
 | `link-flags` | `[]` | Flags passed to the linker as-is (escape hatch) |
 | `runtime` | `"dynamic"` | How the C runtime is linked |
@@ -200,31 +200,31 @@ Values of `compiler`:
 | `unity` | `false` | Whether to use a unity build |
 | `target-dir` | `target/` | Output directory ([build.md](build.md)). Only in `[build]` (not in `[platform.<OS>.build]` / `[profile.<name>.build]`) |
 
-Values of `warnings` (the per-compiler mapping is an initial proposal):
+Values of `warnings` (For the flags, see [build.md](build.md#settings-and-flags)):
 
 - `default`: Only the compiler's default warnings.
-- `all`: Enables the generally recommended warnings (MSVC: `/W4`, GCC / Clang: `-Wall -Wextra`). Default. Starting new projects on the strict side makes life easier later.
-- `pedantic`: In addition to `all`, requires strict standard conformance (MSVC: `/W4 /permissive-`, GCC / Clang: `-Wall -Wextra -Wpedantic`).
+- `all`: Enables the generally recommended warnings. Default. Starting new projects on the strict side makes life easier later.
+- `pedantic`: In addition to `all`, requires strict standard conformance.
 
 `warnings-as-errors`:
 
-- `true`: Turns warnings into errors (MSVC: `/WX`, GCC / Clang: `-Werror`). Intended for CI.
+- `true`: Turns warnings into errors. Intended for CI.
 - `false`: Warnings stay warnings. Default. So that the build does not stop on work-in-progress code.
 
 Values of `runtime`:
 
-- `dynamic`: Links the C runtime as a DLL (MSVC: `/MD`). Default. All profiles use the release C runtime (the debug `/MDd` is not the default, because mixing it with prebuilt dependencies causes link errors. Same policy as Rust).
-- `static`: Embeds the C runtime in the executable (MSVC: `/MT`). No need to ship the runtime when distributing.
+- `dynamic`: Links the C runtime as a DLL. Default. All profiles use the release C runtime (the debug one is not the default; the reason is in [build.md](build.md#settings-and-flags)).
+- `static`: Embeds the C runtime in the executable. No need to ship the runtime when distributing.
 
 `exceptions`:
 
-- `true`: Uses C++ exceptions (MSVC: `/EHsc`). Default.
-- `false`: Disables exceptions (MSVC: omit `/EHsc` and define `_HAS_EXCEPTIONS=0`, GCC / Clang: `-fno-exceptions`). A common setting in game development.
+- `true`: Uses C++ exceptions. Default.
+- `false`: Disables exceptions. A common setting in game development.
 
 `rtti`:
 
 - `true`: Uses RTTI (`dynamic_cast` / `typeid`). Default.
-- `false`: Disables RTTI (MSVC: `/GR-`, GCC / Clang: `-fno-rtti`).
+- `false`: Disables RTTI.
 
 ### `[build.<compiler>]`
 
@@ -296,7 +296,7 @@ Layered in this order:
 Values of `subsystem`:
 
 - `console`: Launches as a console app. Default.
-- `windows`: Launches without a console window (MSVC: `/SUBSYSTEM:WINDOWS`). Essential for games. cuno also adds `/ENTRY:mainCRTStartup` so that you can keep writing an ordinary `main` instead of `WinMain`.
+- `windows`: Launches without a console window. Essential for games. cuno also sets the entry point, so that you can keep writing an ordinary `main` instead of `WinMain` ([build.md](build.md#settings-and-flags)).
 
 - If no `[[bin]]` is written: cuno auto-detects the default executable (`src/main.cpp` / `src/main.c`) and C/C++ sources directly under `src/bin/` (`*.c` / `*.cpp` / `*.cc` / `*.cxx`; one file = one executable, with the file name as the executable name).
 - If at least one `[[bin]]` is written: **no auto-detection**. Only the ones written become executables (this prevents the default `src/main.cpp` from unintentionally being treated as an entry file and `main` from being duplicated).
@@ -343,17 +343,17 @@ Values of `framework`:
 | `lto` | `false` | `false` | Whether to use link-time optimization |
 | `inherits` | — | — | Profile to inherit from (custom profiles only) |
 
-Values of `opt-level` (the per-compiler mapping is an initial proposal):
+Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags)):
 
-- `0`: No optimization (MSVC: `/Od`, GCC / Clang: `-O0`).
-- `1`: Light optimization (MSVC: `/O2`, GCC / Clang: `-O1`). MSVC has no equivalent level, so it maps to `/O2`.
-- `2`: Standard optimization (MSVC: `/O2`, GCC / Clang: `-O2`).
-- `3`: Maximum optimization (MSVC: `/O2`, GCC / Clang: `-O3`).
-- `"s"`: Optimize for size (MSVC: `/O1`, GCC / Clang: `-Os`).
+- `0`: No optimization.
+- `1`: Light optimization.
+- `2`: Standard optimization.
+- `3`: Maximum optimization.
+- `"s"`: Optimize for size.
 
 `debug-info`:
 
-- `true`: Emits debug info (MSVC: `/Z7` at compile time + `/DEBUG` at link time, GCC / Clang: `-g`). MSVC does not use `/Zi` because PDB writes conflict in parallel builds and it cannot be cached by sccache.
+- `true`: Emits debug info.
 - `false`: Does not emit it.
 
 `debug-assertions` (same name as Cargo):
@@ -363,7 +363,7 @@ Values of `opt-level` (the per-compiler mapping is an initial proposal):
 
 `lto`:
 
-- `true`: Uses link-time optimization (MSVC: `/GL` + `/LTCG`, GCC / Clang: `-flto`). Opt-in because it lengthens link time.
+- `true`: Uses link-time optimization. Opt-in because it lengthens link time.
 - `false`: Not used. Default (same as Cargo).
 
 ## .cuno/config.toml

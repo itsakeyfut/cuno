@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob ca7371fe1a981422b8f06179ea781ba28e527a4b -->
+<!-- translated-from: docs/ja/specs/build.md @ blob bdaf89c7d1ec4710c128e0f3a167e3961a49a96f -->
 
 # Build
 
@@ -25,18 +25,70 @@ Include paths that cuno always adds, separately from `include-dirs` in `cuno.tom
 | `include/` | After library support (Later). For public headers |
 | Bundled header location (`<cuno home>/include/<cuno version>/`) | **Always added, even in normal builds**, so that writing `#include <cuno/test.h>` without wrapping it in `#ifdef CUNO_TEST` does not break the normal build |
 
-## Always-on flags
+## Settings and flags
 
-Flags that cuno always adds, independent of `cuno.toml` settings.
+How the settings in `cuno.toml`, and the flags cuno always adds, become each compiler's arguments. The flags are written only here; other documents link to this section. `clang` is the GNU-style Clang (targeting `x86_64-pc-windows-msvc`). Every mapping was checked with the real cl, clang-cl and clang.
 
-| Compiler | Flag | Reason |
-|---|---|---|
-| MSVC / clang-cl | `/nologo` | Suppresses the startup logo |
-| MSVC / clang-cl | `/utf-8` | Sets the source and execution character sets to UTF-8. Prevents UTF-8 sources from being read as CP932 on Japanese Windows |
-| MSVC / clang-cl | `/Zc:__cplusplus` | Makes the `__cplusplus` macro report the correct standard value |
-| MSVC / clang-cl (C++ with `exceptions = true`) | `/EHsc` | Standard C++ exception handling |
+### Always-on flags
 
-- For flags determined by settings (warnings, optimization, debug info, C runtime, exceptions, RTTI, subsystem, etc.), see [manifest.md](manifest.md).
+| When | MSVC | clang-cl | clang |
+|---|---|---|---|
+| Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` |
+| For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
+| Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
+| Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
+| Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
+
+- The flags that find header dependencies (`/showIncludes` etc.) are decided with the build engine (M2) ([architecture.md](architecture.md)), and are not in this table.
+
+### Compiling
+
+| Setting | MSVC | clang-cl | clang |
+|---|---|---|---|
+| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++latest` | Same as MSVC | `-std=c++17` / `-std=c++20` / `-std=c++23` |
+| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest` | Same as MSVC | `-std=c11` / `-std=c17` / `-std=c23` |
+| `warnings` `default` / `all` / `pedantic` | None / `/W4` / `/W4 /permissive-` | None / `/W4` / `/W4 -Wpedantic` | None / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
+| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` |
+| `defines`, test builds (`CUNO_TEST`) | `/D<define>` | `/D<define>` | `-D<define>` |
+| Include paths (`src/`, the bundled header location, `include-dirs`, in that order) | `/I<dir>` | `/I<dir>` | `-I<dir>` |
+| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` |
+| `exceptions` (C++) `true` / `false` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | None / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
+| `rtti = false` (C++) | `/GR-` | `/GR-` | `-fno-rtti` |
+| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | Same as MSVC | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
+| `debug-info = true` | `/Z7` | `/Z7` | `-g` |
+| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
+| `lto = true` | `/GL` | `-flto` | `-flto` |
+| `[build.<compiler>] flags` | Last, as given | Last, as given | Last, as given |
+
+### Linking
+
+Linking goes through the compiler driver (so that each driver adds the C runtime and other libraries itself).
+
+| Setting | MSVC | clang-cl | clang |
+|---|---|---|---|
+| Linker | `link.exe` (arguments after `/link`) | `-fuse-ld=lld`, `lld-link` (arguments after `/link`) | `-fuse-ld=lld` |
+| Output | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
+| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
+| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
+| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
+| `debug-info = true` | `/DEBUG` | `/DEBUG` | `-g` |
+| `lto = true` | `/LTCG` | `-flto` | `-flto` |
+| `runtime` | None (the objects say it) | None (the objects say it) | `-fms-runtime-lib=` as for compiling |
+| `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Wl,<flag>` |
+
+### Rationale
+
+- `/utf-8`: prevents UTF-8 sources from being read as CP932 on Japanese Windows.
+- `/Zc:__cplusplus`: without it, cl sets `__cplusplus` to `199711` even with `/std:c++20`.
+- `--target=x86_64-pc-windows-msvc`: builds with the same ABI as MSVC, so libraries built with MSVC can be linked in ([toolchain.md](toolchain.md)).
+- `/TC` / `/TP`, `-x c` / `-x c++`: compile in the package's language whatever the extension (the same way [dev-tools.md](dev-tools.md) treats `.h` as the package's language).
+- `c++23` and `c23` use the "latest" switches on MSVC and clang-cl. cl only warns about a `/std` it does not know and compiles with the old standard, and clang-cl does not accept `/std:c++23` or `/std:c23`. In exchange, once MSVC's latest moves past C++23, a `c++23` project builds with that newer standard.
+- `-fms-runtime-lib`: without it, the GNU-style `clang` uses the static C runtime, which contradicts the `runtime = "dynamic"` default.
+- `_HAS_EXCEPTIONS=0`: when exceptions are disabled, the standard library uses its non-throwing implementation whatever the compiler.
+- `-fuse-ld=lld`: without it, clang-cl uses `link.exe` and refuses LTO.
+- `debug-info` does not use `/Zi`, because PDB writes conflict in parallel builds and it cannot be cached by sccache. `clang -g` emits CodeView and links as with `/DEBUG`.
+- `opt-level = 1` is `/O2` on MSVC, which has no equivalent level.
+- The debug C runtime (`/MDd`) is not the default, because mixing it with prebuilt dependencies causes link errors (the same policy as Rust).
 
 ## Custom build steps (three layers)
 
