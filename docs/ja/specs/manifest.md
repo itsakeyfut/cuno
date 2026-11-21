@@ -150,6 +150,8 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 `lang` と合わない `edition`（例: `lang = "c"` で `edition = "c++20"`）はエラー。
 
+`edition` は `lang` の言語のソースに使う。もう一方の言語のソース（C++ のパッケージの `.c` など）は、その言語の既定の規格でコンパイルする（[project-layout.md](project-layout.md#対象ファイル)）。
+
 ### `[toolchain]`
 
 | 項目 | 必須 | 既定値 | 説明 |

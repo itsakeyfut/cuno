@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 1ba26d4cc6befd777bf905365254d21f4a32f1b8 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 6e5b21827a131fad6b62da11646e52b3b5c307e0 -->
 
 # Configuration Files
 
@@ -151,6 +151,8 @@ Values of `edition`:
 - `c23`: C23. Only if the compiler supports it.
 
 An `edition` that does not match `lang` (e.g. `edition = "c++20"` with `lang = "c"`) is an error.
+
+`edition` applies to sources in `lang`'s language. Sources in the other language (a `.c` in a C++ package, for example) are compiled with that language's default standard ([project-layout.md](project-layout.md#target-files)).
 
 ### `[toolchain]`
 
