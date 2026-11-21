@@ -1363,6 +1363,31 @@ mod tests {
         assert_eq!(*never.calls.borrow(), 0);
     }
 
+    /// MSVC keeps the toolset of the cl selected, even when
+    /// `[toolchain.version]` leaves out a newer one; a Clang gets the newest.
+    ///
+    /// Mutation: give MSVC the newest toolset instead of its own, or a Clang
+    /// none; this test fails.
+    #[test]
+    fn msvc_keeps_its_own_toolset_and_clang_gets_the_newest() {
+        let installs = [install("VS", &[v(19, 44, 1), v(19, 52, 1)])];
+        let llvm = [clang(Tool::Clang, "clang", v(22, 1, 8))];
+        let older = Constraints {
+            msvc: Some(VersionReq::parse("msvc", "<19.50").unwrap()),
+            ..Default::default()
+        };
+        let msvc = pick(&asking("msvc"), found(&installs, &llvm), &older).unwrap();
+        assert_eq!(msvc.version, v(19, 44, 1));
+        let toolset = msvc.msvc.unwrap();
+        assert_eq!(
+            (toolset.cl_version, toolset.cl()),
+            (v(19, 44, 1), msvc.executable)
+        );
+
+        let clang = pick(&asking("clang"), found(&installs, &llvm), &older).unwrap();
+        assert_eq!(clang.msvc.unwrap().cl_version, v(19, 52, 1));
+    }
+
     /// `copy_of` answers a Clang without Visual Studio (doctor's `Info`
     /// lines need it when Visual Studio is missing), holds every copy to
     /// cuno's minimum and to the constraints passed, and gives MSVC its own

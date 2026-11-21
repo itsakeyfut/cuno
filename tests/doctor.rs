@@ -415,8 +415,7 @@ fn the_toolchain_settings_constrain_the_selection() {
             "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n\
              help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
              error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
-             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n        \
-             Info msvc not found\n    \
+             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n    \
              Finished 2 problems found\n",
         );
 }
@@ -988,4 +987,103 @@ int main(void) { puts(\"clang version 16.0.6\");          puts(\"Target: x86_64-
         "{}",
         run.stderr
     );
+}
+
+/// When clang is asked for and Visual Studio cannot be used, selection
+/// stops before it looks at clang, yet a configured clang that cannot be
+/// used is still reported; with no Visual Studio at all the MSVC `Info`
+/// line says `not found`, and after a wrong `[toolchain.paths] msvc` there
+/// is no MSVC line to contradict the error.
+///
+/// Mutation: skip the configured clang when selection fails at Visual
+/// Studio, list a missing Visual Studio as `not usable`, or print an MSVC
+/// `Info` line after its configured path was reported; this test fails.
+#[test]
+fn a_configured_clang_is_reported_when_visual_studio_stops_selection() {
+    let fake_clang = "clang version 16.0.6\nTarget: x86_64-pc-windows-msvc";
+    let below = |fake: &Path| {
+        format!(
+            "error: [toolchain.paths] clang is {}, but 16.0.6 does not satisfy >=17.0.0 (cuno's minimum)\n",
+            fake.display()
+        )
+    };
+
+    // No Visual Studio at all.
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang", "")]);
+    let fake = project.path().join("fake/clang.cmd");
+    let empty = project.home().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let project = project
+        .file("fake/clang.cmd", &fake_tool(fake_clang, 0))
+        .file(".cuno/config.toml", &config);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["doctor", "--compiler", "clang"])
+        .env("ProgramFiles(x86)", &empty);
+    let run = project.run_command(cmd);
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert_eq!(
+        run.stderr.matches(&below(&fake)).count(),
+        1,
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("        Info msvc not found\n"),
+        "{}",
+        run.stderr
+    );
+
+    // A wrong `[toolchain.paths] msvc`.
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = format!(
+        "{}msvc = 'C:/nope/VS'\n",
+        configured(&project, &[("clang", "")])
+    );
+    let fake = project.path().join("fake/clang.cmd");
+    let run = project
+        .file("fake/clang.cmd", &fake_tool(fake_clang, 0))
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "clang"]);
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert!(
+        run.stderr.starts_with(
+            "error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(
+        run.stderr.matches(&below(&fake)).count(),
+        1,
+        "{}",
+        run.stderr
+    );
+    assert_eq!(
+        run.stderr.matches("[toolchain.paths] msvc is").count(),
+        1,
+        "{}",
+        run.stderr
+    );
+    assert!(!run.stderr.contains("Info msvc"), "{}", run.stderr);
+}
+
+/// `[toolchain.version]` holds only the compiler used: a requirement no
+/// installed clang meets changes nothing while MSVC is asked for.
+///
+/// Mutation: apply `[toolchain.version]` to the `Info` lines; this test
+/// fails.
+#[test]
+fn the_info_lines_ignore_toolchain_version() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let expected = healthy(&selected("msvc"), "--compiler");
+    Project::new()
+        .file(
+            "cuno.toml",
+            &manifest("[toolchain.version]\nclang = \">=99\"\nclang-cl = \">=99\"\n"),
+        )
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(0, "", &expected);
 }

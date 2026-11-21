@@ -102,7 +102,7 @@ pub fn doctor(
     if !no_llvm {
         tools(&llvm, diagnosed.stl.as_ref(), host, &runner, &mut problems);
     }
-    others(diagnosed.attempted, found, !no_llvm, host, &mut problems);
+    others(&diagnosed, found, !no_llvm, host, &mut problems);
 
     let count = problems.count;
     problems.shell.status("Finished", finished(count));
@@ -124,6 +124,10 @@ struct Diagnosed {
     /// The compiler asked for (selected, or reported as a problem), if the
     /// name given was one cuno knows.
     attempted: Option<CompilerKind>,
+    /// Whether selection already reported that the Visual Studio in
+    /// `[toolchain.paths] msvc` cannot be used, which the MSVC `Info` line
+    /// would only repeat.
+    vs_reported: bool,
     /// What clang-tidy's standard library check needs, when it is to be
     /// made: a compiler, a Windows environment and a C++ project or none.
     stl: Option<StlInputs>,
@@ -165,22 +169,39 @@ fn diagnose(
     // The kind asked for is diagnosed here, and so has no `Info` line, even
     // when its selection fails.
     let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
-    let failed = Diagnosed {
-        attempted,
-        stl: None,
-    };
     let constraints = settings.map(|s| s.constraints.clone()).unwrap_or_default();
     let selected = match select::select(&choices, found, &constraints, host) {
         Ok(selected) => selected,
-        // Already reported: no Visual Studio is what vswhere's failure means.
-        Err(ToolchainError::NoVisualStudio) if no_visual_studio => return failed,
         Err(error) => {
-            problems.report(&error);
-            return failed;
+            let vs_error = matches!(
+                error,
+                ToolchainError::NoVisualStudio | ToolchainError::VisualStudioNotAt { .. }
+            );
+            // Already reported: no Visual Studio is what vswhere's failure
+            // means.
+            if !(no_visual_studio && matches!(error, ToolchainError::NoVisualStudio)) {
+                problems.report(&error);
+            }
+            // Selection stops at Visual Studio before it looks at a Clang, and
+            // the kind asked for has no `Info` line: a configured copy of it
+            // that cannot be used is reported here, or nowhere.
+            if vs_error
+                && let Some(kind @ (CompilerKind::Clang | CompilerKind::ClangCl)) = attempted
+                && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
+                    select::copy_of(kind, found, &constraints, host)
+            {
+                problems.report(&unusable);
+            }
+            return Diagnosed {
+                attempted,
+                vs_reported: matches!(error, ToolchainError::VisualStudioNotAt { .. }),
+                stl: None,
+            };
         }
     };
     let mut diagnosed = Diagnosed {
         attempted,
+        vs_reported: false,
         stl: None,
     };
     // Without a readable configuration, automatic selection is not what the
@@ -312,10 +333,11 @@ fn tools(
 /// with the reason. cuno's minimum applies, `[toolchain.version]` does not
 /// (only the compiler used is held to it). Never a problem, except a copy
 /// written in `[toolchain.paths]` that cannot be used (commands.md, "`cuno
-/// doctor`"). Without `looked_for_llvm` (a configured LLVM path had no file,
+/// doctor`"), which is reported once: no MSVC line follows selection's own
+/// report of the configured Visual Studio. Without `looked_for_llvm` (a configured LLVM path had no file,
 /// already reported), no Clang line is printed: nothing was looked for.
 fn others(
-    attempted: Option<CompilerKind>,
+    diagnosed: &Diagnosed,
     found: Found<'_>,
     looked_for_llvm: bool,
     host: HostOs,
@@ -326,20 +348,24 @@ fn others(
         CompilerKind::Clang,
         CompilerKind::ClangCl,
     ] {
-        if Some(kind) == attempted || (kind != CompilerKind::Msvc && !looked_for_llvm) {
+        if Some(kind) == diagnosed.attempted
+            || (kind != CompilerKind::Msvc && !looked_for_llvm)
+            || (kind == CompilerKind::Msvc && diagnosed.vs_reported)
+        {
             continue;
         }
         let line = match select::copy_of(kind, found, &Default::default(), host) {
             Ok((_, version, _)) => format!("{} {version} (not selected)", kind.name()),
-            Err(error @ ToolchainError::ConfiguredToolUnusable { .. }) => {
+            Err(
+                error @ (ToolchainError::ConfiguredToolUnusable { .. }
+                | ToolchainError::VisualStudioNotAt { .. }),
+            ) => {
                 problems.report(&error);
                 continue;
             }
-            Err(
-                ToolchainError::CompilerNotFound { .. }
-                | ToolchainError::NoVisualStudio
-                | ToolchainError::VisualStudioNotAt { .. },
-            ) => format!("{} not found", kind.name()),
+            Err(ToolchainError::CompilerNotFound { .. } | ToolchainError::NoVisualStudio) => {
+                format!("{} not found", kind.name())
+            }
             Err(error) => format!("{} not usable: {error}", kind.name()),
         };
         problems.shell.status("Info", line);
