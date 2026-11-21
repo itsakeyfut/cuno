@@ -168,6 +168,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 - プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合はプロジェクトの層がない優先順位で選ぶ（[toolchain.md](toolchain.md#選択)）。
 - 設定ファイル（`cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、MVP で未対応のコンパイラ（`gcc` / `safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
+  - 設定ファイルを読めないときは、`--compiler`、`CUNO_COMPILER` と自動選択だけでコンパイラを選ぶ。自動選択になった場合は、設定で選んだコンパイラと取り違えないよう、`Selected` の理由に `automatic selection; the configuration could not be read` と書く。
   - 理由: `doctor` は環境や設定がおかしいときに実行するものなので、設定の誤りで止まると役に立たない。
 
 | 判定 | 条件 | 終了コード |
@@ -179,6 +180,31 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | 情報 | 使用しないコンパイラが見つからない（例: MSVC を使う環境で Clang がない） | 影響しない |
 
 問題がなければ終了コード `0`。
+
+#### `cuno doctor` の出力
+
+他のコマンドの状態行（[出力](#出力)）と同じ形で、1 項目を 1 行にする。すべて標準エラーに出す（標準出力は、将来プログラムが読む形式の出力のために空けておく）。
+
+```
+    Selected clang-cl 22.1.8 (--compiler)
+             C:\Program Files\LLVM\bin\clang-cl.exe
+       Using MSVC 19.52.37029 (C:\Program Files\Microsoft Visual Studio\18\Community)
+       Using Windows SDK 10.0.28000.0
+    Accepted by the MSVC standard library
+       Found clang-format 22.1.8
+       Found clang-tidy 22.1.8
+        Info msvc 19.52.37029 (not selected)
+        Info clang 22.1.8 (not selected)
+    Finished no problems found
+```
+
+- `Selected`: 選ばれたコンパイラ、そのバージョン、選ばれた理由（`--compiler`、`CUNO_COMPILER`、設定ファイルのどれか、または `automatic selection`）。次の行に実行ファイルの場所。
+- `Using`: 使う MSVC のツールセット（cl のバージョンと Visual Studio の場所。MSVC を選んだときは `Selected` の行が兼ねる）と Windows SDK。
+- `Accepted`: Clang を選んだとき、MSVC 標準ライブラリがそれを受け付けたこと（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。
+- `Found`: clang-format と clang-tidy。
+- `Info`: 選ばれていないコンパイラ（見つからなければ `not found`）。終了コードに影響しない。
+- 問題は、見つかった場所で `error:` と `help:` の行として出し、診断は続ける。設定ファイルの警告は `warning:` として最初に出す。
+- 最後の行は `Finished no problems found`、問題があれば `Finished <数> problems found`（1 件なら `problem`）。
 
 ## 出力
 

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 4558c38c230634a9138461fd5f1869de081a261d -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 30b815409aad56374547b23465d98b1d08463019 -->
 
 # Commands
 
@@ -170,6 +170,7 @@ Diagnoses the environment and shows a fix for each problem.
 
 - Can be run outside a project (where no `cuno.toml` is found). In that case, the compiler is chosen by the precedence without the project layers ([toolchain.md](toolchain.md#selection)).
 - Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported in the MVP (`gcc` / `safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
+  - When a configuration file cannot be read, the compiler is chosen from `--compiler`, `CUNO_COMPILER` and automatic selection only. When that comes to automatic selection, the reason on the `Selected` line says `automatic selection; the configuration could not be read`, so it is not taken for the compiler the configuration chose.
   - Rationale: `doctor` is what users run when the environment or settings are wrong, so stopping at a configuration error would make it useless.
 
 | Result | Condition | Exit code |
@@ -181,6 +182,31 @@ Diagnoses the environment and shows a fix for each problem.
 | Info | A compiler that is not used is not found (e.g. no Clang in an environment that uses MSVC) | No effect |
 
 If there are no problems, the exit code is `0`.
+
+#### What `cuno doctor` prints
+
+One line per item, in the same form as the status lines of the other commands ([Output](#output)). Everything goes to stderr (stdout is kept for a future output that programs read).
+
+```
+    Selected clang-cl 22.1.8 (--compiler)
+             C:\Program Files\LLVM\bin\clang-cl.exe
+       Using MSVC 19.52.37029 (C:\Program Files\Microsoft Visual Studio\18\Community)
+       Using Windows SDK 10.0.28000.0
+    Accepted by the MSVC standard library
+       Found clang-format 22.1.8
+       Found clang-tidy 22.1.8
+        Info msvc 19.52.37029 (not selected)
+        Info clang 22.1.8 (not selected)
+    Finished no problems found
+```
+
+- `Selected`: the compiler chosen, its version, and why it was chosen (`--compiler`, `CUNO_COMPILER`, one of the configuration files, or `automatic selection`). Its executable on the next line.
+- `Using`: the MSVC toolset used (cl's version and the Visual Studio location; when MSVC is selected, the `Selected` line serves for it) and the Windows SDK.
+- `Accepted`: when Clang is selected, that the MSVC standard library accepts it ([toolchain.md](toolchain.md#minimum-compiler-versions)).
+- `Found`: clang-format and clang-tidy.
+- `Info`: the compilers not selected (`not found` when absent). They do not affect the exit code.
+- A problem is printed where it is found, as an `error:` and a `help:` line, and diagnosis continues. Warnings about configuration files come first, as `warning:`.
+- The last line is `Finished no problems found`, or `Finished <n> problems found` (`problem` for one).
 
 ## Output
 

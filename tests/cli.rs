@@ -30,7 +30,11 @@ fn cuno(args: &[&str]) -> Run {
 const HELP: &str = "\
 One comfortable tool for C/C++ development.
 
-Usage: cuno [OPTIONS]
+Usage: cuno [OPTIONS] [COMMAND]
+
+Commands:
+  doctor  Diagnose the environment and show a fix for each problem
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
       --color <WHEN>  Coloring [possible values: auto, always, never]
@@ -75,7 +79,7 @@ fn unknown_option_is_a_usage_error() {
         "\
 error: unexpected argument '--unknown' found
 
-Usage: cuno [OPTIONS]
+Usage: cuno [OPTIONS] [COMMAND]
 
 For more information, try '--help'.
 ",
@@ -94,9 +98,9 @@ fn unexpected_argument_is_a_usage_error() {
         2,
         "",
         "\
-error: unexpected argument 'foo' found
+error: unrecognized subcommand 'foo'
 
-Usage: cuno [OPTIONS]
+Usage: cuno [OPTIONS] [COMMAND]
 
 For more information, try '--help'.
 ",

@@ -98,11 +98,18 @@ impl Project {
     /// unless [`hermetic`] removes them; used for compilers, which need an
     /// environment of their own (see [`compilers`]). `CUNO_HOME` is always
     /// [`Project::home`].
-    pub fn run_command(&self, mut cmd: Command) -> Run {
+    pub fn run_command(&self, cmd: Command) -> Run {
+        self.run_command_with(cmd, &[])
+    }
+
+    /// [`Project::run_command`] with `vars` set after the environment is
+    /// made hermetic, so that a `CUNO_*` variable a test sets survives.
+    pub fn run_command_with(&self, mut cmd: Command, vars: &[(&str, &str)]) -> Run {
         cmd.current_dir(self.path());
         hermetic(&mut cmd, std::env::vars_os().map(|(name, _)| name));
         // After `hermetic`, which removes every inherited `CUNO_*` variable.
         cmd.env("CUNO_HOME", &self.home);
+        cmd.envs(vars.iter().copied());
         let output = cmd.output().expect("the program should start");
         Run {
             code: output.status.code(),
