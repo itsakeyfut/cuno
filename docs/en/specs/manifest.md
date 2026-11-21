@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob bf2e321488c5bc3b13e1d1aa9332fd6aadb61bd8 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob fd087a752f060fc6a9552a057852e05a55b2045e -->
 
 # Configuration Files
 
@@ -92,7 +92,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 
 **Warn and ignore** (ignoring them does not change the meaning of the build output):
 
-- `[build] unity`, `[build] precompiled-header`
+- `[build] unity`, `[build] precompiled-header` (left at their defaults `false` / `""`, nothing is ignored, so there is no warning)
 - `[alias]` and `[build] cache` in `.cuno/config.toml` (MVP does not use a build cache. The default value `auto` also has no effect in MVP)
 
 **Error** (exit code 3. Ignoring them would silently build something different from what the user intended):
@@ -101,7 +101,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - Custom profiles (`inherits`, and `--profile` other than `dev` / `release`)
 - `[lib]`
-- `[[build.rule]]` (custom rules)
+- `[[build.rule]]` (custom rules; the same when written under `[platform.<OS>.build]` / `[profile.<name>.build]`)
 - `[target.<target>]` in `.cuno/config.toml`, `--target`
 - `[dependencies]`
 
