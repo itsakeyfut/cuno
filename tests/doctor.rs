@@ -220,9 +220,6 @@ fn an_unsupported_compiler_is_a_problem() {
 /// `NoVisualStudio` as well, or exit 0; this test fails.
 #[test]
 fn a_missing_visual_studio_is_reported_not_fatal() {
-    if !llvm_tools_here() {
-        return;
-    }
     let project = Project::new();
     let empty = project.path().join("empty");
     std::fs::create_dir(&empty).unwrap();
@@ -231,18 +228,55 @@ fn a_missing_visual_studio_is_reported_not_fatal() {
         .env("ProgramFiles(x86)", &empty);
     let run: Run = project.run_command(cmd);
     let vswhere = empty.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
-    let help = "help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/\n";
+    let help = "help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+";
+
+    // Without Visual Studio its bundled LLVM is not found either (on CI it
+    // is the only one), so what is expected is what is found without it.
+    let llvm = find_llvm_tools(
+        &env(),
+        HostOs::Windows,
+        &ExplicitPaths::default(),
+        &[],
+        &SystemRunner::new(),
+    )
+    .unwrap();
+    let mut problems = 1;
+    let mut tools = String::new();
+    for tool in [Tool::ClangFormat, Tool::ClangTidy] {
+        tools += &match select::select_tool(tool, &llvm, HostOs::Windows) {
+            Ok(chosen) => format!("       Found {} {}\n", tool.name(), chosen.version),
+            Err(error) => {
+                use cuno_core::CunoError;
+                problems += 1;
+                format!("error: {error}\nhelp: {}\n", error.help().unwrap())
+            }
+        };
+    }
+    let mut info = String::new();
+    for tool in [Tool::Clang, Tool::ClangCl] {
+        info += &match select::select_tool(tool, &llvm, HostOs::Windows) {
+            Ok(chosen) => format!(
+                "        Info {} {} (not selected)\n",
+                tool.name(),
+                chosen.version
+            ),
+            Err(_) => format!("        Info {} not found\n", tool.name()),
+        };
+    }
+    let finished = if problems == 1 {
+        "1 problem found".to_owned()
+    } else {
+        format!("{problems} problems found")
+    };
     run.assert(
         1,
         "",
         &format!(
-            "error: vswhere.exe was not found at {}\n{help}{}        \
-             Info msvc not found\n{}{}    \
-             Finished 1 problem found\n",
+            "error: vswhere.exe was not found at {}\n{help}{tools}        \
+             Info msvc not found\n{info}    \
+             Finished {finished}\n",
             vswhere.display(),
-            found_tools(),
-            info(select::CompilerKind::Clang),
-            info(select::CompilerKind::ClangCl),
         ),
     );
 }
