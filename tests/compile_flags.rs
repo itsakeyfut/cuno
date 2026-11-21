@@ -374,3 +374,140 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
         }
     }
 }
+
+/// Links a program against a library built here, found through `lib-dirs`,
+/// with a `link-flags` entry that holds a comma, on each driver.
+///
+/// Mutation: drop `lib-dirs`, or pass `link-flags` to clang as `-Wl,`
+/// (which splits `/OPT:REF,ICF`); this test fails.
+#[test]
+fn lib_dirs_and_link_flags_reach_the_linker() {
+    let (settings_build, profile) = settings();
+    for (kind, program, env, _) in drivers() {
+        let libs = tempfile::tempdir().unwrap();
+        let source = libs.path().join("answer.c");
+        std::fs::write(&source, "int answer(void) { return 42; }\n").unwrap();
+        let object = libs.path().join("answer.obj");
+        let input = CompileInput {
+            kind,
+            lang: Lang::C,
+            edition: Edition::C17,
+            build: &settings_build,
+            profile: &profile,
+            include_dirs: &[],
+            test: false,
+            mode: Mode::Compile,
+        };
+        let status = Command::new(&program)
+            .args(compile_args(&input, &source, Some(&object)))
+            .current_dir(libs.path())
+            .env_clear()
+            .envs(env.vars())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{kind:?}");
+        let lib_exe = std::env::split_paths(env.get("PATH").unwrap())
+            .map(|d| d.join("lib.exe"))
+            .find(|p| p.is_file())
+            .unwrap();
+        let mut out = std::ffi::OsString::from("/OUT:");
+        out.push(libs.path().join("answer.lib"));
+        let status = Command::new(lib_exe)
+            .args([std::ffi::OsString::from("/NOLOGO"), out, object.into()])
+            .env_clear()
+            .envs(env.vars())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let linked = BuildSettings {
+            links: vec!["answer".into()],
+            lib_dirs: vec![libs.path().to_owned()],
+            link_flags: vec!["/OPT:REF,ICF".into()],
+            ..settings_build.clone()
+        };
+        let input = CompileInput {
+            lang: Lang::Cxx,
+            edition: Edition::Cxx20,
+            build: &linked,
+            ..input
+        };
+        let text = "extern \"C\" int answer(void);\nint main() { return answer(); }\n";
+        let (_dir, exe) = build(kind, &program, &env, &input, Subsystem::Console, text);
+        let code = Command::new(&exe).status().unwrap().code();
+        assert_eq!(code, Some(42), "{kind:?}");
+    }
+}
+
+/// A program with `WinMain` and no `main` under the default console
+/// subsystem fails to link on every driver, instead of becoming a GUI
+/// program with no console; and the static C runtime leaves no
+/// VCRUNTIME140.dll import.
+///
+/// Mutation: leave the console subsystem unstated, or link the dynamic C
+/// runtime for `runtime = "static"`; this test fails.
+#[test]
+fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
+    let (settings_build, profile) = settings();
+    let win_main = "#include <windows.h>\nint WINAPI WinMain(HINSTANCE a, HINSTANCE b, LPSTR c, int d) { return 0; }\n";
+    for (kind, program, env, _) in drivers() {
+        let input = CompileInput {
+            kind,
+            lang: Lang::Cxx,
+            edition: Edition::Cxx20,
+            build: &settings_build,
+            profile: &profile,
+            include_dirs: &[],
+            test: false,
+            mode: Mode::Compile,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("main.cpp");
+        std::fs::write(&source, win_main).unwrap();
+        let object = dir.path().join("main.obj");
+        let run = |args: Vec<std::ffi::OsString>| {
+            Command::new(&program)
+                .args(args)
+                .current_dir(dir.path())
+                .env_clear()
+                .envs(env.vars())
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        let mut lenient = settings_build.clone();
+        lenient.warnings_as_errors = false;
+        let compile = CompileInput {
+            build: &lenient,
+            ..input
+        };
+        assert!(
+            run(compile_args(&compile, &source, Some(&object))),
+            "{kind:?}"
+        );
+        let link = LinkInput {
+            kind,
+            build: &lenient,
+            profile: &profile,
+            subsystem: Subsystem::Console,
+        };
+        let linked = run(link_args(&link, &[object], &dir.path().join("main.exe")));
+        assert!(!linked, "{kind:?} linked WinMain as a console program");
+
+        for (runtime, imports) in [(Runtime::Dynamic, true), (Runtime::Static, false)] {
+            let with_runtime = BuildSettings {
+                runtime,
+                ..settings_build.clone()
+            };
+            let input = CompileInput {
+                build: &with_runtime,
+                ..input
+            };
+            let (_dir, exe) = build(kind, &program, &env, &input, Subsystem::Console, CXX);
+            let bytes = std::fs::read(&exe).unwrap().to_ascii_lowercase();
+            let found = bytes.windows(16).any(|w| w == b"vcruntime140.dll");
+            assert_eq!(found, imports, "{kind:?} {runtime:?}");
+        }
+    }
+}
