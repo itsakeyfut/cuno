@@ -839,4 +839,37 @@ fn a_configured_compiler_is_the_one_diagnosed() {
     assert_eq!(run.code, Some(1), "{}", run.stderr);
     assert!(run.stderr.starts_with(&problem), "{}", run.stderr);
     assert!(!run.stderr.contains("Selected"), "{}", run.stderr);
+    // Found by selection and by the Info lines alike, reported once.
+    assert_eq!(run.stderr.matches(&problem).count(), 1, "{}", run.stderr);
+}
+
+/// A configured clang that cannot be used is a problem even while MSVC is
+/// selected, in place of its `Info` line, so it is not first found when
+/// switching to it (commands.md, "`cuno doctor`").
+///
+/// Mutation: list it as `Info clang not found`, or leave it out; this test
+/// fails.
+#[test]
+fn an_unusable_configured_compiler_is_a_problem_even_unselected() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang", "")]);
+    let fake = project.path().join("fake/clang.cmd");
+    let expected = healthy(&selected("msvc"), "--compiler")
+        .replace(
+            &info(select::CompilerKind::Clang),
+            &format!(
+                "error: [toolchain.paths] clang is {}, but it did not run\n\
+                 help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n",
+                fake.display()
+            ),
+        )
+        .replace("no problems found", "1 problem found");
+    project
+        .file("fake/clang.cmd", &fake_tool("", 1))
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "msvc"])
+        .assert(1, "", &expected);
 }

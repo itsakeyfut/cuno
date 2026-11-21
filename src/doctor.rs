@@ -13,14 +13,22 @@ use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, CompilerKind, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
-/// Prints `error:` and `help:` and counts problems.
+/// Prints `error:` and `help:` and counts problems, each once: a configured
+/// tool that cannot be used is found both by selection and by the `Info`
+/// lines.
 struct Problems<'a> {
     shell: &'a mut Shell,
     count: usize,
+    seen: Vec<String>,
 }
 
 impl Problems<'_> {
     fn report(&mut self, error: &dyn CunoError) {
+        let message = error.to_string();
+        if self.seen.contains(&message) {
+            return;
+        }
+        self.seen.push(message);
         self.shell.error(error);
         if let Some(help) = error.help() {
             self.shell.help(help);
@@ -38,7 +46,11 @@ pub fn doctor(
     host: HostOs,
     shell: &mut Shell,
 ) -> usize {
-    let mut problems = Problems { shell, count: 0 };
+    let mut problems = Problems {
+        shell,
+        count: 0,
+        seen: Vec::new(),
+    };
     let runner = SystemRunner::new();
 
     let cli = CliSettings {
@@ -331,12 +343,23 @@ fn others(
                     .ok()
                     .map(|s| s.version)
             }
-            CompilerKind::Clang => select::select_tool(Tool::Clang, found.llvm, host)
-                .ok()
-                .map(|t| t.version),
-            CompilerKind::ClangCl => select::select_tool(Tool::ClangCl, found.llvm, host)
-                .ok()
-                .map(|t| t.version),
+            CompilerKind::Clang | CompilerKind::ClangCl => {
+                let tool = if kind == CompilerKind::Clang {
+                    Tool::Clang
+                } else {
+                    Tool::ClangCl
+                };
+                match select::select_tool(tool, found.llvm, host) {
+                    Ok(chosen) => Some(chosen.version),
+                    // What `[toolchain.paths]` names is a problem even unused
+                    // (commands.md, "`cuno doctor`").
+                    Err(error @ ToolchainError::ConfiguredToolUnusable { .. }) => {
+                        problems.report(&error);
+                        continue;
+                    }
+                    Err(_) => None,
+                }
+            }
         };
         let line = match version {
             Some(version) => format!("{} {version} (not selected)", kind.name()),
