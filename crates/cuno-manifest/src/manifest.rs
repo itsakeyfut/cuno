@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cuno_core::CunoError;
+use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Edition, Lang, OptLevel, Runtime, Subsystem, Warnings};
 use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
@@ -173,6 +174,20 @@ choices!(
     Gcc = "gcc", /// safec.
     Safec = "safec" }
 );
+/// The name `[build.<compiler>]` and `[toolchain.version]` use for each
+/// compiler cuno can build with: the one place a compiler kind is mapped to
+/// the names `cuno.toml` is read with (which also include compilers cuno
+/// recognises but cannot build with yet).
+impl From<CompilerKind> for CompilerName {
+    fn from(kind: CompilerKind) -> CompilerName {
+        match kind {
+            CompilerKind::Msvc => CompilerName::Msvc,
+            CompilerKind::Clang => CompilerName::Clang,
+            CompilerKind::ClangCl => CompilerName::ClangCl,
+        }
+    }
+}
+
 choices!(
     /// A profile; only the two built in exist so far.
     Profile { /// The default.
@@ -772,6 +787,21 @@ fn valid_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use cuno_core::ExitClass;
+
+    /// Every compiler kind maps to the name of its own `[build.<compiler>]`
+    /// table, which is also the kind's own name.
+    ///
+    /// Mutation: swap or change any arm of `From<CompilerKind> for
+    /// CompilerName`; this test fails.
+    #[test]
+    fn each_compiler_kind_reads_its_own_build_table() {
+        for kind in CompilerKind::ALL {
+            assert_eq!(
+                CompilerName::parse(kind.name()),
+                Some(CompilerName::from(kind))
+            );
+        }
+    }
 
     const MINIMAL: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
 

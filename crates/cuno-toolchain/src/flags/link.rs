@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, OptLevel, ProfileSettings, Subsystem};
-use crate::select::CompilerKind;
+use crate::compiler::{CompilerKind, Family, Syntax};
 
 /// What one link of the build is made from.
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +65,7 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
 
     args.extend(objects.iter().map(OsString::from));
 
-    if input.kind == CompilerKind::Clang {
+    if input.kind.syntax() == Syntax::Gnu {
         args.extend(["-o".into(), exe.into()]);
         for lib in &build.links {
             args.push(format!("-l{lib}").into());
@@ -116,13 +116,13 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
     );
     if profile.debug_info {
         push(&mut args, &["/DEBUG"]);
-        if input.kind == CompilerKind::Msvc {
+        if input.kind.family() == Family::Msvc {
             // link.exe links incrementally under /DEBUG; lld does not.
             push(&mut args, &["/INCREMENTAL:NO"]);
         }
     }
     if profile.lto {
-        if input.kind == CompilerKind::Msvc {
+        if input.kind.family() == Family::Msvc {
             push(&mut args, &["/LTCG"]);
         } else {
             args.push(format!("/opt:lldlto={lto_level}").into());

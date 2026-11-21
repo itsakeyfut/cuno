@@ -235,7 +235,7 @@ impl CunoError for ToolchainError {
     fn help(&self) -> Option<String> {
         match self {
             ToolchainError::UnknownCompiler { .. } | ToolchainError::UnsupportedCompiler { .. } => {
-                Some("choose msvc, clang or clang-cl".to_owned())
+                Some(format!("choose {}", crate::compiler::CompilerKind::names()))
             }
             ToolchainError::CompilerNotFound { compiler } => Some(format!(
                 "install LLVM (https://github.com/llvm/llvm-project/releases), or write where {compiler} is in [toolchain.paths] {compiler}"

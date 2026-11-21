@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings};
-use crate::select::CompilerKind;
+use crate::compiler::{CompilerKind, Family, Syntax};
 use crate::{ToolchainError, Version};
 
 /// Whether a source is compiled to an object or only checked (`cuno check`).
@@ -46,7 +46,7 @@ pub struct CompileInput<'a> {
 /// (`select::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
 pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     let mut out = Flags::default();
-    let msvc_style = input.kind != CompilerKind::Clang;
+    let msvc_style = input.kind.syntax() == Syntax::Cl;
     let cxx = input.lang == Lang::Cxx;
     let build = input.build;
     let profile = input.profile;
@@ -55,7 +55,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     if msvc_style {
         out.push(&["/nologo", "/utf-8"]);
     }
-    if input.kind != CompilerKind::Msvc {
+    if input.kind.family() == Family::Llvm {
         out.push(&["--target=x86_64-pc-windows-msvc"]);
     }
     if msvc_style && cxx {
@@ -117,7 +117,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&[if msvc_style { "/Z7" } else { "-g" }]);
     }
     if profile.lto {
-        out.push(&[if input.kind == CompilerKind::Msvc {
+        out.push(&[if input.kind.family() == Family::Msvc {
             "/GL"
         } else {
             "-flto"
@@ -158,7 +158,7 @@ pub fn compile_args(
     source: &Path,
     object: Option<&Path>,
 ) -> Vec<OsString> {
-    let msvc_style = input.kind != CompilerKind::Clang;
+    let msvc_style = input.kind.syntax() == Syntax::Cl;
     let mut args: Vec<OsString> = vec![
         match (input.mode, msvc_style) {
             (Mode::Compile, true) => "/c",
@@ -224,18 +224,23 @@ pub fn check_edition(
     version: Version,
     edition: Edition,
 ) -> Result<(), ToolchainError> {
-    let needed = match (kind, edition) {
-        (CompilerKind::Msvc, Edition::Cxx23) => Version {
-            major: 19,
-            minor: 52,
-            patch: 0,
+    let needed = match kind {
+        // cl ignores a `/std` it does not know, so its version decides.
+        CompilerKind::Msvc => match edition {
+            Edition::Cxx23 => Version {
+                major: 19,
+                minor: 52,
+                patch: 0,
+            },
+            Edition::C23 => Version {
+                major: 19,
+                minor: 37,
+                patch: 0,
+            },
+            _ => return Ok(()),
         },
-        (CompilerKind::Msvc, Edition::C23) => Version {
-            major: 19,
-            minor: 37,
-            patch: 0,
-        },
-        _ => return Ok(()),
+        // Every supported Clang accepts every edition (as `c2x` for C23).
+        CompilerKind::Clang | CompilerKind::ClangCl => return Ok(()),
     };
     if version >= needed {
         return Ok(());
