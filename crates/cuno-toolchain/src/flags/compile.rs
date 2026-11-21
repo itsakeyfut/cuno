@@ -22,9 +22,11 @@ pub enum Mode {
 pub struct CompileInput<'a> {
     /// The driver.
     pub kind: CompilerKind,
-    /// The package's language; every source is compiled as it.
+    /// This source's language, from its extension (`docs/en/specs/project-layout.md`,
+    /// "Target files").
     pub lang: Lang,
-    /// The package's edition.
+    /// The standard for this source: the package's edition when `lang` is the
+    /// package's language, otherwise that language's default.
     pub edition: Edition,
     /// The resolved build settings.
     pub build: &'a BuildSettings,
@@ -167,7 +169,8 @@ pub fn compile_args(
         .into(),
     ];
     args.extend(compile_flags(input));
-    // The language switch: whatever the extension, the package's language.
+    // The language switch: stated, so the source's language is never left to
+    // the driver's own guess from the extension.
     match (input.lang, msvc_style) {
         (Lang::C, true) => args.push("/TC".into()),
         (Lang::Cxx, true) => args.push("/TP".into()),

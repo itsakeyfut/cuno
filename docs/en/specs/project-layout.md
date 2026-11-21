@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob fecf7f0f7fefef9cef84fcb7a069c016203591a0 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob d051e0b99d6addf2becf751fb80fa7fa292b485a -->
 
 # Project Kinds and Layout
 
@@ -53,6 +53,8 @@ sources = ["Private"]
   - `.c`: compiled as C.
   - `.cpp` / `.cc` / `.cxx`: compiled as C++.
 - Mixing C and C++ is allowed. Files in a language different from `[package] lang` are compiled with that language's default standard (C: `c17`, C++: `c++20`).
+  - Rationale: C++ projects often bundle a C library (`sqlite3.c` and the like). Compiled as C++, it either fails on C++'s stricter conversion rules or, with its names mangled, no longer links with callers that use it as C.
+  - Headers (`.h`) are not compiled. `cuno fmt` treating `.h` as the package's language is a matter of formatting style and separate from this ([dev-tools.md](dev-tools.md)).
 
 ### Entry files and package body
 
