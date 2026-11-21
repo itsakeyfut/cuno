@@ -177,6 +177,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | 問題あり | clang-format / clang-tidy が見つからない | `1` |
 | 問題あり | 選ばれた Clang / clang-tidy が、使用する MSVC 標準ライブラリに受け付けられない、またはその判定ができない（C++ のプロジェクトとプロジェクトの外。[toolchain.md](toolchain.md#コンパイラの最低バージョン)） | `1` |
 | 問題あり | 設定ファイルの誤り、未対応のコンパイラの選択 | `1` |
+| 問題あり | `[toolchain.paths]` に書いたツールが使えない（選ばれていないコンパイラでも。[toolchain.md](toolchain.md#llvmclang--clang-cl--clang-format--clang-tidy)） | `1` |
 | 情報 | 使用しないコンパイラが見つからない（例: MSVC を使う環境で Clang がない） | 影響しない |
 
 問題がなければ終了コード `0`。
@@ -202,7 +203,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - `Using`: 使う MSVC のツールセット（cl のバージョンと Visual Studio の場所。MSVC を選んだときは `Selected` の行が兼ねる）と Windows SDK。
 - `Accepted`: Clang を選んだとき、MSVC 標準ライブラリがそれを受け付けたこと（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。
 - `Found`: clang-format と clang-tidy。
-- `Info`: 選ばれていないコンパイラ（見つからなければ `not found`）。終了コードに影響しない。
+- `Info`: 選ばれていないコンパイラ（見つからなければ `not found`）。終了コードに影響しない。ただし `[toolchain.paths]` に書いたものが使えない場合は、`Info` の代わりに問題として出す（そのコンパイラに切り替えたときに初めて分かるのを防ぐため）。
 - 問題は、見つかった場所で `error:` と `help:` の行として出し、診断は続ける。設定ファイルの警告は `warning:` として最初に出す。
 - 最後の行は `Finished no problems found`、問題があれば `Finished <数> problems found`（1 件なら `problem`）。
 
