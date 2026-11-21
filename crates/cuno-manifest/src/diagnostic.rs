@@ -32,7 +32,12 @@ impl Location {
         Location {
             file: file.to_owned(),
             line: before.matches('\n').count() + 1,
-            column: before[line_start..].chars().count() + 1,
+            // A byte order mark is not a column the user can see.
+            column: before[line_start..]
+                .trim_start_matches('\u{feff}')
+                .chars()
+                .count()
+                + 1,
         }
     }
 }
@@ -109,7 +114,8 @@ impl CunoError for ConfigError {
 mod tests {
     use super::*;
 
-    /// Mutation: count lines or columns from 0, count columns in bytes, slice
+    /// Mutation: count lines or columns from 0, count columns in bytes, count
+    /// a byte order mark as a column, slice
     /// inside a character or past the end, or drop the location line; this
     /// test fails.
     #[test]
@@ -129,6 +135,11 @@ mod tests {
             "cuno.toml:3:3"
         );
         assert_eq!(Location::at(file, text, 999).to_string(), "cuno.toml:4:1");
+        let bom = "\u{feff}zz = 1\n";
+        assert_eq!(
+            Location::at(file, bom, bom.find("zz").unwrap()).to_string(),
+            "cuno.toml:1:1"
+        );
 
         let warning = ConfigWarning {
             message: "unknown key `build.wanings` in cuno.toml, ignored".into(),

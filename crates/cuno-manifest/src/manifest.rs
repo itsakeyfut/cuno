@@ -12,7 +12,7 @@ use cuno_core::CunoError;
 use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
 
-use crate::read::Doc;
+use crate::read::{Doc, key};
 use crate::{ConfigError, ConfigWarning, Project, resolve_path, shown_path};
 
 /// A value read from a file, with what cuno read past.
@@ -264,6 +264,7 @@ impl Default for Test {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
+#[serde(expecting = "a table")]
 struct RawManifest {
     package: Option<RawPackage>,
     toolchain: Option<RawToolchain>,
@@ -279,6 +280,7 @@ struct RawManifest {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawPackage {
     name: Option<String>,
     version: Option<String>,
@@ -289,6 +291,7 @@ struct RawPackage {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawToolchain {
     compiler: Option<String>,
     version: Option<BTreeMap<String, String>>,
@@ -298,6 +301,7 @@ struct RawToolchain {
 /// warned about where they appear elsewhere.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
+#[serde(expecting = "a table")]
 struct RawBuild {
     warnings: Option<String>,
     warnings_as_errors: Option<bool>,
@@ -322,17 +326,20 @@ struct RawBuild {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawFlags {
     flags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawPlatform {
     build: Option<RawBuild>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
+#[serde(expecting = "a table")]
 struct RawProfile {
     opt_level: Option<toml::Value>,
     debug_info: Option<bool>,
@@ -343,6 +350,7 @@ struct RawProfile {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawBin {
     name: Option<String>,
     path: Option<PathBuf>,
@@ -350,6 +358,7 @@ struct RawBin {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(expecting = "a table")]
 struct RawTest {
     framework: Option<String>,
 }
@@ -380,10 +389,12 @@ pub fn parse_manifest(
     let mut check = Check {
         doc: &doc,
         root,
-        warnings: unknown.iter().map(|path| doc.unknown(path)).collect(),
+        unknown,
+        warnings: Vec::new(),
     };
     let manifest = check.manifest(raw)?;
     let mut warnings = check.warnings;
+    warnings.extend(check.unknown.iter().map(|path| doc.unknown(path)));
     warnings.sort_by_key(|w| w.location.as_ref().map(|l| (l.line, l.column)));
     Ok(Loaded {
         value: manifest,
@@ -394,6 +405,8 @@ pub fn parse_manifest(
 struct Check<'a> {
     doc: &'a Doc<'a>,
     root: &'a Path,
+    /// The dotted paths of keys nothing read; turned into warnings at the end.
+    unknown: Vec<String>,
     warnings: Vec<ConfigWarning>,
 }
 
@@ -489,9 +502,12 @@ impl Check<'_> {
 
         let mut platform = BTreeMap::new();
         for (os, table) in raw.platform.unwrap_or_default() {
-            let prefix = format!("platform.{os}");
+            let prefix = format!("platform.{}", key(&os));
             let Some(parsed) = Os::parse(&os) else {
-                self.warnings.push(self.doc.unknown(&prefix));
+                // One warning for the table, not one more for each key in it.
+                let inside = format!("{prefix}.");
+                self.unknown.retain(|path| !path.starts_with(&inside));
+                self.unknown.push(prefix);
                 continue;
             };
             if let Some(table) = table.build {
@@ -505,7 +521,7 @@ impl Check<'_> {
         let mut profiles = BTreeMap::new();
         let mut profile_build = BTreeMap::new();
         for (name, table) in raw.profile.unwrap_or_default() {
-            let prefix = format!("profile.{name}");
+            let prefix = format!("profile.{}", key(&name));
             let Some(profile) = Profile::parse(&name) else {
                 return Err(self.not_yet(&prefix, "a profile other than `dev` and `release`"));
             };
@@ -643,20 +659,20 @@ impl Check<'_> {
         raw: Option<BTreeMap<String, String>>,
     ) -> Result<Constraints, ConfigError> {
         let mut constraints = Constraints::default();
-        for (key, text) in raw.unwrap_or_default() {
-            let path = format!("toolchain.version.{key}");
-            let slot = match CompilerName::parse(&key) {
+        for (name, text) in raw.unwrap_or_default() {
+            let path = format!("toolchain.version.{}", key(&name));
+            let slot = match CompilerName::parse(&name) {
                 Some(CompilerName::Msvc) => &mut constraints.msvc,
                 Some(CompilerName::Clang) => &mut constraints.clang,
                 Some(CompilerName::ClangCl) => &mut constraints.clang_cl,
                 // Harmless until that compiler is used (manifest.md).
                 Some(CompilerName::Gcc | CompilerName::Safec) => continue,
                 None => {
-                    self.warnings.push(self.doc.unknown(&path));
+                    self.unknown.push(path);
                     continue;
                 }
             };
-            *slot = Some(VersionReq::parse(&key, &text).map_err(|e| ConfigError {
+            *slot = Some(VersionReq::parse(&name, &text).map_err(|e| ConfigError {
                 message: e.to_string(),
                 location: Some(self.doc.locate(&path)),
                 help: e.help(),
@@ -672,8 +688,10 @@ impl Check<'_> {
         if raw.target_dir.take().is_some() {
             self.ignored(&format!("{prefix}.target-dir"), only_in_build);
         }
+        // Ignoring a rule would build something other than written
+        // (manifest.md, "Implemented in MVP"), wherever it is.
         if raw.rule.take().is_some() {
-            self.ignored(&format!("{prefix}.rule"), only_in_build);
+            return Err(self.not_yet(&format!("{prefix}.rule"), "`[[build.rule]]`"));
         }
         for (name, flags) in [
             ("msvc", raw.msvc.take()),
@@ -691,10 +709,15 @@ impl Check<'_> {
 
     fn build_table(&mut self, prefix: &str, raw: RawBuild) -> Result<BuildTable, ConfigError> {
         let not_supported = "it is not supported yet";
-        if raw.precompiled_header.is_some() {
+        // Left at its default, a key ignores nothing, so it is not warned
+        // about (manifest.md, "Implemented in MVP").
+        let at_default = |value: &Option<toml::Value>, default: &toml::Value| {
+            value.as_ref().is_none_or(|v| v == default)
+        };
+        if !at_default(&raw.precompiled_header, &toml::Value::String(String::new())) {
             self.ignored(&format!("{prefix}.precompiled-header"), not_supported);
         }
-        if raw.unity.is_some() {
+        if !at_default(&raw.unity, &toml::Value::Boolean(false)) {
             self.ignored(&format!("{prefix}.unity"), not_supported);
         }
         Ok(BuildTable {
@@ -1198,5 +1221,228 @@ indent-width = 2
         };
         let err = load_manifest(&missing, dir.path()).unwrap_err();
         assert!(err.message.starts_with("cannot read"), "{err}");
+    }
+
+    /// Mutation: file any compiler's `flags` under another, or drop them;
+    /// this test fails.
+    #[test]
+    fn each_compilers_flags_are_its_own() {
+        let m = read(&with(concat!(
+            "[build.msvc]\nflags = [\"m\"]\n",
+            "[build.clang]\nflags = [\"c\"]\n",
+            "[build.clang-cl]\nflags = [\"cc\"]\n",
+            "[build.gcc]\nflags = [\"g\"]\n",
+            "[build.safec]\nflags = [\"s\"]\n",
+        )))
+        .unwrap()
+        .value;
+        let flags = |name| vec![String::from(name)];
+        assert_eq!(
+            m.compiler_flags,
+            BTreeMap::from([
+                (CompilerName::Msvc, flags("m")),
+                (CompilerName::Clang, flags("c")),
+                (CompilerName::ClangCl, flags("cc")),
+                (CompilerName::Gcc, flags("g")),
+                (CompilerName::Safec, flags("s")),
+            ])
+        );
+    }
+
+    /// Mutation: read any `opt-level` as another, or file a profile's table
+    /// under the other profile; this test fails.
+    #[test]
+    fn each_opt_level_and_profile_is_read_as_written() {
+        for (text, level) in [
+            ("0", OptLevel::O0),
+            ("1", OptLevel::O1),
+            ("2", OptLevel::O2),
+            ("3", OptLevel::O3),
+            ("\"s\"", OptLevel::Size),
+        ] {
+            let m = read(&with(&format!(
+                "[profile.dev]\nopt-level = {text}\n[profile.release.build]\ndefines = [\"R\"]\n"
+            )))
+            .unwrap()
+            .value;
+            assert_eq!(m.profiles[&Profile::Dev].opt_level, Some(level), "{text}");
+            assert_eq!(m.profiles[&Profile::Release], ProfileTable::default());
+            assert_eq!(
+                m.profile_build[&Profile::Release].defines,
+                Some(vec!["R".into()])
+            );
+            assert!(!m.profile_build.contains_key(&Profile::Dev));
+        }
+    }
+
+    /// Mutation: misspell any value the spec lists, or tie an edition to the
+    /// other language; this test fails.
+    #[test]
+    fn every_value_the_spec_lists_is_accepted() {
+        let package = |lang: &str, edition: &str| {
+            format!(
+                "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlang = \"{lang}\"\nedition = \"{edition}\"\n"
+            )
+        };
+        for (lang, editions, other) in [
+            ("c++", ["c++17", "c++20", "c++23"], "c"),
+            ("c", ["c11", "c17", "c23"], "c++"),
+        ] {
+            for edition in editions {
+                let m = read(&package(lang, edition)).unwrap().value;
+                assert_eq!(m.package.edition.as_str(), edition);
+                assert_eq!(m.package.lang.as_str(), lang);
+                assert!(
+                    read(&package(other, edition)).is_err(),
+                    "{edition} under {other}"
+                );
+            }
+        }
+        for (warnings, expected) in [
+            ("default", Warnings::Default),
+            ("all", Warnings::All),
+            ("pedantic", Warnings::Pedantic),
+        ] {
+            let m = read(&with(&format!("[build]\nwarnings = \"{warnings}\"\n"))).unwrap();
+            assert_eq!(m.value.build.warnings, Some(expected));
+        }
+        for (runtime, expected) in [("dynamic", Runtime::Dynamic), ("static", Runtime::Static)] {
+            let m = read(&with(&format!("[build]\nruntime = \"{runtime}\"\n"))).unwrap();
+            assert_eq!(m.value.build.runtime, Some(expected));
+        }
+        for (subsystem, expected) in [
+            ("console", Subsystem::Console),
+            ("windows", Subsystem::Windows),
+        ] {
+            let m = read(&with(&format!("[[bin]]\nsubsystem = \"{subsystem}\"\n"))).unwrap();
+            assert_eq!(m.value.bins.unwrap()[0].subsystem, expected);
+        }
+        let platforms: String = ["windows", "linux", "macos", "android", "wasm"]
+            .iter()
+            .map(|os| format!("[platform.{os}.build]\ndefines = [\"{os}\"]\n"))
+            .collect();
+        let loaded = read(&with(&platforms)).unwrap();
+        assert_eq!(loaded.warnings, []);
+        for (os, name) in [
+            (Os::Windows, "windows"),
+            (Os::Linux, "linux"),
+            (Os::Macos, "macos"),
+            (Os::Android, "android"),
+            (Os::Wasm, "wasm"),
+        ] {
+            assert_eq!(loaded.value.platform[&os].defines, Some(vec![name.into()]));
+        }
+        let m = read(&with("[toolchain.version]\nsafec = \">=1\"\n")).unwrap();
+        assert_eq!(m.warnings, []);
+        let m = read(&with("[lint]\npreset = \"strict\"\n")).unwrap().value;
+        assert_eq!(m.lint.unwrap()["preset"].as_str(), Some("strict"));
+    }
+
+    /// Mutation: reject `-` or `_` in a package name; this test fails.
+    #[test]
+    fn a_name_may_hold_hyphens_and_underscores() {
+        let m = read("[package]\nname = \"my-app_2\"\nversion = \"1.0.0\"\n").unwrap();
+        assert_eq!(m.value.package.name, "my-app_2");
+    }
+
+    /// Mutation: drop or change the `help:` of any of these errors; this
+    /// test fails.
+    #[test]
+    fn errors_say_how_to_fix_them() {
+        let help = |text: &str| read(text).unwrap_err().help;
+        let cases = [
+            (
+                "[toolchain]\n".to_owned(),
+                "add `[package]` with `name` and `version`",
+            ),
+            (
+                "[package]\nname = \"1a\"\nversion = \"1.0.0\"\n".to_owned(),
+                "use letters, digits, `-` and `_`, starting with a letter",
+            ),
+            (
+                "[package]\nname = \"a\"\nversion = \"1\"\n".to_owned(),
+                "write a Semantic Versioning version, such as \"0.1.0\"",
+            ),
+            (with("[lib]\n"), "remove `lib`; it comes in a later release"),
+            (
+                with("[toolchain.version]\nclang = \"17\"\n"),
+                "write conditions such as \">=17\" or \">=19.29, <19.50\"",
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(help(&text).as_deref(), Some(expected), "{text}");
+        }
+    }
+
+    /// Mutation: keep, or warn about rather than reject, a rule under a
+    /// nested build table; keep or stop warning about a compiler table
+    /// there; or accept `catch2` / `doctest`; this test fails.
+    #[test]
+    fn nested_build_tables_take_only_the_shared_keys() {
+        for name in ["msvc", "clang", "clang-cl", "gcc", "safec"] {
+            let loaded = read(&with(&format!(
+                "[platform.windows.build.{name}]\nflags = [\"x\"]\n"
+            )))
+            .unwrap();
+            assert_eq!(loaded.warnings.len(), 1, "{name}");
+            assert!(
+                loaded.warnings[0]
+                    .message
+                    .contains(&format!("platform.windows.build.{name}")),
+                "{}",
+                loaded.warnings[0]
+            );
+            assert!(loaded.value.compiler_flags.is_empty());
+        }
+        for table in ["platform.windows.build", "profile.dev.build"] {
+            let err = read(&with(&format!("[[{table}.rule]]\nx = 1\n"))).unwrap_err();
+            assert!(
+                err.message
+                    .contains("`[[build.rule]]` is not available yet"),
+                "{err}"
+            );
+            assert_eq!(err.location.unwrap().line, 4);
+        }
+        for framework in ["catch2", "doctest"] {
+            let err = read(&with(&format!("[test]\nframework = \"{framework}\"\n"))).unwrap_err();
+            assert!(err.message.contains("is not available yet"), "{err}");
+        }
+    }
+
+    /// Mutation: warn about `unity` / `precompiled-header` at their defaults,
+    /// report an unknown platform once per key inside it, split a quoted key
+    /// at its dot, report an error in a later `[[bin]]` at the first, or name
+    /// cuno's own types in a message; this test fails.
+    #[test]
+    fn messages_are_about_what_the_user_wrote() {
+        let loaded = read(&with("[build]\nunity = false\nprecompiled-header = \"\"\n")).unwrap();
+        assert_eq!(loaded.warnings, []);
+
+        let loaded = read(&with(
+            "[platform.\"a.b\".build]\ndefines = [\"X\"]\nnope = 1\n",
+        ))
+        .unwrap();
+        let shown: Vec<String> = loaded.warnings.iter().map(|w| w.to_string()).collect();
+        assert_eq!(
+            shown,
+            ["unknown key `platform.\"a.b\"` in cuno.toml, ignored\n --> cuno.toml:4:11"]
+        );
+
+        let err = read(&with(
+            "[[bin]]\nname = \"a\"\n[[bin]]\nsubsystem = \"gui\"\n",
+        ))
+        .unwrap_err();
+        assert_eq!(err.location.unwrap().line, 7);
+
+        for text in [
+            with("[build]\nwarnings = []\n"),
+            "package = []\n".to_owned(),
+            "package = \"x\"\n".to_owned(),
+        ] {
+            let err = read(&text).unwrap_err();
+            assert!(!err.message.contains("Raw"), "{err}");
+        }
+        let err = read("package = \"x\"\n").unwrap_err();
+        assert!(err.message.contains("expected a table"), "{err}");
     }
 }

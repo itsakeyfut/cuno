@@ -33,14 +33,9 @@ impl<'a> Doc<'a> {
             .map_err(|e| toml_error(self.text, self.file, &e))?;
         let mut unknown = Vec::new();
         let value = serde_ignored::deserialize(de, |path| {
-            // `?` marks an `Option` layer, not a key.
-            let parts: Vec<String> = path
-                .to_string()
-                .split('.')
-                .filter(|part| *part != "?")
-                .map(str::to_owned)
-                .collect();
-            unknown.push(parts.join("."));
+            let mut parts = Vec::new();
+            segments(&path, &mut parts);
+            unknown.push(dotted(&parts));
         })
         .map_err(|e| toml_error(self.text, self.file, &e))?;
         // In the order they are written, whatever order serde visited them.
@@ -49,7 +44,8 @@ impl<'a> Doc<'a> {
     }
 
     /// Where the key at the dotted `path` is written (`bin.0.name` for the
-    /// first `[[bin]]`'s `name`), or the start of the file when it is not.
+    /// first `[[bin]]`'s `name`; a key that is not bare is quoted, as
+    /// [`key`] writes it), or the start of the file when it is not.
     pub fn locate(&self, path: &str) -> Location {
         let offset = self.key_offset(path).unwrap_or(0);
         Location::at(self.file, self.text, offset)
@@ -58,7 +54,8 @@ impl<'a> Doc<'a> {
     fn key_offset(&self, path: &str) -> Option<usize> {
         let mut table = self.table.get_ref();
         let mut offset = None;
-        let mut parts = path.split('.').peekable();
+        let parts = split(path);
+        let mut parts = parts.iter().map(String::as_str).peekable();
         while let Some(part) = parts.next() {
             let (key, mut value) = table.get_key_value(part)?;
             offset = Some(key.span().start);
@@ -103,6 +100,73 @@ impl<'a> Doc<'a> {
             path,
             format!("unknown key `{path}` in {}, ignored", self.file.display()),
         )
+    }
+}
+
+/// `segment` as one part of a dotted path: bare when TOML would write it
+/// bare, else quoted, so a key such as `"a.b"` stays one part.
+pub(crate) fn key(segment: &str) -> String {
+    let bare = !segment.is_empty()
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if bare {
+        segment.to_owned()
+    } else {
+        format!("{segment:?}")
+    }
+}
+
+fn dotted(parts: &[String]) -> String {
+    parts.iter().map(|p| key(p)).collect::<Vec<_>>().join(".")
+}
+
+/// The parts of a dotted path [`dotted`] wrote.
+fn split(path: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut chars = path.chars().peekable();
+    while chars.peek().is_some() {
+        let mut part = String::new();
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => break,
+                    '\\' => part.extend(chars.next()),
+                    c => part.push(c),
+                }
+            }
+            chars.next(); // the `.` after it
+        } else {
+            for c in chars.by_ref() {
+                if c == '.' {
+                    break;
+                }
+                part.push(c);
+            }
+        }
+        parts.push(part);
+    }
+    parts
+}
+
+/// The keys and indices of a path serde_ignored reports, without its marks
+/// for an `Option` or newtype layer, which are not keys.
+fn segments(path: &serde_ignored::Path<'_>, out: &mut Vec<String>) {
+    use serde_ignored::Path;
+    match path {
+        Path::Root => {}
+        Path::Seq { parent, index } => {
+            segments(parent, out);
+            out.push(index.to_string());
+        }
+        Path::Map { parent, key } => {
+            segments(parent, out);
+            out.push(key.clone());
+        }
+        Path::Some { parent }
+        | Path::NewtypeStruct { parent }
+        | Path::NewtypeVariant { parent } => segments(parent, out),
     }
 }
 
@@ -170,6 +234,28 @@ mod tests {
             doc.unknown("build.wanings").to_string(),
             "unknown key `build.wanings` in cuno.toml, ignored\n --> cuno.toml:2:1"
         );
+    }
+
+    /// Mutation: split a quoted key at its dot, drop a key named `?`, or
+    /// write a bare key quoted; this test fails.
+    #[test]
+    fn keys_that_are_not_bare_stay_one_part() {
+        let text = "[build]
+\"a.b\" = 1
+\"?\" = 2
+plain-key = 3
+";
+        let doc = Doc::parse(text, Path::new("cuno.toml")).unwrap();
+        let (_, unknown): (Shape, _) = doc.deserialize().unwrap();
+        assert_eq!(unknown, ["build.\"a.b\"", "build.\"?\"", "build.plain-key"]);
+        let lines: Vec<usize> = unknown.iter().map(|p| doc.locate(p).line).collect();
+        assert_eq!(lines, [2, 3, 4]);
+        assert_eq!(
+            split("platform.\"a.b\".build"),
+            ["platform", "a.b", "build"]
+        );
+        assert_eq!(key("say \"hi\""), "\"say \\\"hi\\\"\"");
+        assert_eq!(split(&key("say \"hi\"")), ["say \"hi\""]);
     }
 
     /// Mutation: lose the position of a syntax or type error; this test
