@@ -1,0 +1,211 @@
+//! The compile step's arguments, row by row from `docs/en/specs/build.md`,
+//! "Settings and flags".
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+use super::{BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings};
+use crate::select::CompilerKind;
+
+/// Whether a source is compiled to an object or only checked (`cuno check`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Compile to an object.
+    Compile,
+    /// Check the syntax and types only.
+    Check,
+}
+
+/// What one compile of the build is made from.
+#[derive(Clone, Copy, Debug)]
+pub struct CompileInput<'a> {
+    /// The driver.
+    pub kind: CompilerKind,
+    /// The package's language; every source is compiled as it.
+    pub lang: Lang,
+    /// The package's edition.
+    pub edition: Edition,
+    /// The resolved build settings.
+    pub build: &'a BuildSettings,
+    /// The resolved profile.
+    pub profile: &'a ProfileSettings,
+    /// The include directories cuno always adds (`src/`, the bundled
+    /// headers), before `build.include_dirs`.
+    pub include_dirs: &'a [PathBuf],
+    /// A test build, which defines `CUNO_TEST`.
+    pub test: bool,
+    /// Compile or check.
+    pub mode: Mode,
+}
+
+/// The flags every source of the build gets, without the mode, the source
+/// and the output: what the standard library probe is given
+/// (`select::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
+pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
+    let mut out = Flags::default();
+    let msvc_style = input.kind != CompilerKind::Clang;
+    let cxx = input.lang == Lang::Cxx;
+    let build = input.build;
+    let profile = input.profile;
+
+    // Always on.
+    if msvc_style {
+        out.push(&["/nologo", "/utf-8"]);
+    }
+    if input.kind != CompilerKind::Msvc {
+        out.push(&["--target=x86_64-pc-windows-msvc"]);
+    }
+    if msvc_style && cxx {
+        out.push(&["/Zc:__cplusplus"]);
+    }
+
+    out.push(&[standard(input.kind, input.edition)]);
+
+    out.push(match (build.warnings, input.kind) {
+        (Warnings::Default, _) => &[][..],
+        (Warnings::All, CompilerKind::Clang) => &["-Wall", "-Wextra"],
+        (Warnings::All, _) => &["/W4"],
+        (Warnings::Pedantic, CompilerKind::Msvc) => &["/W4", "/permissive-"],
+        (Warnings::Pedantic, CompilerKind::ClangCl) => &["/W4", "-Wpedantic"],
+        (Warnings::Pedantic, CompilerKind::Clang) => &["-Wall", "-Wextra", "-Wpedantic"],
+    });
+    if build.warnings_as_errors {
+        out.push(&[if msvc_style { "/WX" } else { "-Werror" }]);
+    }
+
+    out.push(&[match (build.runtime, msvc_style) {
+        (Runtime::Dynamic, true) => "/MD",
+        (Runtime::Static, true) => "/MT",
+        (Runtime::Dynamic, false) => "-fms-runtime-lib=dll",
+        (Runtime::Static, false) => "-fms-runtime-lib=static",
+    }]);
+
+    if cxx {
+        match (build.exceptions, msvc_style) {
+            (true, true) => out.push(&["/EHsc"]),
+            (true, false) => {}
+            (false, true) => {}
+            (false, false) => out.push(&["-fno-exceptions"]),
+        }
+        if !build.rtti {
+            out.push(&[if msvc_style { "/GR-" } else { "-fno-rtti" }]);
+        }
+    }
+
+    out.push(&[match (profile.opt_level, msvc_style) {
+        (OptLevel::O0, true) => "/Od",
+        (OptLevel::O1 | OptLevel::O2 | OptLevel::O3, true) => "/O2",
+        (OptLevel::Size, true) => "/O1",
+        (OptLevel::O0, false) => "-O0",
+        (OptLevel::O1, false) => "-O1",
+        (OptLevel::O2, false) => "-O2",
+        (OptLevel::O3, false) => "-O3",
+        (OptLevel::Size, false) => "-Os",
+    }]);
+    if profile.debug_info {
+        out.push(&[if msvc_style { "/Z7" } else { "-g" }]);
+    }
+    if profile.lto {
+        out.push(&[if input.kind == CompilerKind::Msvc {
+            "/GL"
+        } else {
+            "-flto"
+        }]);
+    }
+
+    let define = if msvc_style { "/D" } else { "-D" };
+    let mut defines: Vec<&str> = build.defines.iter().map(String::as_str).collect();
+    if !profile.debug_assertions {
+        defines.push("NDEBUG");
+    }
+    if input.test {
+        defines.push("CUNO_TEST");
+    }
+    if cxx && !build.exceptions {
+        defines.push("_HAS_EXCEPTIONS=0");
+    }
+    for d in defines {
+        out.0.push(format!("{define}{d}").into());
+    }
+
+    let include = if msvc_style { "/I" } else { "-I" };
+    for dir in input.include_dirs.iter().chain(&build.include_dirs) {
+        let mut arg = OsString::from(include);
+        arg.push(dir);
+        out.0.push(arg);
+    }
+
+    out.0.extend(build.flags.iter().map(OsString::from));
+    out.0
+}
+
+/// The full arguments for compiling, or checking, one `source`: the mode,
+/// [`compile_flags`], the language switch and the source, then `object`
+/// when compiling.
+pub fn compile_args(
+    input: &CompileInput<'_>,
+    source: &Path,
+    object: Option<&Path>,
+) -> Vec<OsString> {
+    let msvc_style = input.kind != CompilerKind::Clang;
+    let mut args: Vec<OsString> = vec![
+        match (input.mode, msvc_style) {
+            (Mode::Compile, true) => "/c",
+            (Mode::Check, true) => "/Zs",
+            (Mode::Compile, false) => "-c",
+            (Mode::Check, false) => "-fsyntax-only",
+        }
+        .into(),
+    ];
+    args.extend(compile_flags(input));
+    // The language switch: whatever the extension, the package's language.
+    match (input.lang, msvc_style) {
+        (Lang::C, true) => args.push("/TC".into()),
+        (Lang::Cxx, true) => args.push("/TP".into()),
+        (Lang::C, false) => args.extend(["-x".into(), "c".into()]),
+        (Lang::Cxx, false) => args.extend(["-x".into(), "c++".into()]),
+    }
+    args.push(source.into());
+    if let (Mode::Compile, Some(object)) = (input.mode, object) {
+        if msvc_style {
+            let mut arg = OsString::from("/Fo");
+            arg.push(object);
+            args.push(arg);
+        } else {
+            args.extend(["-o".into(), object.into()]);
+        }
+    }
+    args
+}
+
+/// The language standard switch: the "latest" switches on MSVC and
+/// clang-cl for C++23 and C23, since cl only warns about a `/std` it does
+/// not know and clang-cl ignores `/std:c++23` and `/std:c23`.
+fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
+    match (kind, edition) {
+        (CompilerKind::Clang, Edition::Cxx17) => "-std=c++17",
+        (CompilerKind::Clang, Edition::Cxx20) => "-std=c++20",
+        (CompilerKind::Clang, Edition::Cxx23) => "-std=c++23",
+        (CompilerKind::Clang, Edition::C11) => "-std=c11",
+        (CompilerKind::Clang, Edition::C17) => "-std=c17",
+        (CompilerKind::Clang, Edition::C23) => "-std=c23",
+        (_, Edition::Cxx17) => "/std:c++17",
+        (_, Edition::Cxx20) => "/std:c++20",
+        (_, Edition::Cxx23) => "/std:c++latest",
+        (_, Edition::C11) => "/std:c11",
+        (_, Edition::C17) => "/std:c17",
+        (_, Edition::C23) => "/std:clatest",
+    }
+}
+
+#[derive(Default)]
+struct Flags(Vec<OsString>);
+
+impl Flags {
+    fn push(&mut self, flags: &[&str]) {
+        self.0.extend(flags.iter().map(OsString::from));
+    }
+}
+
+#[cfg(test)]
+mod tests;
