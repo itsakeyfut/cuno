@@ -43,15 +43,15 @@
 
 | 設定 | MSVC | clang-cl | clang |
 |---|---|---|---|
-| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++latest` | MSVC と同じ | `-std=c++17` / `-std=c++20` / `-std=c++23` |
-| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest` | MSVC と同じ | `-std=c11` / `-std=c17` / `-std=c23` |
+| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++23`（cl 19.52 以上） | `/std:c++17` / `/std:c++20` / `/clang:-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` |
+| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest`（cl 19.37 以上） | `/std:c11` / `/std:c17` / `/clang:-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` |
 | `warnings` `default` / `all` / `pedantic` | なし / `/W4` / `/W4 /permissive-` | なし / `/W4` / `/W4 -Wpedantic` | なし / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
 | `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` |
 | `defines`、テストのビルド（`CUNO_TEST`） | `/D<define>` | `/D<define>` | `-D<define>` |
 | インクルードパス（`src/`、同梱ヘッダの場所、`include-dirs` の順） | `/I<dir>` | `/I<dir>` | `-I<dir>` |
 | `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` |
-| `exceptions`（C++）`true` / `false` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
-| `rtti = false`（C++） | `/GR-` | `/GR-` | `-fno-rtti` |
+| `exceptions`（C++）`true` / `false` | `/EHsc` / `/we4530 /D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
+| `rtti = false`（C++） | `/GR- /we4541` | `/GR- -Werror=rtti` | `-fno-rtti` |
 | `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | MSVC と同じ | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
 | `debug-info = true` | `/Z7` | `/Z7` | `-g` |
 | `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
@@ -80,9 +80,13 @@
 - `/Zc:__cplusplus`: これがないと cl は `/std:c++20` でも `__cplusplus` を `199711` にする。
 - `--target=x86_64-pc-windows-msvc`: MSVC と同じ ABI でビルドし、MSVC でビルドしたライブラリと混ぜてリンクできるようにする（[toolchain.md](toolchain.md)）。
 - `/TC` / `/TP`、`-x c` / `-x c++`: 拡張子によらずパッケージの言語でコンパイルする（`.h` を言語どおりに扱う [dev-tools.md](dev-tools.md) と同じ）。
-- `c++23` と `c23` は MSVC・clang-cl で「最新」の指定を使う。cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。clang-cl は `/std:c++23` と `/std:c23` を受け付けない。代わりに、MSVC の最新が C++23 より先に進むと、`c++23` のプロジェクトはその新しい規格でビルドされる。
+- `c++23` と `c23` は、どのコンパイラでも規格を名前で指定する。「最新」（`/std:c++latest`、`/std:clatest` を C++ に使うこと）は使わない。cl 19.52 と clang-cl 22 の `/std:c++latest` はすでに C++26 の作業草案（`__cplusplus` が `202400`）で、同じ `cuno.toml` でも clang とは違う規格になり、通るプログラムも変わるため。
+  - cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。そのため、規格を受け付けるかは cl のバージョンで判定し、足りなければエラーにする（[toolchain.md](toolchain.md)）。`/std:c++23` は確かめた最も古い cl 19.52 以上（受け付ける版が公式の文書にないため。より古い版で確かめられれば下げる）、`/std:clatest`（C の最新、C23 を含む）は Visual Studio 2022 17.7（cl 19.37）以上。
+  - clang-cl は `/std:c++23` と `/std:c23` を無視するため、`/clang:` で clang の指定を渡す。C23 は Clang 17 でも通る `c2x` と書く（`c23` は Clang 18 から）。
 - `-fms-runtime-lib`: GNU 形式の `clang` は、指定しないと静的な C ランタイムを使い、`runtime = "dynamic"` の既定と食い違う。
 - `_HAS_EXCEPTIONS=0`: 例外を無効にしたとき、コンパイラによらず標準ライブラリが例外を投げない実装を使うようにする。
+- `/we4530`、`/we4541`、`-Werror=rtti`: 例外や RTTI を無効にしたとき、clang は `try` / `throw` や `typeid` / `dynamic_cast` をエラーにするが、cl と clang-cl は警告だけ出して、デストラクタが実行されない・実行時に落ちるプログラムを作る。どのコンパイラでもビルドの段階で止めるため。ただし cl は、`try` のない `throw` だけはどのフラグでも検出できない。
+- `pedantic` は規格への厳密な準拠を求めるため、clang・clang-cl は Windows SDK の `IID_PPV_ARGS` 等が使う `__uuidof` を拡張として指摘する（`warnings-as-errors` と合わせるとエラー）。cl は指摘しない。cl では `/std:c++20` 以降と C の規格指定がすでに `/permissive-` を含むため、`pedantic` と `all` の違いは小さい。
 - `-fuse-ld=lld`: clang-cl は指定しないと `link.exe` を使い、LTO を受け付けない。
 - `debug-info` に `/Zi` を使わないのは、並列ビルドで PDB への書き込みが競合し、sccache でキャッシュできないため。`clang -g` は CodeView を出し、`/DEBUG` 相当でリンクする。
 - `opt-level = 1` は MSVC に同等の段階がないため `/O2`。

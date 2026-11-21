@@ -4,6 +4,7 @@
 //! See `docs/en/specs/toolchain.md`.
 
 mod error;
+pub mod flags;
 mod host;
 pub mod llvm;
 pub mod msvc;

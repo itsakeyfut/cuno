@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cuno_core::CunoError;
+use cuno_toolchain::flags::{Edition, Lang, OptLevel, Runtime, Subsystem, Warnings};
 use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
 
@@ -155,41 +156,6 @@ macro_rules! choices {
 }
 
 choices!(
-    /// `[package] lang`.
-    Lang { /// C.
-    C = "c", /// C++.
-    Cxx = "c++" }
-);
-choices!(
-    /// `[package] edition`.
-    Edition { /// C++17.
-    Cxx17 = "c++17", /// C++20.
-    Cxx20 = "c++20", /// C++23.
-    Cxx23 = "c++23", /// C11.
-    C11 = "c11", /// C17.
-    C17 = "c17", /// C23.
-    C23 = "c23" }
-);
-choices!(
-    /// `warnings`.
-    Warnings { /// The compiler's own.
-    Default = "default", /// The recommended set.
-    All = "all", /// Strict conformance too.
-    Pedantic = "pedantic" }
-);
-choices!(
-    /// `runtime`.
-    Runtime { /// The C runtime as a DLL.
-    Dynamic = "dynamic", /// The C runtime in the executable.
-    Static = "static" }
-);
-choices!(
-    /// `[[bin]] subsystem`.
-    Subsystem { /// A console program.
-    Console = "console", /// A program without a console window.
-    Windows = "windows" }
-);
-choices!(
     /// `<OS>` in `[platform.<OS>.build]`.
     Os { /// Windows.
     Windows = "windows", /// Linux.
@@ -218,39 +184,6 @@ choices!(
     Framework { /// cuno's own.
     Cuno = "cuno" }
 );
-
-/// `opt-level`: `0` to `3`, or `"s"` for size.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OptLevel {
-    /// `0`.
-    O0,
-    /// `1`.
-    O1,
-    /// `2`.
-    O2,
-    /// `3`.
-    O3,
-    /// `"s"`.
-    Size,
-}
-
-impl Lang {
-    fn default_edition(self) -> Edition {
-        match self {
-            Lang::C => Edition::C17,
-            Lang::Cxx => Edition::Cxx20,
-        }
-    }
-}
-
-impl Edition {
-    fn lang(self) -> Lang {
-        match self {
-            Edition::C11 | Edition::C17 | Edition::C23 => Lang::C,
-            _ => Lang::Cxx,
-        }
-    }
-}
 
 impl Default for Test {
     fn default() -> Test {
