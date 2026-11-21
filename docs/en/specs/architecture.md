@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob d8a6f84d2c2f29bd96b8b63bdf9cbcbc76e49438 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 22b0a92905940ea19a184c6bf05bbc6944632763 -->
 
 # Internal Structure of cuno Itself
 
@@ -55,6 +55,8 @@ The allowed directions of dependency are limited to the following. `tests/archit
 | `cuno` (the binary) | all |
 
 - **`cuno-manifest` depends on `cuno-toolchain`, not the reverse.** `cuno-toolchain` defines the kinds of compiler and the types of the settings that flag translation receives, and `cuno-manifest` reads TOML into those types (`[build.<compiler>]` is also looked up by the kind of compiler).
+  - Every decision that branches on the kind of compiler (how its command line is written, whether it is of the MSVC or the LLVM family, which LLVM tool it is) is answered in one place in `cuno-toolchain`, covering every kind. Other code does not compare kinds but uses those answers, so a new compiler does not compile while any decision is unanswered for it.
+  - The names `cuno.toml` can be written with (the keys of `[build.<compiler>]` and `[toolchain.version]`) belong to `cuno-manifest`, since they include compilers cuno recognises but cannot build with (`gcc` / `safec`). The mapping from a kind of compiler to its name is made in one place in `cuno-manifest`.
   - Rationale: to keep the structure of TOML out of the compiler abstraction. Adding a compiler then takes a change to `cuno-toolchain` alone (design principle 5 in [concept.md](../concept.md)).
 - `cuno-test` holds only running tests and displaying their results. Building tests is one mode of `cuno-build`.
   - Rationale: it only runs the executables it is given and collects the results, so it needs no knowledge of settings or compilers.
