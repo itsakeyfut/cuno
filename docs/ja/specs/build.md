@@ -23,18 +23,67 @@
 | `include/` | ライブラリ対応後（後）。公開ヘッダ用 |
 | 同梱ヘッダの場所（`<管理ディレクトリ>/include/<cuno のバージョン>/`） | **通常ビルドでも常に追加**する。`#include <cuno/test.h>` を `#ifdef CUNO_TEST` で囲まずに書いても、通常ビルドがエラーにならないように |
 
-## 常に付けるフラグ
+## 設定とフラグの対応
 
-`cuno.toml` の設定とは別に、cuno が常に付けるフラグ。
+`cuno.toml` の設定と、cuno が常に付けるフラグを、各コンパイラの引数にどう変換するかの一覧。フラグの対応はここだけに書き、他の文書はここを参照する。`clang` は GNU 形式の Clang（対象は `x86_64-pc-windows-msvc`）。どの対応も、実際の cl・clang-cl・clang で確かめたもの。
 
-| コンパイラ | フラグ | 理由 |
-|---|---|---|
-| MSVC / clang-cl | `/nologo` | 起動時のロゴ表示を消す |
-| MSVC / clang-cl | `/utf-8` | ソースと実行時の文字コードを UTF-8 にする。日本語版 Windows で UTF-8 のソースが CP932 として読まれるのを防ぐ |
-| MSVC / clang-cl | `/Zc:__cplusplus` | `__cplusplus` マクロを正しい規格の値にする |
-| MSVC / clang-cl（C++ かつ `exceptions = true`） | `/EHsc` | C++ の標準的な例外処理 |
+### 常に付けるフラグ
 
-- 設定項目から決まるフラグ（警告、最適化、デバッグ情報、C ランタイム、例外、RTTI、サブシステム等）は [manifest.md](manifest.md) を参照。
+| 対象 | MSVC | clang-cl | clang |
+|---|---|---|---|
+| 常に | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` |
+| C++ のとき | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
+| ビルド / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
+| 言語（ソースごと） | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
+
+### コンパイル
+
+| 設定 | MSVC | clang-cl | clang |
+|---|---|---|---|
+| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++latest` | MSVC と同じ | `-std=c++17` / `-std=c++20` / `-std=c++23` |
+| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest` | MSVC と同じ | `-std=c11` / `-std=c17` / `-std=c23` |
+| `warnings` `default` / `all` / `pedantic` | なし / `/W4` / `/W4 /permissive-` | なし / `/W4` / `/W4 -Wpedantic` | なし / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
+| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` |
+| `defines`、テストのビルド（`CUNO_TEST`） | `/D<define>` | `/D<define>` | `-D<define>` |
+| インクルードパス（`src/`、同梱ヘッダの場所、`include-dirs` の順） | `/I<dir>` | `/I<dir>` | `-I<dir>` |
+| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` |
+| `exceptions`（C++）`true` / `false` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
+| `rtti = false`（C++） | `/GR-` | `/GR-` | `-fno-rtti` |
+| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | MSVC と同じ | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
+| `debug-info = true` | `/Z7` | `/Z7` | `-g` |
+| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
+| `lto = true` | `/GL` | `-flto` | `-flto` |
+| `[build.<compiler>] flags` | 最後にそのまま | 最後にそのまま | 最後にそのまま |
+
+### リンク
+
+リンクはコンパイラのドライバ経由で行う（各ドライバが C ランタイム等のライブラリを自分で加えるため）。
+
+| 設定 | MSVC | clang-cl | clang |
+|---|---|---|---|
+| リンカ | `link.exe`（`/link` の後に引数） | `-fuse-ld=lld`、`lld-link`（`/link` の後に引数） | `-fuse-ld=lld` |
+| 出力 | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
+| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
+| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
+| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
+| `debug-info = true` | `/DEBUG` | `/DEBUG` | `-g` |
+| `lto = true` | `/LTCG` | `-flto` | `-flto` |
+| `runtime` | なし（オブジェクトが指定する） | なし（オブジェクトが指定する） | コンパイルと同じ `-fms-runtime-lib=` |
+| `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | `-Wl,<flag>` として最後に |
+
+### 理由
+
+- `/utf-8`: 日本語版 Windows で UTF-8 のソースが CP932 として読まれるのを防ぐ。
+- `/Zc:__cplusplus`: これがないと cl は `/std:c++20` でも `__cplusplus` を `199711` にする。
+- `--target=x86_64-pc-windows-msvc`: MSVC と同じ ABI でビルドし、MSVC でビルドしたライブラリと混ぜてリンクできるようにする（[toolchain.md](toolchain.md)）。
+- `/TC` / `/TP`、`-x c` / `-x c++`: 拡張子によらずパッケージの言語でコンパイルする（`.h` を言語どおりに扱う [dev-tools.md](dev-tools.md) と同じ）。
+- `c++23` と `c23` は MSVC・clang-cl で「最新」の指定を使う。cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。clang-cl は `/std:c++23` と `/std:c23` を受け付けない。代わりに、MSVC の最新が C++23 より先に進むと、`c++23` のプロジェクトはその新しい規格でビルドされる。
+- `-fms-runtime-lib`: GNU 形式の `clang` は、指定しないと静的な C ランタイムを使い、`runtime = "dynamic"` の既定と食い違う。
+- `_HAS_EXCEPTIONS=0`: 例外を無効にしたとき、コンパイラによらず標準ライブラリが例外を投げない実装を使うようにする。
+- `-fuse-ld=lld`: clang-cl は指定しないと `link.exe` を使い、LTO を受け付けない。
+- `debug-info` に `/Zi` を使わないのは、並列ビルドで PDB への書き込みが競合し、sccache でキャッシュできないため。`clang -g` は CodeView を出し、`/DEBUG` 相当でリンクする。
+- `opt-level = 1` は MSVC に同等の段階がないため `/O2`。
+- デバッグ版の C ランタイム（`/MDd`）は既定にしない。ビルド済みの依存と混ぜるとリンクエラーになるため（Rust と同じ方針）。
 
 ## カスタムビルド処理（3 層構造）
 

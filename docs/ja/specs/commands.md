@@ -10,7 +10,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | | `init` | 既存ディレクトリをプロジェクト化 | MVP 直後 |
 | ビルド | `build` | ビルドのみ | MVP |
 | | `run` | ビルドして実行 | MVP |
-| | `check` | 構文・型チェックのみ（GCC / Clang は `-fsyntax-only`、MSVC / clang-cl は `/Zs`）。オブジェクトを作らず高速。テストのコード（`CUNO_TEST` を定義した状態、`tests/`）とエントリファイルも確認する | MVP |
+| | `check` | 構文・型チェックのみ（フラグは [build.md](build.md#設定とフラグの対応)）。オブジェクトを作らず高速。テストのコード（`CUNO_TEST` を定義した状態、`tests/`）とエントリファイルも確認する | MVP |
 | | `clean` | 出力先を削除 | MVP |
 | テスト | `test` | テスト実行 | MVP |
 | | `bench` | ベンチマーク実行 | 後 |
