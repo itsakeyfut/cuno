@@ -295,6 +295,10 @@ pub fn select(
     let acceptable = |version: &Version| {
         *version >= kind.minimum() && requirement.is_none_or(|r| r.matches(version))
     };
+    let mut requirements = vec![format!(">={} (cuno's minimum)", kind.minimum())];
+    if let Some(r) = requirement {
+        requirements.push(format!("{r} ([toolchain.version] {})", kind.name()));
+    }
 
     // On Windows every compiler uses an MSVC toolset (`toolchain.md`,
     // "Environment resolution on Windows"), so Visual Studio is required
@@ -325,12 +329,35 @@ pub fn select(
             } else {
                 Tool::ClangCl
             };
-            for t in found.llvm.iter().filter(|t| t.tool == tool) {
-                match release_for(t, host) {
-                    Ok(version) => {
-                        candidates.push((t.path.clone(), version, newest_toolset.clone()))
+            let configured = found
+                .llvm
+                .iter()
+                .any(|t| t.tool == tool && t.origin == Origin::Configured);
+            if configured {
+                // The configured copy is the only one used (`toolchain.md`,
+                // "LLVM"): one that cannot be used is an error, never a
+                // reason to take another.
+                let chosen = select_tool(tool, found.llvm, host)?;
+                if !acceptable(&chosen.version) {
+                    return Err(ToolchainError::ConfiguredToolUnusable {
+                        setting: format!("[toolchain.paths] {}", tool.name()),
+                        path: chosen.path,
+                        why: format!(
+                            "{} does not satisfy {}",
+                            chosen.version,
+                            requirements.join(" and ")
+                        ),
+                    });
+                }
+                candidates.push((chosen.path, chosen.version, newest_toolset.clone()));
+            } else {
+                for t in found.llvm.iter().filter(|t| t.tool == tool) {
+                    match release_for(t, host) {
+                        Ok(version) => {
+                            candidates.push((t.path.clone(), version, newest_toolset.clone()))
+                        }
+                        Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
                     }
-                    Err(why) => excluded.push(format!("{} ({why})", t.path.display())),
                 }
             }
         }
@@ -354,10 +381,6 @@ pub fn select(
             .map(|c| (c, c.1)),
     );
     let Some((executable, version, msvc)) = best.cloned() else {
-        let mut requirements = vec![format!(">={} (cuno's minimum)", kind.minimum())];
-        if let Some(r) = requirement {
-            requirements.push(format!("{r} ([toolchain.version] {})", kind.name()));
-        }
         return Err(ToolchainError::NoMatchingVersion {
             compiler: kind.name(),
             requirements,
@@ -1317,6 +1340,68 @@ mod tests {
         elsewhere.msvc = None;
         check(&elsewhere, &Env::default(), inputs, &never).unwrap();
         assert_eq!(*never.calls.borrow(), 0);
+    }
+
+    /// A configured clang or clang-cl is the only copy selection takes: an
+    /// older one wins over a newer copy found, and one that cannot be used,
+    /// or does not satisfy the version requirements, is an error naming the
+    /// setting rather than a reason to take another.
+    ///
+    /// Mutation: let a newer copy found win over the configured one, fall
+    /// back to another copy when the configured one is unusable or does not
+    /// satisfy the requirements, or drop the MSVC-target rule for it; this
+    /// test fails.
+    #[test]
+    fn a_configured_compiler_is_the_only_one_selected() {
+        let installs = [install("VS", &[v(19, 52, 1)])];
+        let mine = |probe| LlvmTool {
+            origin: Origin::Configured,
+            ..tool(Tool::Clang, "mine", probe)
+        };
+        let newer = clang(Tool::Clang, "found", v(22, 1, 8));
+        let pick_with = |llvm: &[LlvmTool], constraints: &Constraints| {
+            pick(&asking("clang"), found(&installs, llvm), constraints)
+        };
+        let none = Constraints::default();
+
+        let older = [
+            mine(ran(v(19, 1, 0), false, Some(MSVC_TARGET))),
+            newer.clone(),
+        ];
+        let selected = pick_with(&older, &none).unwrap();
+        assert_eq!(
+            (selected.executable, selected.version),
+            (PathBuf::from("mine"), v(19, 1, 0))
+        );
+
+        let cases: [(LlvmTool, Constraints, &str); 4] = [
+            (mine(Probe::Failed), none.clone(), "it did not run"),
+            (
+                mine(ran(v(22, 1, 0), false, Some("x86_64-w64-windows-gnu"))),
+                none.clone(),
+                "it targets x86_64-w64-windows-gnu, not MSVC",
+            ),
+            (
+                mine(ran(v(16, 0, 0), false, Some(MSVC_TARGET))),
+                none.clone(),
+                "16.0.0 does not satisfy >=17.0.0 (cuno's minimum)",
+            ),
+            (
+                mine(ran(v(19, 1, 0), false, Some(MSVC_TARGET))),
+                Constraints {
+                    clang: Some(VersionReq::parse("clang", ">=20").unwrap()),
+                    ..Default::default()
+                },
+                "19.1.0 does not satisfy >=17.0.0 (cuno's minimum) and >=20 ([toolchain.version] clang)",
+            ),
+        ];
+        for (configured, constraints, why) in cases {
+            let err = pick_with(&[configured, newer.clone()], &constraints).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("[toolchain.paths] clang is mine, but {why}")
+            );
+        }
     }
 
     /// A configured copy is the only one used, even when older, and is an

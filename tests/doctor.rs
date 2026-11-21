@@ -796,3 +796,47 @@ fn the_checks_use_the_projects_edition() {
         assert!(!run.stderr.contains("another edition"), "{}", run.stderr);
     }
 }
+
+/// A configured clang is the compiler diagnosed even when an installed
+/// one is newer, and one that does not run is a problem naming the setting,
+/// not a reason to diagnose another.
+///
+/// Mutation: let the installed clang win over the configured one, or fall
+/// back to it when the configured one does not run; this test fails.
+#[test]
+fn a_configured_compiler_is_the_one_diagnosed() {
+    if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang", "")]);
+    let fake = project.path().join("fake/clang.cmd");
+    let run = project
+        .file(
+            "fake/clang.cmd",
+            &fake_tool("clang version 18.1.3\nTarget: x86_64-pc-windows-msvc", 0),
+        )
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "clang"]);
+    let selected = format!(
+        "    Selected clang 18.1.3 (--compiler)\n             {}\n",
+        fake.display()
+    );
+    assert!(run.stderr.starts_with(&selected), "{}", run.stderr);
+
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let config = configured(&project, &[("clang", "")]);
+    let fake = project.path().join("fake/clang.cmd");
+    let run = project
+        .file("fake/clang.cmd", &fake_tool("", 1))
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "clang"]);
+    let problem = format!(
+        "error: [toolchain.paths] clang is {}, but it did not run\n\
+         help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n",
+        fake.display()
+    );
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert!(run.stderr.starts_with(&problem), "{}", run.stderr);
+    assert!(!run.stderr.contains("Selected"), "{}", run.stderr);
+}
