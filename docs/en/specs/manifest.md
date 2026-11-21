@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 928eb2031279bf579718a4e6d3474c129515bd2e -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 1ba26d4cc6befd777bf905365254d21f4a32f1b8 -->
 
 # Configuration Files
 
@@ -190,7 +190,7 @@ Values of `compiler`:
 | `warnings-as-errors` | `false` | Whether to treat warnings as errors |
 | `defines` | `[]` | Preprocessor definitions (e.g. `["GAME_DEBUG", "VERSION=3"]`) |
 | `include-dirs` | `[]` | Additional include paths |
-| `links` | `[]` | System libraries to link. Write just the name, and cuno converts it to each compiler's form ([build.md](build.md#settings-and-flags)) |
+| `links` | `[]` | System libraries to link. Write just the name, and cuno converts it to each compiler's form ([build.md](build.md#settings-and-flags)). Writing it with `.lib` is an error (exit code 3) |
 | `lib-dirs` | `[]` | Library search paths |
 | `link-flags` | `[]` | Flags passed to the linker as-is (escape hatch) |
 | `runtime` | `"dynamic"` | How the C runtime is linked |

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 2e21658ef0fff1e4c24a6483e0ce4f49c5cc4c11 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 8009773809148be7e3338e1f786df340832f1e0c -->
 
 # Build
 
@@ -71,11 +71,13 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 | Output | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
 | `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
 | `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
+| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` |
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
-| `debug-info = true` | `/DEBUG` | `/DEBUG` | `-g` |
-| `lto = true` | `/LTCG` | `-flto` | `-flto` |
-| `runtime` | None (the objects say it) | None (the objects say it) | `-fms-runtime-lib=` as for compiling |
-| `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Wl,<flag>` |
+| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` |
+| `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` |
+| `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Xlinker <flag>` |
+
+- `<n>` is `opt-level` (`0` / `1` / `2` / `3`; `"s"` is `2`).
 
 ### Rationale
 
@@ -86,7 +88,11 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - `c++23` and `c23` name their standard on every compiler. "Latest" (`/std:c++latest`, or `/std:clatest` used for C++) is not used: on cl 19.52 and clang-cl 22, `/std:c++latest` is already the C++26 working draft (`__cplusplus` is `202400`), so the same `cuno.toml` would get a different standard than with clang, and different programs would build.
   - cl only warns about a `/std` it does not know and compiles with the old standard. So whether the standard is accepted is decided from cl's version, and it is an error when that is too old ([toolchain.md](toolchain.md)). `/std:c++23` needs cl 19.52 or later, the oldest version checked (no official document says which version accepts it; this is lowered if an older one is confirmed), and `/std:clatest` (the latest C, which includes C23) needs Visual Studio 2022 17.7 (cl 19.37) or later.
   - clang-cl ignores `/std:c++23` and `/std:c23`, so clang's switch is passed through `/clang:`. C23 is written `c2x`, which Clang 17 also accepts (`c23` is from Clang 18).
-- `-fms-runtime-lib`: without it, the GNU-style `clang` uses the static C runtime, which contradicts the `runtime = "dynamic"` default.
+- `-fms-runtime-lib`: without it, the GNU-style `clang` uses the static C runtime, which contradicts the `runtime = "dynamic"` default. It matters only when compiling (the objects record which C runtime they use, and the linker follows them), so it is not passed when linking.
+- `/SUBSYSTEM:CONSOLE`: without it, the linker silently links a program that has `WinMain` and no `main` as a GUI program, with no console. Stated, the missing `main` is a link error.
+- `-Xlinker`: `-Wl,` splits its value at commas, which breaks linker flags that contain one, such as `/OPT:REF,ICF`.
+- `/opt:lldlto=<n>`: with LTO, optimisation runs again at link time, and lld uses level `2` whatever `opt-level` says unless told.
+- `/INCREMENTAL:NO`: MSVC's linker links incrementally by default under `/DEBUG` and writes a `.ilk` (lld does not). This keeps the output the same whatever the compiler.
 - `_HAS_EXCEPTIONS=0`: when exceptions are disabled, the standard library uses its non-throwing implementation whatever the compiler.
 - `/we4530`, `/we4541`, `-Werror=rtti`: with exceptions or RTTI disabled, clang makes `try` / `throw` and `typeid` / `dynamic_cast` errors, but cl and clang-cl only warn and build a program whose destructors do not run or that crashes at run time. These stop the build on every compiler. cl still cannot detect a `throw` without a `try`, with any flag.
 - `pedantic` asks for strict conformance, so clang and clang-cl point out `__uuidof`, which the Windows SDK's `IID_PPV_ARGS` and the like use, as an extension (an error together with `warnings-as-errors`); cl does not. On cl, `/std:c++20` and later and the C standards already include `/permissive-`, so `pedantic` differs little from `all` there.
