@@ -469,29 +469,81 @@ pub fn check(
     if selected.kind == CompilerKind::Msvc || selected.msvc.is_none() {
         return Ok(());
     }
+    let switches: &[&str] = match selected.kind {
+        CompilerKind::ClangCl => &["/nologo", "/TP", "/Zs"],
+        _ => &["-x", "c++", "-fsyntax-only"],
+    };
+    stl_probe(
+        selected.kind.name(),
+        selected.version,
+        inputs.scratch,
+        |probe| {
+            let mut args: Vec<OsString> = switches.iter().map(OsString::from).collect();
+            args.push("--target=x86_64-pc-windows-msvc".into());
+            args.extend(inputs.flags.iter().cloned());
+            args.push(probe.into());
+            run.run(&selected.executable, &as_args(&args), env)
+        },
+    )
+}
+
+/// Whether `tidy` is accepted by the MSVC standard library: the same probe
+/// as [`check`], analysed by clang-tidy with one harmless check enabled
+/// (with none it stops without analysing) and, after `--`, the build's
+/// compile flags for `kind`, in `kind`'s syntax (`toolchain.md`, "Minimum
+/// compiler versions"). The project's `.clang-tidy` is not read.
+pub fn check_tidy(
+    tidy: &LlvmChoice,
+    kind: CompilerKind,
+    env: &Env,
+    inputs: ProbeInputs<'_>,
+    run: &dyn Runner,
+) -> Result<(), ToolchainError> {
+    stl_probe("clang-tidy", tidy.version, inputs.scratch, |probe| {
+        let mut args: Vec<OsString> = vec![
+            "--checks=-*,readability-braces-around-statements".into(),
+            "--config={}".into(),
+            probe.into(),
+            "--".into(),
+        ];
+        if kind != CompilerKind::Clang {
+            // clang-tidy reads flags as the GNU-style driver unless told.
+            args.push("--driver-mode=cl".into());
+        }
+        args.push("--target=x86_64-pc-windows-msvc".into());
+        args.extend(inputs.flags.iter().cloned());
+        run.run(&tidy.path, &as_args(&args), env)
+    })
+}
+
+fn as_args(args: &[OsString]) -> Vec<&OsStr> {
+    args.iter().map(|a| a.as_os_str()).collect()
+}
+
+/// Writes the probe file to `scratch`, runs `invoke` on it, and reads the
+/// standard library's verdict: `STL1000:` on stdout (clang-tidy) or stderr
+/// (the compilers) is a rejection; any other failure decides nothing.
+fn stl_probe(
+    name: &'static str,
+    version: Version,
+    scratch: &Path,
+    invoke: impl FnOnce(&Path) -> std::io::Result<crate::Output>,
+) -> Result<(), ToolchainError> {
     let failed = |output: String| ToolchainError::ProbeFailed {
-        compiler: selected.kind.name(),
+        compiler: name,
         output,
     };
     // A name of its own, so that two cuno processes sharing `scratch` do not
     // write or remove each other's file.
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let probe = inputs.scratch.join(format!(
+    let probe = scratch.join(format!(
         "cuno-stl-probe-{}-{}.cpp",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::write(&probe, "#include <yvals_core.h>\n")
         .map_err(|e| failed(format!("could not write {}: {e}", probe.display())))?;
-    let mut args: Vec<OsString> = match selected.kind {
-        CompilerKind::ClangCl => vec!["/nologo".into(), "/TP".into(), "/Zs".into()],
-        _ => vec!["-x".into(), "c++".into(), "-fsyntax-only".into()],
-    };
-    args.push("--target=x86_64-pc-windows-msvc".into());
-    args.extend(inputs.flags.iter().cloned());
-    args.push(probe.clone().into());
-    let args: Vec<&OsStr> = args.iter().map(|a| a.as_os_str()).collect();
-    let output = run.run(&selected.executable, &args, env);
+    let output = invoke(&probe);
     let _ = std::fs::remove_file(&probe);
     let output = output.map_err(|e| failed(e.to_string()))?;
     if output.success {
@@ -504,12 +556,60 @@ pub fn check(
     );
     match text.lines().find(|line| line.contains("STL1000:")) {
         Some(line) => Err(ToolchainError::RejectedByStl {
-            compiler: selected.kind.name(),
-            version: selected.version,
+            compiler: name,
+            version,
             needed: needed_clang(line),
             message: line.trim().to_owned(),
         }),
         None => Err(failed(text.trim().to_owned())),
+    }
+}
+
+/// A clang-format or clang-tidy to use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LlvmChoice {
+    /// The executable.
+    pub path: PathBuf,
+    /// Its version.
+    pub version: Version,
+}
+
+/// The clang-format or clang-tidy to use among those detected: the newest
+/// that ran and is a release; among equals, the first in search order
+/// (`toolchain.md`, "LLVM"). Unlike a compiler, its default target does not
+/// matter (clang-tidy prints none), and no minimum applies.
+pub fn select_tool(tool: Tool, llvm: &[LlvmTool]) -> Result<LlvmChoice, ToolchainError> {
+    let mut excluded = Vec::new();
+    let mut candidates = Vec::new();
+    for t in llvm.iter().filter(|t| t.tool == tool) {
+        match &t.probe {
+            Probe::Ran {
+                version,
+                prerelease: false,
+                ..
+            } => candidates.push(LlvmChoice {
+                path: t.path.clone(),
+                version: *version,
+            }),
+            Probe::Ran { version, .. } => {
+                excluded.push(format!("{} ({version} is a preview)", t.path.display()))
+            }
+            Probe::NoVersion => {
+                excluded.push(format!("{} (it printed no version)", t.path.display()))
+            }
+            Probe::Failed => excluded.push(format!("{} (it did not run)", t.path.display())),
+        }
+    }
+    let versions: Vec<_> = candidates.iter().map(|c| c.version).collect();
+    match first_newest(candidates.into_iter().zip(versions)) {
+        Some(best) => Ok(best),
+        None if excluded.is_empty() => Err(ToolchainError::CompilerNotFound {
+            compiler: tool.name(),
+        }),
+        None => Err(ToolchainError::NoUsableCompiler {
+            compiler: tool.name(),
+            excluded,
+        }),
     }
 }
 
@@ -1194,5 +1294,101 @@ mod tests {
         elsewhere.msvc = None;
         check(&elsewhere, &Env::default(), inputs, &never).unwrap();
         assert_eq!(*never.calls.borrow(), 0);
+    }
+
+    /// Mutation: pick the first copy rather than the newest, accept a preview
+    /// or a copy that did not run, demand an MSVC target of clang-tidy (it
+    /// prints none), or say "not found" when copies were left out; this test
+    /// fails.
+    #[test]
+    fn the_newest_release_of_a_tool_is_used() {
+        let llvm = [
+            tool(Tool::ClangTidy, "old", ran(v(19, 1, 0), false, None)),
+            tool(Tool::ClangTidy, "new", ran(v(22, 1, 8), false, None)),
+            tool(Tool::ClangTidy, "preview", ran(v(23, 0, 0), true, None)),
+            tool(Tool::ClangTidy, "broken", Probe::Failed),
+            tool(Tool::ClangFormat, "format", ran(v(18, 1, 0), false, None)),
+        ];
+        assert_eq!(
+            select_tool(Tool::ClangTidy, &llvm).unwrap(),
+            LlvmChoice {
+                path: "new".into(),
+                version: v(22, 1, 8)
+            }
+        );
+        assert!(matches!(
+            select_tool(Tool::Clang, &llvm),
+            Err(ToolchainError::CompilerNotFound { compiler: "clang" })
+        ));
+        let unusable = [
+            tool(Tool::ClangFormat, "preview", ran(v(23, 0, 0), true, None)),
+            tool(Tool::ClangFormat, "silent", Probe::NoVersion),
+            tool(Tool::ClangFormat, "broken", Probe::Failed),
+        ];
+        let err = select_tool(Tool::ClangFormat, &unusable).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "no usable clang-format was found; left out: preview (23.0.0 is a preview); \
+             silent (it printed no version); broken (it did not run)"
+        );
+    }
+
+    /// Mutation: read only stderr (clang-tidy reports STL1000 on stdout),
+    /// name the compiler instead of clang-tidy, leave out the one check or
+    /// `--`, give the build's flags before `--`, or put cl-style flags
+    /// through clang-tidy without `--driver-mode=cl` (or GNU-style ones
+    /// with it); this test fails.
+    #[test]
+    fn clang_tidy_is_asked_the_standard_librarys_verdict() {
+        let root = tempfile::tempdir().unwrap();
+        let flags: Vec<OsString> = vec!["/GR-".into()];
+        let inputs = ProbeInputs {
+            scratch: root.path(),
+            flags: &flags,
+        };
+        let tidy = LlvmChoice {
+            path: "clang-tidy".into(),
+            version: v(20, 1, 8),
+        };
+        let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer. [clang-diagnostic-error]\n";
+        let err = check_tidy(
+            &tidy,
+            CompilerKind::Msvc,
+            &Env::default(),
+            inputs,
+            &answers(false, stl, ""),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "clang-tidy 20.1.8 is not accepted by the MSVC standard library in use (STL1000)"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).unwrap(),
+            "install clang-tidy 22 or newer"
+        );
+
+        for (kind, mode) in [
+            (CompilerKind::Msvc, &["--driver-mode=cl"][..]),
+            (CompilerKind::ClangCl, &["--driver-mode=cl"][..]),
+            (CompilerKind::Clang, &[][..]),
+        ] {
+            let run = answers(true, "", "");
+            check_tidy(&tidy, kind, &Env::default(), inputs, &run).unwrap();
+            let args = run.args.borrow().clone();
+            assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
+            assert!(args[2].ends_with(".cpp"), "{args:?}");
+            assert_eq!(
+                args[3..],
+                [
+                    &["--"][..],
+                    mode,
+                    &["--target=x86_64-pc-windows-msvc", "/GR-"]
+                ]
+                .concat(),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

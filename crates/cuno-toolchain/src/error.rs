@@ -241,6 +241,11 @@ impl CunoError for ToolchainError {
                     .to_owned(),
             ),
             ToolchainError::RejectedByStl {
+                compiler: "clang-tidy",
+                needed: Some(needed),
+                ..
+            } => Some(format!("install clang-tidy {needed} or newer")),
+            ToolchainError::RejectedByStl {
                 needed, message, ..
             } => Some(match needed {
                 Some(needed) => {
