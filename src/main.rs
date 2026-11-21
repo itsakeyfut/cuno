@@ -3,9 +3,11 @@
 //! See `docs/en/specs/commands.md` for the commands, options, output and exit
 //! codes, and `docs/en/specs/architecture.md` for how the crates are split.
 
+mod doctor;
+
 use std::io::IsTerminal;
 
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell};
 
 /// The top-level command line. Subcommands are added with the milestones that
@@ -28,6 +30,20 @@ struct Cli {
     /// Coloring
     #[arg(long, value_name = "WHEN", value_enum, global = true)]
     color: Option<Color>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// The commands (docs/en/specs/commands.md).
+#[derive(Subcommand)]
+enum Command {
+    /// Diagnose the environment and show a fix for each problem
+    Doctor {
+        /// The compiler to diagnose (msvc / clang / clang-cl / gcc / safec)
+        #[arg(long, value_name = "NAME")]
+        compiler: Option<String>,
+    },
 }
 
 /// The values of `--color`. A separate type because `cuno-core` does not
@@ -61,31 +77,68 @@ fn main() {
         &env,
         std::io::stderr().is_terminal(),
     );
-    if let Err(error) = run(cli, &env) {
-        std::process::exit(report(&mut shell, &*error));
+    match run(cli, &env, &mut shell) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(error) => std::process::exit(report(&mut shell, &*error)),
     }
     // A panic anywhere exits with Rust's own code, 101, the spec's code for an
     // internal error. This holds while `panic = "abort"` is not set in any
     // profile; tests/cli.rs, `a_panic_exits_101`, guards it.
 }
 
-/// Carries out the command line. Every error a command can meet comes back
-/// here rather than being printed where it happens.
-fn run(cli: Cli, env: &Env) -> Result<(), Box<dyn CunoError>> {
-    // Destructured rather than ignored, so that adding a field to `Cli` (the
-    // first subcommand) fails to compile here until it is handled.
-    let Cli { color: _ } = cli;
+/// Carries out the command line and returns the exit code. Every error a
+/// command can meet comes back here rather than being printed where it
+/// happens; `doctor` prints its problems itself and only says how many.
+fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>> {
+    // Destructured rather than ignored, so that adding a field to `Cli`
+    // fails to compile here until it is handled.
+    let Cli { color: _, command } = cli;
 
     #[cfg(debug_assertions)]
     test_trigger::fire(env)?;
-    let _ = env;
+
+    match command {
+        Some(Command::Doctor { compiler }) => {
+            // The binary alone reads the process (architecture.md).
+            let cwd = std::env::current_dir()
+                .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
+            let problems = doctor::doctor(
+                compiler,
+                env,
+                &cwd,
+                cuno_toolchain::HostOs::current(),
+                shell,
+            );
+            return Ok(if problems == 0 { 0 } else { 1 });
+        }
+        None => {}
+    }
 
     // Reaching here means no command was given. Like Cargo, print the usage to
     // stdout and succeed; see docs/en/specs/commands.md, "Without a command".
     // A failed write (a closed stdout) is ignored, matching what clap does for
     // `--help` and what Cargo does in both cases: the exit code stays 0.
     let _ = Cli::command().print_help();
-    Ok(())
+    Ok(0)
+}
+
+/// The current directory cannot be read (deleted, or no permission).
+#[derive(Debug)]
+struct CwdError(String);
+
+impl std::fmt::Display for CwdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cannot read the current directory: {}", self.0)
+    }
+}
+
+impl std::error::Error for CwdError {}
+
+impl CunoError for CwdError {
+    fn exit_class(&self) -> cuno_core::ExitClass {
+        cuno_core::ExitClass::Setup
+    }
 }
 
 /// The one place an error is shown and turned into an exit code
