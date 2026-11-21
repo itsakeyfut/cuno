@@ -8,6 +8,7 @@
 
 mod support;
 
+use std::path::Path;
 use std::process::Command;
 
 use cuno_core::Env;
@@ -273,8 +274,8 @@ fn a_missing_visual_studio_is_reported_not_fatal() {
         1,
         "",
         &format!(
-            "error: vswhere.exe was not found at {}\n{help}{tools}        \
-             Info msvc not found\n{info}    \
+            // MSVC is the compiler asked for, so it has no Info line.
+            "error: vswhere.exe was not found at {}\n{help}{tools}{info}    \
              Finished {finished}\n",
             vswhere.display(),
         ),
@@ -397,7 +398,8 @@ fn the_toolchain_settings_constrain_the_selection() {
                  help: install a clang that satisfies it, or change [toolchain.version] clang\n{}{}    \
                  Finished 1 problem found\n",
                 found_tools(),
-                others(None)
+                // clang is the compiler asked for, so it has no Info line.
+                others(Some(select::CompilerKind::Clang))
             ),
         );
     Project::new()
@@ -611,33 +613,8 @@ fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
     let project = Project::new();
     let empty = project.home().join("empty");
     std::fs::create_dir(&empty).unwrap();
-    // PATH without any directory holding an LLVM tool.
-    let path: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .filter(|dir| {
-            ![
-                "clang.exe",
-                "clang-cl.exe",
-                "clang-format.exe",
-                "clang-tidy.exe",
-            ]
-            .iter()
-            .any(|tool| dir.join(tool).is_file())
-        })
-        .collect();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
-    // Removed under the name it is inherited by (`Path` on Windows), or the
-    // child would see the original beside the one set here.
-    for (name, _) in std::env::vars_os() {
-        if name.eq_ignore_ascii_case("PATH") {
-            cmd.env_remove(name);
-        }
-    }
-    cmd.args(["doctor", "--compiler", "msvc"])
-        .env("PATH", std::env::join_paths(path).unwrap())
-        .env("ProgramFiles", &empty)
-        // Windows gives a 64-bit process `ProgramFiles` from this one.
-        .env("ProgramW6432", &empty)
-        .env("ProgramFiles(x86)", &empty);
+    let mut cmd = without_llvm(&empty, None);
+    cmd.args(["doctor", "--compiler", "msvc"]);
     let run = project.run_command(cmd);
     let vswhere = empty.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
     let llvm_help = |tool: &str| {
@@ -653,7 +630,6 @@ fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
              help: install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/\n\
              error: no clang-format was found\n{}\
              error: no clang-tidy was found\n{}        \
-             Info msvc not found\n        \
              Info clang not found\n        \
              Info clang-cl not found\n    \
              Finished 3 problems found\n",
@@ -872,4 +848,144 @@ fn an_unusable_configured_compiler_is_a_problem_even_unselected() {
         .file(".cuno/config.toml", &config)
         .cuno(&["doctor", "--compiler", "msvc"])
         .assert(1, "", &expected);
+}
+
+/// A configured clang below cuno's minimum is the same problem whether or
+/// not clang is the compiler asked for, reported once, and never also
+/// listed as an `Info` line.
+///
+/// Mutation: judge the `Info` lines without cuno's minimum, or give the
+/// compiler asked for an `Info` line too; this test fails.
+#[test]
+fn a_configured_clang_below_the_minimum_is_one_problem_either_way() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = || {
+        let project = Project::new().file("cuno.toml", &manifest(""));
+        let config = configured(&project, &[("clang", "")]);
+        let fake = project.path().join("fake/clang.cmd");
+        let project = project
+            .file(
+                "fake/clang.cmd",
+                &fake_tool("clang version 16.0.6\nTarget: x86_64-pc-windows-msvc", 0),
+            )
+            .file(".cuno/config.toml", &config);
+        (project, fake)
+    };
+    let problem = |fake: &Path| {
+        format!(
+            "error: [toolchain.paths] clang is {}, but 16.0.6 does not satisfy >=17.0.0 (cuno's minimum)\n\
+             help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n",
+            fake.display()
+        )
+    };
+    for args in [&["doctor"][..], &["doctor", "--compiler", "clang"][..]] {
+        let (project, fake) = project();
+        let run = project.cuno(args);
+        assert_eq!(run.code, Some(1), "{args:?}: {}", run.stderr);
+        assert_eq!(
+            run.stderr.matches(&problem(&fake)).count(),
+            1,
+            "{args:?}: {}",
+            run.stderr
+        );
+        assert!(
+            !run.stderr.contains("Info clang "),
+            "{args:?}: {}",
+            run.stderr
+        );
+    }
+}
+
+/// A `cuno` command that finds no LLVM tool and no Visual Studio: `PATH`
+/// without any directory holding one (plus `extra`, first, when given), and
+/// the install directories pointed at `empty`.
+fn without_llvm(empty: &Path, extra: Option<&Path>) -> Command {
+    let path: Vec<_> = extra
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap()).filter(|dir| {
+                ![
+                    "clang.exe",
+                    "clang-cl.exe",
+                    "clang-format.exe",
+                    "clang-tidy.exe",
+                ]
+                .iter()
+                .any(|tool| dir.join(tool).is_file())
+            }),
+        )
+        .collect();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    // Removed under the name it is inherited by (`Path` on Windows), or the
+    // child would see the original beside the one set here.
+    for (name, _) in std::env::vars_os() {
+        if name.eq_ignore_ascii_case("PATH") {
+            cmd.env_remove(name);
+        }
+    }
+    cmd.env("PATH", std::env::join_paths(path).unwrap())
+        .env("ProgramFiles", empty)
+        // Windows gives a 64-bit process `ProgramFiles` from this one.
+        .env("ProgramW6432", empty)
+        .env("ProgramFiles(x86)", empty);
+    cmd
+}
+
+/// A compiler that is found but cannot be used, and is not the one asked
+/// for, is listed as `not usable` with the reason, not as `not found`, and
+/// is no problem.
+///
+/// Mutation: list it as `not found`, or count it as a problem; this test
+/// fails.
+#[test]
+fn a_found_but_unusable_compiler_is_listed_with_its_reason() {
+    let project = Project::new();
+    let empty = project.home().join("empty");
+    let bin = project.home().join("old-llvm");
+    std::fs::create_dir_all(&empty).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("fake.c"),
+        "#include <stdio.h>
+int main(void) { puts(\"clang version 16.0.6\");          puts(\"Target: x86_64-pc-windows-msvc\"); return 0; }
+",
+    )
+    .unwrap();
+    let Some(mut compile) = require(Compiler::Msvc, Language::C, "fake.c", "clang.exe") else {
+        return;
+    };
+    let built = compile.current_dir(&bin).output().unwrap();
+    assert!(built.status.success(), "{built:?}");
+
+    let mut cmd = without_llvm(&empty, Some(&bin));
+    cmd.args(["doctor", "--compiler", "msvc"]);
+    let run = project.run_command(cmd);
+    assert!(
+        run.stderr.contains(
+            "        Info clang not usable: no clang found satisfies >=17.0.0 (cuno's minimum); found 16.0.6
+"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains(
+            "        Info clang-cl not found
+"
+        ),
+        "{}",
+        run.stderr
+    );
+    // vswhere, clang-format and clang-tidy, not the old clang.
+    assert!(
+        run.stderr.ends_with(
+            "    Finished 3 problems found
+"
+        ),
+        "{}",
+        run.stderr
+    );
 }
