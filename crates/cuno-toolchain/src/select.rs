@@ -14,60 +14,8 @@ use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
 use crate::{HostOs, Runner, ToolchainError, Version};
 
-/// A compiler cuno can build with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompilerKind {
-    /// cl.exe.
-    Msvc,
-    /// clang with GCC-style flags.
-    Clang,
-    /// clang-cl, Clang with MSVC-style flags.
-    ClangCl,
-}
-
-impl CompilerKind {
-    /// The name used in settings (`msvc`, `clang`, `clang-cl`).
-    pub fn name(self) -> &'static str {
-        match self {
-            CompilerKind::Msvc => "msvc",
-            CompilerKind::Clang => "clang",
-            CompilerKind::ClangCl => "clang-cl",
-        }
-    }
-
-    /// The oldest version cuno supports (`toolchain.md`, "Minimum compiler
-    /// versions").
-    fn minimum(self) -> Version {
-        match self {
-            CompilerKind::Msvc => Version {
-                major: 19,
-                minor: 29,
-                patch: 0,
-            },
-            CompilerKind::Clang | CompilerKind::ClangCl => Version {
-                major: 17,
-                minor: 0,
-                patch: 0,
-            },
-        }
-    }
-
-    fn parse(name: &str, source: Source) -> Result<CompilerKind, ToolchainError> {
-        match name {
-            "msvc" => Ok(CompilerKind::Msvc),
-            "clang" => Ok(CompilerKind::Clang),
-            "clang-cl" => Ok(CompilerKind::ClangCl),
-            "gcc" | "safec" => Err(ToolchainError::UnsupportedCompiler {
-                name: name.to_owned(),
-                source: source.to_string(),
-            }),
-            _ => Err(ToolchainError::UnknownCompiler {
-                name: name.to_owned(),
-                source: source.to_string(),
-            }),
-        }
-    }
-}
+pub use crate::compiler::CompilerKind;
+use crate::compiler::{Family, Syntax};
 
 /// Where the choice of compiler came from, highest precedence first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -354,11 +302,9 @@ pub fn copy_of(
             );
         }
         CompilerKind::Clang | CompilerKind::ClangCl => {
-            let tool = if kind == CompilerKind::Clang {
-                Tool::Clang
-            } else {
-                Tool::ClangCl
-            };
+            let tool = kind
+                .llvm_tool()
+                .expect("the LLVM family is found as an LLVM tool");
             let configured = found
                 .llvm
                 .iter()
@@ -517,12 +463,14 @@ pub fn check(
     inputs: ProbeInputs<'_>,
     run: &dyn Runner,
 ) -> Result<(), ToolchainError> {
-    if selected.kind == CompilerKind::Msvc || selected.msvc.is_none() {
-        return Ok(());
+    // Only an LLVM compiler using the MSVC standard library is checked.
+    match selected.kind.family() {
+        Family::Llvm if selected.msvc.is_some() => {}
+        Family::Llvm | Family::Msvc => return Ok(()),
     }
-    let switches: &[&str] = match selected.kind {
-        CompilerKind::ClangCl => &["/nologo", "/TP", "/Zs"],
-        _ => &["-x", "c++", "-fsyntax-only"],
+    let switches: &[&str] = match selected.kind.syntax() {
+        Syntax::Cl => &["/nologo", "/TP", "/Zs"],
+        Syntax::Gnu => &["-x", "c++", "-fsyntax-only"],
     };
     stl_probe(
         selected.kind.name(),
@@ -557,7 +505,11 @@ pub fn check_tidy(
             probe.into(),
             "--".into(),
         ];
-        if kind != CompilerKind::Clang {
+        let cl_syntax = match kind.syntax() {
+            Syntax::Cl => true,
+            Syntax::Gnu => false,
+        };
+        if cl_syntax {
             // clang-tidy reads flags as the GNU-style driver unless told.
             args.push("--driver-mode=cl".into());
         }

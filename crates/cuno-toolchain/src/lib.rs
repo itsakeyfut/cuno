@@ -3,6 +3,7 @@
 //!
 //! See `docs/en/specs/toolchain.md`.
 
+pub mod compiler;
 mod error;
 pub mod flags;
 mod host;

@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings};
-use crate::select::CompilerKind;
+use crate::compiler::{CompilerKind, Family, Syntax};
 use crate::{ToolchainError, Version};
 
 /// Whether a source is compiled to an object or only checked (`cuno check`).
@@ -46,7 +46,10 @@ pub struct CompileInput<'a> {
 /// (`select::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
 pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     let mut out = Flags::default();
-    let msvc_style = input.kind != CompilerKind::Clang;
+    let msvc_style = match input.kind.syntax() {
+        Syntax::Cl => true,
+        Syntax::Gnu => false,
+    };
     let cxx = input.lang == Lang::Cxx;
     let build = input.build;
     let profile = input.profile;
@@ -55,8 +58,10 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     if msvc_style {
         out.push(&["/nologo", "/utf-8"]);
     }
-    if input.kind != CompilerKind::Msvc {
-        out.push(&["--target=x86_64-pc-windows-msvc"]);
+    match input.kind.family() {
+        // The MSVC ABI, so the objects link with MSVC-built libraries.
+        Family::Llvm => out.push(&["--target=x86_64-pc-windows-msvc"]),
+        Family::Msvc => {}
     }
     if msvc_style && cxx {
         out.push(&["/Zc:__cplusplus"]);
@@ -67,7 +72,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     out.push(match (build.warnings, input.kind) {
         (Warnings::Default, _) => &[][..],
         (Warnings::All, CompilerKind::Clang) => &["-Wall", "-Wextra"],
-        (Warnings::All, _) => &["/W4"],
+        (Warnings::All, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/W4"],
         (Warnings::Pedantic, CompilerKind::Msvc) => &["/W4", "/permissive-"],
         (Warnings::Pedantic, CompilerKind::ClangCl) => &["/W4", "-Wpedantic"],
         (Warnings::Pedantic, CompilerKind::Clang) => &["-Wall", "-Wextra", "-Wpedantic"],
@@ -76,11 +81,11 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&[if msvc_style { "/WX" } else { "-Werror" }]);
     }
 
-    out.push(&[match (build.runtime, msvc_style) {
-        (Runtime::Dynamic, true) => "/MD",
-        (Runtime::Static, true) => "/MT",
-        (Runtime::Dynamic, false) => "-fms-runtime-lib=dll",
-        (Runtime::Static, false) => "-fms-runtime-lib=static",
+    out.push(&[match (build.runtime, input.kind) {
+        (Runtime::Dynamic, CompilerKind::Msvc | CompilerKind::ClangCl) => "/MD",
+        (Runtime::Static, CompilerKind::Msvc | CompilerKind::ClangCl) => "/MT",
+        (Runtime::Dynamic, CompilerKind::Clang) => "-fms-runtime-lib=dll",
+        (Runtime::Static, CompilerKind::Clang) => "-fms-runtime-lib=static",
     }]);
 
     if cxx {
@@ -89,7 +94,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         // error, as clang does (build.md, "Settings and flags").
         out.push(match (build.exceptions, input.kind) {
             (true, CompilerKind::Clang) => &[][..],
-            (true, _) => &["/EHsc"],
+            (true, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/EHsc"],
             (false, CompilerKind::Msvc) => &["/we4530"],
             (false, CompilerKind::ClangCl) => &[],
             (false, CompilerKind::Clang) => &["-fno-exceptions"],
@@ -117,10 +122,9 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&[if msvc_style { "/Z7" } else { "-g" }]);
     }
     if profile.lto {
-        out.push(&[if input.kind == CompilerKind::Msvc {
-            "/GL"
-        } else {
-            "-flto"
+        out.push(&[match input.kind.family() {
+            Family::Msvc => "/GL",
+            Family::Llvm => "-flto",
         }]);
     }
 
@@ -158,7 +162,10 @@ pub fn compile_args(
     source: &Path,
     object: Option<&Path>,
 ) -> Vec<OsString> {
-    let msvc_style = input.kind != CompilerKind::Clang;
+    let msvc_style = match input.kind.syntax() {
+        Syntax::Cl => true,
+        Syntax::Gnu => false,
+    };
     let mut args: Vec<OsString> = vec![
         match (input.mode, msvc_style) {
             (Mode::Compile, true) => "/c",
@@ -206,10 +213,10 @@ fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
         (CompilerKind::ClangCl, Edition::C23) => "/clang:-std=c2x",
         (CompilerKind::Msvc, Edition::Cxx23) => "/std:c++23",
         (CompilerKind::Msvc, Edition::C23) => "/std:clatest",
-        (_, Edition::Cxx17) => "/std:c++17",
-        (_, Edition::Cxx20) => "/std:c++20",
-        (_, Edition::C11) => "/std:c11",
-        (_, Edition::C17) => "/std:c17",
+        (CompilerKind::Msvc | CompilerKind::ClangCl, Edition::Cxx17) => "/std:c++17",
+        (CompilerKind::Msvc | CompilerKind::ClangCl, Edition::Cxx20) => "/std:c++20",
+        (CompilerKind::Msvc | CompilerKind::ClangCl, Edition::C11) => "/std:c11",
+        (CompilerKind::Msvc | CompilerKind::ClangCl, Edition::C17) => "/std:c17",
     }
 }
 
@@ -224,18 +231,23 @@ pub fn check_edition(
     version: Version,
     edition: Edition,
 ) -> Result<(), ToolchainError> {
-    let needed = match (kind, edition) {
-        (CompilerKind::Msvc, Edition::Cxx23) => Version {
-            major: 19,
-            minor: 52,
-            patch: 0,
+    let needed = match kind {
+        // cl ignores a `/std` it does not know, so its version decides.
+        CompilerKind::Msvc => match edition {
+            Edition::Cxx23 => Version {
+                major: 19,
+                minor: 52,
+                patch: 0,
+            },
+            Edition::C23 => Version {
+                major: 19,
+                minor: 37,
+                patch: 0,
+            },
+            _ => return Ok(()),
         },
-        (CompilerKind::Msvc, Edition::C23) => Version {
-            major: 19,
-            minor: 37,
-            patch: 0,
-        },
-        _ => return Ok(()),
+        // Every supported Clang accepts every edition (as `c2x` for C23).
+        CompilerKind::Clang | CompilerKind::ClangCl => return Ok(()),
     };
     if version >= needed {
         return Ok(());

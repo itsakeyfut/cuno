@@ -7,10 +7,11 @@ use std::path::Path;
 
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{CliSettings, CompilerName, Inputs, Lang, Os, Profile, Settings};
+use cuno_toolchain::compiler::{CompilerKind, Family};
 use cuno_toolchain::flags::{CompileInput, Mode, check_edition, compile_flags};
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::{self, SystemRegistry};
-use cuno_toolchain::select::{self, Choices, CompilerKind, Found, ProbeInputs};
+use cuno_toolchain::select::{self, Choices, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
 /// Prints `error:` and `help:` and counts problems.
@@ -186,7 +187,10 @@ fn diagnose(
             // the kind asked for has no `Info` line: a configured copy of it
             // that cannot be used is reported here, or nowhere.
             if vs_error
-                && let Some(kind @ (CompilerKind::Clang | CompilerKind::ClangCl)) = attempted
+                && let Some(kind) = attempted.filter(|k| match k.family() {
+                    Family::Llvm => true,
+                    Family::Msvc => false,
+                })
                 && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
                     select::copy_of(kind, found, &constraints, host)
             {
@@ -228,7 +232,13 @@ fn diagnose(
     let Some(toolset) = &selected.msvc else {
         return diagnosed;
     };
-    if selected.kind != CompilerKind::Msvc {
+    // An LLVM compiler borrows a toolset, named here, and is checked against
+    // its standard library below; MSVC's own is on its `Selected` line.
+    let borrows_msvc = match selected.kind.family() {
+        Family::Llvm => true,
+        Family::Msvc => false,
+    };
+    if borrows_msvc {
         // <VS>\VC\Tools\MSVC\<version>
         let install = toolset.dir.ancestors().nth(4).unwrap_or(&toolset.dir);
         problems.shell.status(
@@ -265,7 +275,7 @@ fn diagnose(
         env: msvc::resolve(toolset, &sdk).apply(env),
         flags,
     };
-    if selected.kind != CompilerKind::Msvc {
+    if borrows_msvc {
         let result = in_scratch(selected.kind.name(), |scratch| {
             select::check(
                 &selected,
@@ -343,15 +353,12 @@ fn others(
     host: HostOs,
     problems: &mut Problems<'_>,
 ) {
-    for kind in [
-        CompilerKind::Msvc,
-        CompilerKind::Clang,
-        CompilerKind::ClangCl,
-    ] {
-        if Some(kind) == diagnosed.attempted
-            || (kind != CompilerKind::Msvc && !looked_for_llvm)
-            || (kind == CompilerKind::Msvc && diagnosed.vs_reported)
-        {
+    for kind in CompilerKind::ALL {
+        let skip = match kind.family() {
+            Family::Llvm => !looked_for_llvm,
+            Family::Msvc => diagnosed.vs_reported,
+        };
+        if Some(kind) == diagnosed.attempted || skip {
             continue;
         }
         let line = match select::copy_of(kind, found, &Default::default(), host) {
@@ -379,11 +386,7 @@ fn probe_flags(
     kind: CompilerKind,
     project: Option<(&Path, &cuno_manifest::Manifest)>,
 ) -> Result<Vec<OsString>, Box<dyn CunoError>> {
-    let name = match kind {
-        CompilerKind::Msvc => CompilerName::Msvc,
-        CompilerKind::Clang => CompilerName::Clang,
-        CompilerKind::ClangCl => CompilerName::ClangCl,
-    };
+    let name = CompilerName::from(kind);
     let default_manifest;
     let (root, manifest) = match project {
         Some((root, manifest)) => (Some(root), manifest),

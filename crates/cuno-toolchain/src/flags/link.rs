@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, OptLevel, ProfileSettings, Subsystem};
-use crate::select::CompilerKind;
+use crate::compiler::{CompilerKind, Family};
 
 /// What one link of the build is made from.
 #[derive(Clone, Copy, Debug)]
@@ -65,31 +65,35 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
 
     args.extend(objects.iter().map(OsString::from));
 
-    if input.kind == CompilerKind::Clang {
-        args.extend(["-o".into(), exe.into()]);
-        for lib in &build.links {
-            args.push(format!("-l{lib}").into());
+    match input.kind {
+        // clang's GNU-style driver, linking with lld for the MSVC ABI.
+        CompilerKind::Clang => {
+            args.extend(["-o".into(), exe.into()]);
+            for lib in &build.links {
+                args.push(format!("-l{lib}").into());
+            }
+            for dir in &build.lib_dirs {
+                let mut arg = OsString::from("-L");
+                arg.push(dir);
+                args.push(arg);
+            }
+            push(
+                &mut args,
+                match input.subsystem {
+                    Subsystem::Console => &["-Wl,/subsystem:console"][..],
+                    Subsystem::Windows => &["-Wl,/subsystem:windows", "-Wl,/entry:mainCRTStartup"],
+                },
+            );
+            if profile.lto {
+                args.push(format!("-Wl,/opt:lldlto={lto_level}").into());
+            }
+            // `-Xlinker`, not `-Wl,`, which would split a flag at its commas.
+            for flag in &build.link_flags {
+                args.extend(["-Xlinker".into(), flag.into()]);
+            }
+            return args;
         }
-        for dir in &build.lib_dirs {
-            let mut arg = OsString::from("-L");
-            arg.push(dir);
-            args.push(arg);
-        }
-        push(
-            &mut args,
-            match input.subsystem {
-                Subsystem::Console => &["-Wl,/subsystem:console"][..],
-                Subsystem::Windows => &["-Wl,/subsystem:windows", "-Wl,/entry:mainCRTStartup"],
-            },
-        );
-        if profile.lto {
-            args.push(format!("-Wl,/opt:lldlto={lto_level}").into());
-        }
-        // `-Xlinker`, not `-Wl,`, which would split a flag at its commas.
-        for flag in &build.link_flags {
-            args.extend(["-Xlinker".into(), flag.into()]);
-        }
-        return args;
+        CompilerKind::Msvc | CompilerKind::ClangCl => {}
     }
 
     let mut out = OsString::from("/Fe:");
@@ -116,16 +120,16 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
     );
     if profile.debug_info {
         push(&mut args, &["/DEBUG"]);
-        if input.kind == CompilerKind::Msvc {
+        match input.kind.family() {
             // link.exe links incrementally under /DEBUG; lld does not.
-            push(&mut args, &["/INCREMENTAL:NO"]);
+            Family::Msvc => push(&mut args, &["/INCREMENTAL:NO"]),
+            Family::Llvm => {}
         }
     }
     if profile.lto {
-        if input.kind == CompilerKind::Msvc {
-            push(&mut args, &["/LTCG"]);
-        } else {
-            args.push(format!("/opt:lldlto={lto_level}").into());
+        match input.kind.family() {
+            Family::Msvc => push(&mut args, &["/LTCG"]),
+            Family::Llvm => args.push(format!("/opt:lldlto={lto_level}").into()),
         }
     }
     args.extend(build.link_flags.iter().map(OsString::from));
