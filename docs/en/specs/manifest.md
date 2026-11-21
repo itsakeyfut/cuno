@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 95e2775cab93a2d7c93db7d1f271265955352a8e -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob bf2e321488c5bc3b13e1d1aa9332fd6aadb61bd8 -->
 
 # Configuration Files
 
@@ -97,7 +97,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 
 **Error** (exit code 3. Ignoring them would silently build something different from what the user intended):
 
-- `compiler = "gcc"` / `"safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml)
+- `compiler = "gcc"` / `"safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml). It is an error only when it is the compiler selected; if a higher layer overrides it with another compiler, it is not an error (just as `[toolchain.version]` checks only the constraint of the compiler used).
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - Custom profiles (`inherits`, and `--profile` other than `dev` / `release`)
 - `[lib]`
@@ -111,6 +111,7 @@ Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `c
 
 - If `cuno.toml` / `config.toml` contains a key cuno does not know, it emits a **warning** and continues (not an error).
 - Reason: so that an older cuno does not stop when reading items added in a newer cuno (same as Cargo).
+- Warnings and errors about a configuration file show the file, line and column (e.g. `--> cuno.toml:12:1`), so that a misspelling and the like can be fixed at once.
 
 ### Locating the project and resolving paths
 
@@ -119,6 +120,8 @@ Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `c
   - `include-dirs` / `lib-dirs` etc. in `cuno.toml`: relative to the project root.
   - `target-dir` etc. in `.cuno/config.toml`: relative to the parent of `.cuno/` (the project root).
   - User-level config.toml: relative to `<cuno home>`.
+- On Windows, a path that starts with `\` or `/` without a drive (e.g. `/inc`), or that has a drive with no separator after it (e.g. `C:inc`), is an error (exit code 3). Write an absolute path or a relative one.
+  - Rationale: where either points depends on the current drive or directory at the time, not on where the file is. Resolving it silently could let a build succeed while looking in a place the user did not mean.
 
 ## Item reference
 
@@ -195,6 +198,7 @@ Values of `compiler`:
 | `rtti` | `true` | Whether to use C++ RTTI (ignored for C) |
 | `precompiled-header` | none | Path of the header to treat as the precompiled header |
 | `unity` | `false` | Whether to use a unity build |
+| `target-dir` | `target/` | Output directory ([build.md](build.md)). Only in `[build]` (not in `[platform.<OS>.build]` / `[profile.<name>.build]`) |
 
 Values of `warnings` (the per-compiler mapping is an initial proposal):
 
