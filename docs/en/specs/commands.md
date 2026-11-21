@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 30b815409aad56374547b23465d98b1d08463019 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob dc999a7b9fccf084d1efeacf1e37029ed05d6fab -->
 
 # Commands
 
@@ -179,6 +179,7 @@ Diagnoses the environment and shows a fix for each problem.
 | Problem | clang-format / clang-tidy not found | `1` |
 | Problem | The selected Clang / clang-tidy is not accepted by the MSVC standard library in use, or this cannot be decided (in C++ projects and outside a project; [toolchain.md](toolchain.md#minimum-compiler-versions)) | `1` |
 | Problem | An error in a configuration file, or an unsupported compiler selected | `1` |
+| Problem | A tool written in `[toolchain.paths]` cannot be used (even a compiler that is not selected; [toolchain.md](toolchain.md#llvm-clang--clang-cl--clang-format--clang-tidy)) | `1` |
 | Info | A compiler that is not used is not found (e.g. no Clang in an environment that uses MSVC) | No effect |
 
 If there are no problems, the exit code is `0`.
@@ -204,7 +205,7 @@ One line per item, in the same form as the status lines of the other commands ([
 - `Using`: the MSVC toolset used (cl's version and the Visual Studio location; when MSVC is selected, the `Selected` line serves for it) and the Windows SDK.
 - `Accepted`: when Clang is selected, that the MSVC standard library accepts it ([toolchain.md](toolchain.md#minimum-compiler-versions)).
 - `Found`: clang-format and clang-tidy.
-- `Info`: the compilers not selected (`not found` when absent). They do not affect the exit code.
+- `Info`: the compilers not selected (`not found` when absent). They do not affect the exit code. But when the one written in `[toolchain.paths]` cannot be used, it is printed as a problem instead of `Info` (so that it is not first found when switching to that compiler).
 - A problem is printed where it is found, as an `error:` and a `help:` line, and diagnosis continues. Warnings about configuration files come first, as `warning:`.
 - The last line is `Finished no problems found`, or `Finished <n> problems found` (`problem` for one).
 
