@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob f7b4979e02dad9b374b9f978581663aba9029216 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob c7a10232790453e64fb6fb6cd6bc56c100666716 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -20,7 +20,8 @@
 ## cuno home directory
 
 - `~/.cuno` on all OSes (`%USERPROFILE%\.cuno` on Windows).
-- Can be changed with the `CUNO_HOME` environment variable (same as cargo's `CARGO_HOME`).
+- Can be changed with the `CUNO_HOME` environment variable (same as cargo's `CARGO_HOME`). It must be an absolute path; a relative path, or on Windows a path that depends on the current drive (`/x`, `C:x`), is an error (exit code 3).
+  - Rationale: with a relative path, the cuno home (and the user-level config) would change with the directory cuno is run from.
 - Reason: a single location is easy to explain and easy to delete. Same shape as cargo / rustup. OS-specific locations (`%LOCALAPPDATA%` on Windows, XDG on Linux) follow platform conventions, but are not adopted because the location changes per OS and becomes scattered.
 
 | Contents | Description |
