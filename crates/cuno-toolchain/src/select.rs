@@ -448,8 +448,10 @@ pub struct ProbeInputs<'a> {
     /// The build's compile flags in this compiler's syntax, except those
     /// naming inputs and outputs: the language standard, RTTI and exceptions,
     /// include directories, defines and the user's `flags`, as
-    /// [`crate::flags::compile_flags`] gives them. Paths must be absolute: the
-    /// probe does not run in the project directory.
+    /// [`crate::flags::compile_flags`] gives them for a C++ input: the probe
+    /// compiles C++, so a C package's are built with `Lang::Cxx` and a C++
+    /// edition, or a C standard switch would be rejected. Paths must be
+    /// absolute: the probe does not run in the project directory.
     pub flags: &'a [OsString],
 }
 

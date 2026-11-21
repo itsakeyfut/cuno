@@ -10,17 +10,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use cuno_core::Env;
-use cuno_toolchain::SystemRunner;
 use cuno_toolchain::flags::{
     BuildSettings, CompileInput, Edition, Lang, Mode, OptLevel, ProfileSettings, Runtime, Warnings,
-    compile_args,
+    check_edition, compile_args,
 };
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::CompilerKind;
+use cuno_toolchain::{SystemRunner, Version};
 use support::compilers::{Compiler, Language, require};
 
 /// Each available driver, its program, and the environment it builds in.
-fn drivers() -> Vec<(CompilerKind, PathBuf, Env)> {
+fn drivers() -> Vec<(CompilerKind, PathBuf, Env, Version)> {
     let process = Env::from_process();
     let Some(reference) = require(Compiler::Msvc, Language::C, "x.c", "x.exe") else {
         return vec![];
@@ -34,13 +34,23 @@ fn drivers() -> Vec<(CompilerKind, PathBuf, Env)> {
         .unwrap();
     let sdk = msvc::find_windows_sdk(&process, &SystemRegistry).unwrap();
     let env = msvc::resolve(toolset, &sdk).apply(&process);
-    let mut out = vec![(CompilerKind::Msvc, cl, env.clone())];
+    let any = Version {
+        major: 99,
+        minor: 0,
+        patch: 0,
+    };
+    let mut out = vec![(CompilerKind::Msvc, cl, env.clone(), toolset.cl_version)];
     for (kind, compiler) in [
         (CompilerKind::ClangCl, Compiler::ClangCl),
         (CompilerKind::Clang, Compiler::Clang),
     ] {
         if let Some(reference) = require(compiler, Language::C, "x.c", "x.exe") {
-            out.push((kind, PathBuf::from(reference.get_program()), env.clone()));
+            out.push((
+                kind,
+                PathBuf::from(reference.get_program()),
+                env.clone(),
+                any,
+            ));
         }
     }
     out
@@ -157,11 +167,12 @@ fn build_and_run(
 /// standard, with warnings as errors on.
 ///
 /// Mutation: emit a standard switch a driver ignores (`/std:c++23` on
-/// clang-cl), or drop `/Zc:__cplusplus`; this test fails.
+/// clang-cl), use `/std:c++latest` (C++26 on current cl), or drop
+/// `/Zc:__cplusplus`; this test fails.
 #[test]
 fn every_edition_reaches_the_program() {
     let (build, profile) = settings();
-    for (kind, program, env) in drivers() {
+    for (kind, program, env, version) in drivers() {
         for (lang, edition, text, check) in [
             (
                 Lang::Cxx,
@@ -170,11 +181,17 @@ fn every_edition_reaches_the_program() {
                 (|n: i64| n == 201703) as fn(i64) -> bool,
             ),
             (Lang::Cxx, Edition::Cxx20, CXX, |n| n == 202002),
-            (Lang::Cxx, Edition::Cxx23, CXX, |n| n > 202002),
+            (Lang::Cxx, Edition::Cxx23, CXX, |n| n == 202302),
             (Lang::C, Edition::C11, C, |n| n == 201112),
             (Lang::C, Edition::C17, C, |n| n == 201710),
             (Lang::C, Edition::C23, C, |n| n > 201710),
         ] {
+            // A cl too old for the edition is refused before compiling
+            // (CI's may be); what it would do is not this test's.
+            if check_edition(kind, version, edition).is_err() {
+                assert_eq!(kind, CompilerKind::Msvc, "{edition:?}");
+                continue;
+            }
             let input = CompileInput {
                 kind,
                 lang,
@@ -204,7 +221,7 @@ fn every_edition_reaches_the_program() {
 #[test]
 fn runtime_rtti_and_assertions_reach_the_program() {
     let (mut build, mut profile) = settings();
-    for (kind, program, env) in drivers() {
+    for (kind, program, env, _) in drivers() {
         for (runtime, exceptions, rtti, assertions, opt, expected) in [
             (
                 Runtime::Dynamic,
@@ -242,6 +259,64 @@ fn runtime_rtti_and_assertions_reach_the_program() {
             let printed = build_and_run(kind, &program, &env, &input, CXX);
             let rest = printed.split_once(' ').map(|(_, r)| r).unwrap_or_default();
             assert_eq!(rest, expected, "{kind:?} {runtime:?}");
+        }
+    }
+}
+
+/// With exceptions or RTTI off, every driver refuses `try` and `dynamic_cast`
+/// rather than building a program that misbehaves.
+///
+/// Mutation: drop `/we4530`, `/we4541` or `-Werror=rtti`; this test fails.
+#[test]
+fn disabled_exceptions_and_rtti_are_refused_by_every_driver() {
+    let (mut build, profile) = settings();
+    build.warnings = Warnings::Default;
+    build.warnings_as_errors = false;
+    for (kind, program, env, _) in drivers() {
+        for (exceptions, rtti, text) in [
+            (
+                false,
+                true,
+                "int main() { try { throw 1; } catch (int) {} }
+",
+            ),
+            (
+                true,
+                false,
+                "struct B { virtual ~B() {} }; struct D : B {}; int main() { D d; B* b = &d; return dynamic_cast<D*>(b) ? 0 : 1; }
+",
+            ),
+        ] {
+            build.exceptions = exceptions;
+            build.rtti = rtti;
+            let input = CompileInput {
+                kind,
+                lang: Lang::Cxx,
+                edition: Edition::Cxx20,
+                build: &build,
+                profile: &profile,
+                include_dirs: &[],
+                test: false,
+                mode: Mode::Compile,
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let source = dir.path().join("main.cpp");
+            std::fs::write(&source, text).unwrap();
+            let output = Command::new(&program)
+                .args(compile_args(
+                    &input,
+                    &source,
+                    Some(&dir.path().join("main.obj")),
+                ))
+                .current_dir(dir.path())
+                .env_clear()
+                .envs(env.vars())
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "{kind:?} exceptions={exceptions} rtti={rtti} compiled"
+            );
         }
     }
 }

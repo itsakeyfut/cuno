@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings};
 use crate::select::CompilerKind;
+use crate::{ToolchainError, Version};
 
 /// Whether a source is compiled to an object or only checked (`cuno check`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,14 +82,22 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     }]);
 
     if cxx {
-        match (build.exceptions, msvc_style) {
-            (true, true) => out.push(&["/EHsc"]),
-            (true, false) => {}
-            (false, true) => {}
-            (false, false) => out.push(&["-fno-exceptions"]),
-        }
+        // With exceptions or RTTI off, cl and clang-cl only warn about
+        // `try` / `throw` and `typeid` / `dynamic_cast`; these make it an
+        // error, as clang does (build.md, "Settings and flags").
+        out.push(match (build.exceptions, input.kind) {
+            (true, CompilerKind::Clang) => &[][..],
+            (true, _) => &["/EHsc"],
+            (false, CompilerKind::Msvc) => &["/we4530"],
+            (false, CompilerKind::ClangCl) => &[],
+            (false, CompilerKind::Clang) => &["-fno-exceptions"],
+        });
         if !build.rtti {
-            out.push(&[if msvc_style { "/GR-" } else { "-fno-rtti" }]);
+            out.push(match input.kind {
+                CompilerKind::Msvc => &["/GR-", "/we4541"][..],
+                CompilerKind::ClangCl => &["/GR-", "-Werror=rtti"],
+                CompilerKind::Clang => &["-fno-rtti"],
+            });
         }
     }
 
@@ -178,9 +187,10 @@ pub fn compile_args(
     args
 }
 
-/// The language standard switch: the "latest" switches on MSVC and
-/// clang-cl for C++23 and C23, since cl only warns about a `/std` it does
-/// not know and clang-cl ignores `/std:c++23` and `/std:c23`.
+/// The language standard switch, naming the standard on every driver:
+/// `/std:c++latest` is already C++26 on current cl and clang-cl, and
+/// clang-cl ignores `/std:c++23` and `/std:c23`, so it gets clang's own
+/// through `/clang:`. C23 is `c2x`, which Clang 17 also accepts.
 fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
     match (kind, edition) {
         (CompilerKind::Clang, Edition::Cxx17) => "-std=c++17",
@@ -188,14 +198,51 @@ fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
         (CompilerKind::Clang, Edition::Cxx23) => "-std=c++23",
         (CompilerKind::Clang, Edition::C11) => "-std=c11",
         (CompilerKind::Clang, Edition::C17) => "-std=c17",
-        (CompilerKind::Clang, Edition::C23) => "-std=c23",
+        (CompilerKind::Clang, Edition::C23) => "-std=c2x",
+        (CompilerKind::ClangCl, Edition::Cxx23) => "/clang:-std=c++23",
+        (CompilerKind::ClangCl, Edition::C23) => "/clang:-std=c2x",
+        (CompilerKind::Msvc, Edition::Cxx23) => "/std:c++23",
+        (CompilerKind::Msvc, Edition::C23) => "/std:clatest",
         (_, Edition::Cxx17) => "/std:c++17",
         (_, Edition::Cxx20) => "/std:c++20",
-        (_, Edition::Cxx23) => "/std:c++latest",
         (_, Edition::C11) => "/std:c11",
         (_, Edition::C17) => "/std:c17",
-        (_, Edition::C23) => "/std:clatest",
     }
+}
+
+/// Whether `kind` at `version` accepts `edition`. cl only warns about a
+/// `/std` it does not know and compiles with the old standard, so this is
+/// decided from its version (`docs/en/specs/toolchain.md`, "Language
+/// standards"): `/std:c++23` from cl 19.52, the oldest checked, and
+/// `/std:clatest` from 19.37 (Visual Studio 2022 17.7). Every Clang cuno
+/// supports accepts every edition.
+pub fn check_edition(
+    kind: CompilerKind,
+    version: Version,
+    edition: Edition,
+) -> Result<(), ToolchainError> {
+    let needed = match (kind, edition) {
+        (CompilerKind::Msvc, Edition::Cxx23) => Version {
+            major: 19,
+            minor: 52,
+            patch: 0,
+        },
+        (CompilerKind::Msvc, Edition::C23) => Version {
+            major: 19,
+            minor: 37,
+            patch: 0,
+        },
+        _ => return Ok(()),
+    };
+    if version >= needed {
+        return Ok(());
+    }
+    Err(ToolchainError::EditionNotSupported {
+        compiler: kind.name(),
+        version,
+        edition: edition.as_str(),
+        needed,
+    })
 }
 
 #[derive(Default)]

@@ -112,8 +112,25 @@ fn the_defaults_give_the_always_on_flags() {
 /// `flags` with `removed` gone and `added` present, compared with the
 /// defaults: what one row of the table changes.
 fn assert_row(name: &str, change: impl Fn(&mut Case), rows: [(&[&str], &[&str]); 3]) {
-    let base = Case::new();
+    assert_row_for(Case::new, name, change, rows);
+}
+
+/// [`assert_row`] for a C package (C17).
+fn c_case() -> Case {
     let mut case = Case::new();
+    case.lang = Lang::C;
+    case.edition = Edition::C17;
+    case
+}
+
+fn assert_row_for(
+    start: fn() -> Case,
+    name: &str,
+    change: impl Fn(&mut Case),
+    rows: [(&[&str], &[&str]); 3],
+) {
+    let base = start();
+    let mut case = start();
     change(&mut case);
     for (kind, (removed, added)) in DRIVERS.into_iter().zip(rows) {
         let before = base.flags(kind);
@@ -162,8 +179,8 @@ fn every_setting_gives_the_tables_flags_on_every_driver() {
             "c++23",
             |c| c.edition = Edition::Cxx23,
             [
-                (&["/std:c++20"], &["/std:c++latest"]),
-                (&["/std:c++20"], &["/std:c++latest"]),
+                (&["/std:c++20"], &["/std:c++23"]),
+                (&["/std:c++20"], &["/clang:-std=c++23"]),
                 (&["-std=c++20"], &["-std=c++23"]),
             ],
         ),
@@ -229,7 +246,7 @@ fn every_setting_gives_the_tables_flags_on_every_driver() {
             "exceptions false",
             |c| c.build.exceptions = false,
             [
-                (&["/EHsc"], &["/D_HAS_EXCEPTIONS=0"]),
+                (&["/EHsc"], &["/we4530", "/D_HAS_EXCEPTIONS=0"]),
                 (&["/EHsc"], &["/D_HAS_EXCEPTIONS=0"]),
                 (&[], &["-fno-exceptions", "-D_HAS_EXCEPTIONS=0"]),
             ],
@@ -237,7 +254,11 @@ fn every_setting_gives_the_tables_flags_on_every_driver() {
         (
             "rtti false",
             |c| c.build.rtti = false,
-            [(&[], &["/GR-"]), (&[], &["/GR-"]), (&[], &["-fno-rtti"])],
+            [
+                (&[], &["/GR-", "/we4541"]),
+                (&[], &["/GR-", "-Werror=rtti"]),
+                (&[], &["-fno-rtti"]),
+            ],
         ),
         (
             "opt-level 1",
@@ -312,7 +333,7 @@ fn c_sources_get_the_c_standard_and_no_cxx_only_flag() {
     for (edition, msvc, clang) in [
         (Edition::C11, "/std:c11", "-std=c11"),
         (Edition::C17, "/std:c17", "-std=c17"),
-        (Edition::C23, "/std:clatest", "-std=c23"),
+        (Edition::C23, "/std:clatest", "-std=c2x"),
     ] {
         let mut case = Case::new();
         case.lang = Lang::C;
@@ -321,10 +342,10 @@ fn c_sources_get_the_c_standard_and_no_cxx_only_flag() {
         case.build.rtti = false;
         for kind in DRIVERS {
             let flags = case.flags(kind);
-            let expected = if kind == CompilerKind::Clang {
-                clang
-            } else {
-                msvc
+            let expected = match (kind, edition) {
+                (CompilerKind::Clang, _) => clang,
+                (CompilerKind::ClangCl, Edition::C23) => "/clang:-std=c2x",
+                _ => msvc,
             };
             assert!(flags.iter().any(|f| f == expected), "{kind:?} {flags:?}");
             for cxx_only in [
@@ -335,6 +356,9 @@ fn c_sources_get_the_c_standard_and_no_cxx_only_flag() {
                 "-fno-exceptions",
                 "/D_HAS_EXCEPTIONS=0",
                 "-D_HAS_EXCEPTIONS=0",
+                "/we4530",
+                "/we4541",
+                "-Werror=rtti",
             ] {
                 assert!(
                     !flags.iter().any(|f| f == cxx_only),
@@ -441,5 +465,155 @@ fn a_source_is_compiled_or_checked_in_the_packages_language() {
         expected.push("a.h".to_owned());
         expected.extend(output.into_iter().map(str::to_owned));
         assert_eq!(args, expected, "{kind:?} {mode:?}");
+    }
+}
+
+/// Mutation: drop any setting the two languages share for a C package
+/// (defines, include directories, warnings, runtime, optimisation, debug
+/// information, `NDEBUG`, LTO, `CUNO_TEST`, raw flags); this test fails.
+#[test]
+fn a_c_package_gets_every_shared_setting() {
+    type Row = (
+        &'static str,
+        fn(&mut Case),
+        [(&'static [&'static str], &'static [&'static str]); 3],
+    );
+    let same = |a: &'static [&'static str], c: &'static [&'static str]| {
+        [(&[][..], a), (&[][..], a), (&[][..], c)]
+    };
+    let rows: Vec<Row> = vec![
+        (
+            "warnings all",
+            |c| c.build.warnings = Warnings::All,
+            same(&["/W4"], &["-Wall", "-Wextra"]),
+        ),
+        (
+            "warnings-as-errors",
+            |c| c.build.warnings_as_errors = true,
+            same(&["/WX"], &["-Werror"]),
+        ),
+        (
+            "defines",
+            |c| c.build.defines = vec!["A".into()],
+            same(&["/DA"], &["-DA"]),
+        ),
+        (
+            "test",
+            |c| c.test = true,
+            same(&["/DCUNO_TEST"], &["-DCUNO_TEST"]),
+        ),
+        (
+            "include dirs",
+            |c| c.build.include_dirs = vec!["inc".into()],
+            same(&["/Iinc"], &["-Iinc"]),
+        ),
+        (
+            "debug-info",
+            |c| c.profile.debug_info = true,
+            same(&["/Z7"], &["-g"]),
+        ),
+        (
+            "debug-assertions false",
+            |c| c.profile.debug_assertions = false,
+            same(&["/DNDEBUG"], &["-DNDEBUG"]),
+        ),
+        (
+            "raw flags",
+            |c| c.build.flags = vec!["/raw".into()],
+            same(&["/raw"], &["/raw"]),
+        ),
+        (
+            "runtime static",
+            |c| c.build.runtime = Runtime::Static,
+            [
+                (&["/MD"], &["/MT"]),
+                (&["/MD"], &["/MT"]),
+                (&["-fms-runtime-lib=dll"], &["-fms-runtime-lib=static"]),
+            ],
+        ),
+        (
+            "opt-level s",
+            |c| c.profile.opt_level = OptLevel::Size,
+            [
+                (&["/Od"], &["/O1"]),
+                (&["/Od"], &["/O1"]),
+                (&["-O0"], &["-Os"]),
+            ],
+        ),
+        (
+            "lto",
+            |c| c.profile.lto = true,
+            [(&[], &["/GL"]), (&[], &["-flto"]), (&[], &["-flto"])],
+        ),
+        (
+            "exceptions false",
+            |c| c.build.exceptions = false,
+            [(&[], &[]), (&[], &[]), (&[], &[])],
+        ),
+        (
+            "rtti false",
+            |c| c.build.rtti = false,
+            [(&[], &[]), (&[], &[]), (&[], &[])],
+        ),
+    ];
+    for (name, change, row) in rows {
+        assert_row_for(c_case, name, change, row);
+    }
+}
+
+/// Mutation: name an object when none is given; this test fails.
+#[test]
+fn compiling_without_an_object_names_none() {
+    let case = Case::new();
+    for kind in DRIVERS {
+        let input = CompileInput {
+            kind,
+            lang: Lang::Cxx,
+            edition: Edition::Cxx20,
+            build: &case.build,
+            profile: &case.profile,
+            include_dirs: &[],
+            test: false,
+            mode: Mode::Compile,
+        };
+        let args = strings(compile_args(&input, Path::new("a.cpp"), None));
+        assert_eq!(args.last().map(String::as_str), Some("a.cpp"), "{kind:?}");
+    }
+}
+
+/// Mutation: let a cl too old for `c++23` or `c23` through, reject one that
+/// is new enough, or hold Clang to a version; this test fails.
+#[test]
+fn an_edition_cl_does_not_know_is_an_error() {
+    let v = |minor| Version {
+        major: 19,
+        minor,
+        patch: 0,
+    };
+    let old = Version {
+        major: 17,
+        minor: 0,
+        patch: 0,
+    };
+    assert!(check_edition(CompilerKind::Msvc, v(52), Edition::Cxx23).is_ok());
+    assert!(check_edition(CompilerKind::Msvc, v(37), Edition::C23).is_ok());
+    let err = check_edition(CompilerKind::Msvc, v(51), Edition::Cxx23).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "msvc 19.51.0 does not support edition = \"c++23\""
+    );
+    assert_eq!(
+        cuno_core::CunoError::help(&err).as_deref(),
+        Some("use msvc 19.52.0 or newer, or choose another edition or compiler")
+    );
+    assert!(check_edition(CompilerKind::Msvc, v(36), Edition::C23).is_err());
+    assert!(check_edition(CompilerKind::Msvc, v(29), Edition::Cxx20).is_ok());
+    for kind in [CompilerKind::Clang, CompilerKind::ClangCl] {
+        for edition in [Edition::Cxx23, Edition::C23] {
+            assert!(
+                check_edition(kind, old, edition).is_ok(),
+                "{kind:?} {edition:?}"
+            );
+        }
     }
 }

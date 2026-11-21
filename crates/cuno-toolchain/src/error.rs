@@ -101,6 +101,17 @@ pub enum ToolchainError {
         /// What it printed, or why it could not run.
         output: String,
     },
+    /// The selected compiler is too old for the package's edition.
+    EditionNotSupported {
+        /// The compiler.
+        compiler: &'static str,
+        /// Its version.
+        version: Version,
+        /// The edition, as written.
+        edition: &'static str,
+        /// The oldest version that accepts it.
+        needed: Version,
+    },
     /// A tool path the user configured has no file.
     ConfiguredToolMissing {
         /// The setting, such as `[toolchain.paths] clang-tidy`.
@@ -181,6 +192,15 @@ impl fmt::Display for ToolchainError {
                 f,
                 "could not tell whether {compiler} works with the MSVC standard library:\n{output}"
             ),
+            ToolchainError::EditionNotSupported {
+                compiler,
+                version,
+                edition,
+                ..
+            } => write!(
+                f,
+                "{compiler} {version} does not support edition = \"{edition}\""
+            ),
             ToolchainError::ConfiguredToolMissing { setting, path } => {
                 write!(
                     f,
@@ -231,6 +251,11 @@ impl CunoError for ToolchainError {
             ToolchainError::ProbeFailed { .. } => Some(
                 "check the Visual Studio and LLVM installations with `cuno doctor`".to_owned(),
             ),
+            ToolchainError::EditionNotSupported {
+                compiler, needed, ..
+            } => Some(format!(
+                "use {compiler} {needed} or newer, or choose another edition or compiler"
+            )),
             ToolchainError::ConfiguredToolMissing { setting, .. } => Some(format!(
                 "correct {setting}, or remove it to let cuno find the tool"
             )),
@@ -302,6 +327,20 @@ mod tests {
             ToolchainError::ProbeFailed {
                 compiler: "x",
                 output: "x".into(),
+            },
+            ToolchainError::EditionNotSupported {
+                compiler: "x",
+                version: Version {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                },
+                edition: "x",
+                needed: Version {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                },
             },
         ] {
             assert_eq!(e.exit_class(), ExitClass::Setup, "{e}");
