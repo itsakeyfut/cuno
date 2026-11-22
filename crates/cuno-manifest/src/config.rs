@@ -12,16 +12,18 @@ use serde::Deserialize;
 use crate::read::{Doc, key};
 use crate::{ConfigError, Loaded, Location, resolve_path};
 
-/// `[build] target-dir` as a file writes it. It is judged where the
-/// layers are merged, since every layer's value is checked, winning or not
+/// A directory a file names, such as `[build] target-dir`, kept with how
+/// and where it was written: it is judged where the layers are merged,
+/// since every layer's value is checked, winning or not
 /// (`docs/en/specs/build.md`, "Output directory").
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TargetDir {
-    /// As written.
+pub struct LocatedDir {
+    /// The value as written, kept because an empty one resolves to the
+    /// file's base and could no longer be told apart from it.
     pub written: PathBuf,
     /// Resolved against the file's base.
     pub path: PathBuf,
-    /// Where it is written.
+    /// Where it is written, for an error about it.
     pub location: Location,
 }
 
@@ -29,7 +31,7 @@ pub struct TargetDir {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Config {
     /// `[build] target-dir`.
-    pub target_dir: Option<TargetDir>,
+    pub target_dir: Option<LocatedDir>,
     /// `[build] jobs`.
     pub jobs: Option<NonZeroU32>,
     /// `[toolchain] compiler`, as written; judged where the compiler is
@@ -185,7 +187,7 @@ pub fn parse_config(text: &str, file: &Path, base: &Path) -> Result<Loaded<Confi
     let target_dir = build
         .target_dir
         .map(|dir| {
-            Ok(TargetDir {
+            Ok(LocatedDir {
                 path: path("build.target-dir", &dir)?,
                 written: dir,
                 location: doc.locate("build.target-dir"),

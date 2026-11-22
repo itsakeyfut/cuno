@@ -15,7 +15,7 @@ use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
 
 use crate::read::{Doc, key};
-use crate::{ConfigError, ConfigWarning, Project, TargetDir, resolve_path, shown_path};
+use crate::{ConfigError, ConfigWarning, LocatedDir, Project, resolve_path, shown_path};
 
 /// A value read from a file, with what cuno read past.
 #[derive(Clone, Debug)]
@@ -37,7 +37,7 @@ pub struct Manifest {
     /// `[toolchain.version]` for the compilers cuno builds with.
     pub constraints: Constraints,
     /// `[build] target-dir`, resolved against the project root.
-    pub target_dir: Option<TargetDir>,
+    pub target_dir: Option<LocatedDir>,
     /// `[build]`.
     pub build: BuildTable,
     /// `[build.<compiler>] flags`.
@@ -433,7 +433,7 @@ impl Check<'_> {
             .target_dir
             .take()
             .map(|dir| {
-                Ok::<_, ConfigError>(TargetDir {
+                Ok::<_, ConfigError>(LocatedDir {
                     path: self.path("build.target-dir", &dir)?,
                     written: dir,
                     location: self.doc.locate("build.target-dir"),

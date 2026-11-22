@@ -660,3 +660,78 @@ fn only_the_users_own_layers_may_point_outside_the_project() {
         outside
     );
 }
+
+/// The user's config and the environment are checked as the project's
+/// files are, winning or not: a user config naming a directory above the
+/// project is refused with its file and line, and so is `CUNO_TARGET_DIR`
+/// at the root when the command line wins. An empty `target-dir` in
+/// `cuno.toml` says it is empty.
+///
+/// Mutation: check only the project's files, skip the environment when the
+/// command line is given, name no file for the user config, or let an
+/// empty `cuno.toml` value fall through to the root check; this test fails.
+#[test]
+fn the_users_layers_are_checked_too() {
+    let f = Fixture::new();
+    let above = f
+        .root
+        .parent()
+        .unwrap()
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    f.write(
+        "home/config.toml",
+        &format!("[build]\ntarget-dir = \"{above}\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
+    assert!(
+        err.message.contains("config.toml) is the project root"),
+        "{err}"
+    );
+    assert_eq!(err.location.unwrap().line, 2);
+    std::fs::remove_file(f.home.join("config.toml")).unwrap();
+
+    let cli = CliSettings {
+        target_dir: Some("out".into()),
+        ..Default::default()
+    };
+    let err = resolve_err(&f, &f.root, &f.env(&[("CUNO_TARGET_DIR", ".")]), &cli);
+    assert!(err.message.contains("(CUNO_TARGET_DIR)"), "{err}");
+
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \"\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &cli);
+    assert_eq!(err.message, "`build.target-dir` in cuno.toml is empty");
+}
+
+/// A directory inside the project, spelled in another case or not made
+/// yet, is inside it: the comparison is the file system's, not the
+/// spelling's.
+///
+/// Mutation: compare the part that does not exist yet as written, with
+/// case; this test fails.
+#[cfg(windows)]
+#[test]
+fn a_directory_inside_the_project_in_another_case_is_inside() {
+    let f = Fixture::new();
+    let upper = f
+        .root
+        .display()
+        .to_string()
+        .replace('\\', "/")
+        .to_uppercase();
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \"{upper}/out\"\n"),
+    );
+    let s = f.resolve(&f.root, &f.env(&[]), &CliSettings::default());
+    assert!(!f.root.join("out").exists());
+    assert!(
+        s.value.target_dir.to_string_lossy().ends_with("out"),
+        "{}",
+        s.value.target_dir.display()
+    );
+}

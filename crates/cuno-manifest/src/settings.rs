@@ -132,9 +132,9 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     // Every layer that sets an output directory, highest first: command
     // line, environment, project config, cuno.toml, user config. Each is
     // checked, winning or not, and the first wins (build.md, "Output
-    // directory").
-    let kept = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
-    let mut set: Vec<(PathBuf, String)> = Vec::new();
+    // directory"): the order they are pushed in is the precedence.
+    let guarded = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
+    let mut layers: Vec<(PathBuf, String)> = Vec::new();
     let from_command = [
         ("--target-dir", cli.target_dir.clone()),
         (
@@ -156,21 +156,21 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         }
         let resolved = resolve_path(&dir, cwd)
             .map_err(|_| invalid("which depends on the current drive".to_owned()))?;
-        check_output_dir(&resolved, name, None, kept, project.is_some())?;
-        set.push((resolved, name.to_owned()));
+        check_output_dir(&resolved, name, None, guarded, project.is_some())?;
+        layers.push((resolved, name.to_owned()));
     }
-    let carried = project.as_ref().map(|(p, m, c)| {
+    let project_files = project.as_ref().map(|(p, m, c)| {
         [
             (c.target_dir.clone(), p.config()),
             (m.target_dir.clone(), p.manifest()),
         ]
     });
-    let files = carried
+    let files = project_files
         .into_iter()
         .flatten()
         .map(|(dir, file)| (dir, file, true))
         .chain([(user.target_dir.clone(), user_file.clone(), false)]);
-    for (dir, file, in_project) in files {
+    for (dir, file, carried_by_project) in files {
         let Some(dir) = dir else { continue };
         let source = format!("`build.target-dir` in {}", shown_path(&file, cwd).display());
         if dir.written.as_os_str().is_empty() {
@@ -184,12 +184,13 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
             &dir.path,
             &source,
             Some(&dir.location),
-            kept,
+            guarded,
             project.is_some(),
         )?;
         // A file a cloned project carries must not make `cuno clean`
-        // delete what lies outside it (build.md, "Output directory").
-        if in_project && !holds(kept, &dir.path) {
+        // delete what lies outside it (build.md, "Output directory"). The
+        // user's own config, the environment and the command line may.
+        if carried_by_project && !holds(guarded, &dir.path) {
             return Err(ConfigError {
                 message: format!(
                     "{source} points outside the project: {}",
@@ -201,12 +202,12 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
                 ),
             });
         }
-        set.push((dir.path, source));
+        layers.push((dir.path, source));
     }
-    let target_dir = set
+    let target_dir = layers
         .into_iter()
         .next()
-        .map_or_else(|| kept.join("target"), |(dir, _)| dir);
+        .map_or_else(|| guarded.join("target"), |(dir, _)| dir);
 
     let mut paths = user.paths.clone();
     if let Some(local) = local {
@@ -246,8 +247,6 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     })
 }
 
-/// Whether `outer` is `inner` or one of its ancestors: compared after
-/// resolving `.` and `..`, and as the file system sees them when both exist.
 /// Refuses an output directory that is the project root, or outside a
 /// project the current directory, or a directory above it: `cuno clean`
 /// deletes the output directory (build.md, "Output directory").
@@ -255,17 +254,17 @@ fn check_output_dir(
     dir: &Path,
     source: &str,
     location: Option<&Location>,
-    kept: &Path,
-    in_project: bool,
+    guarded: &Path,
+    has_project: bool,
 ) -> Result<(), ConfigError> {
-    if !holds(dir, kept) {
+    if !holds(dir, guarded) {
         return Ok(());
     }
     Err(ConfigError {
         message: format!(
             "the output directory `{}` ({source}) is {} or a directory above it",
             dir.display(),
-            if in_project { "the project root" } else { "the current directory" },
+            if has_project { "the project root" } else { "the current directory" },
         ),
         location: location.cloned(),
         help: Some(
@@ -274,12 +273,33 @@ fn check_output_dir(
     })
 }
 
+/// Whether `outer` is `inner` or one of its ancestors, as the file system
+/// sees them: see [`real`].
 fn holds(outer: &Path, inner: &Path) -> bool {
-    let canonical = |p: &Path| std::fs::canonicalize(p).ok();
-    if let (Some(outer), Some(inner)) = (canonical(outer), canonical(inner)) {
-        return inner.starts_with(outer);
+    real(inner).starts_with(real(outer))
+}
+
+/// `path` as the file system names it, whether or not it exists yet: `.`
+/// and `..` resolved, and its longest existing part canonicalized, so a
+/// path spelled in another case on Windows, or through a link, compares
+/// as the directory it is. The part that does not exist yet is kept as
+/// written.
+fn real(path: &Path) -> PathBuf {
+    let path = lexical(path);
+    let mut existing = path.as_path();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(existing) {
+            return rest.iter().rev().fold(canonical, |p, part| p.join(part));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                existing = parent;
+            }
+            _ => return path,
+        }
     }
-    lexical(inner).starts_with(lexical(outer))
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
