@@ -13,6 +13,7 @@ use cuno_build::graph::{self, Plan, Step, StepKind};
 use cuno_build::input::compile_settings;
 use cuno_build::layout::Layout;
 use cuno_build::sources;
+use cuno_build::state::Records;
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Lang, OptLevel, Profile};
 use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
@@ -151,17 +152,16 @@ pub fn build(
         link: (&link.build, &link.profile),
     });
 
-    if !verbosity.quiet {
-        shell.status(
-            "Compiling",
-            format!(
-                "{package} v{} ({} {})",
-                manifest.package.version,
-                selected.kind.name(),
-                selected.version
-            ),
-        );
-    }
+    let version = selected.version.to_string();
+    let records = Records::new(identity(&version, &prepared.env));
+    // Printed when the first step starts, so a build with nothing to do
+    // shows only its Finished line (commands.md, "Output").
+    let mut compiling = Some(format!(
+        "{package} v{} ({} {})",
+        manifest.package.version,
+        selected.kind.name(),
+        selected.version
+    ));
     let jobs = settings
         .jobs
         .map(|n| n.get() as usize)
@@ -172,8 +172,14 @@ pub fn build(
         root,
         jobs,
         &SystemSpawner,
+        Some(&records),
         &mut |event| match event {
             Event::Started(step) => {
+                if let Some(line) = compiling.take()
+                    && !verbosity.quiet
+                {
+                    shell.status("Compiling", line);
+                }
                 if verbose && !verbosity.quiet {
                     shell.status("Running", format!("`{}`", command_line(step)));
                 }
@@ -216,6 +222,19 @@ pub fn build(
         );
     }
     Ok(())
+}
+
+/// What besides each step's arguments identifies its command: the
+/// compiler's `version`, and the variables of `env` that decide which
+/// headers and libraries it reads (`build.md`, "Deciding what changed").
+fn identity<'a>(version: &'a str, env: &'a Env) -> [&'a OsStr; 4] {
+    let var = |name| env.get(name).unwrap_or_default();
+    [
+        OsStr::new(version),
+        var("INCLUDE"),
+        var("LIB"),
+        var("LIBPATH"),
+    ]
 }
 
 /// The profile `--release` or `--profile` names, `dev` by default; only the
@@ -362,7 +381,34 @@ mod tests {
             output: PathBuf::new(),
             after: Vec::new(),
             echo: None,
+            headers: None,
+            reads: Vec::new(),
         })
+    }
+
+    /// A step's command is identified by the compiler's version and the
+    /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler
+    /// or SDK rebuilds.
+    ///
+    /// Mutation: leave out the version or any of the variables; this test
+    /// fails.
+    #[test]
+    fn the_compiler_and_its_environment_identify_commands() {
+        let env = Env::from_pairs(
+            [
+                ("include".into(), "C:/inc".into()),
+                ("LIB".into(), "C:/lib".into()),
+                ("LIBPATH".into(), "C:/libpath".into()),
+                ("PATH".into(), "C:/bin".into()),
+            ],
+            cuno_core::NameCase::Insensitive,
+        );
+        assert_eq!(
+            identity("19.52.1", &env),
+            ["19.52.1", "C:/inc", "C:/lib", "C:/libpath"].map(OsStr::new)
+        );
+        let bare = Env::default();
+        assert_eq!(identity("1", &bare), ["1", "", "", ""].map(OsStr::new));
     }
 
     /// `-v` shows each argument as the Windows command line would read it

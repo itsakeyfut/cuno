@@ -6,10 +6,12 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use cuno_toolchain::compiler::{CompilerKind, Family};
+use cuno_toolchain::compiler::{CompilerKind, Dependencies, Family};
 use cuno_toolchain::flags::{
-    BuildSettings, Lang, LinkInput, ProfileSettings, compile_args, link_args,
+    BuildSettings, Lang, LinkInput, ProfileSettings, compile_args, dependency_args, link_args,
 };
+
+use crate::deps::Headers;
 
 use crate::input::CompileSettings;
 use crate::layout::Layout;
@@ -46,6 +48,13 @@ pub struct Step {
     /// The line cl.exe prints first on every compile, the source's file
     /// name, which is not shown (`commands.md`, "Output").
     pub echo: Option<String>,
+    /// Where a compile's headers are found once it has run; `None` for a
+    /// link.
+    pub headers: Option<Headers>,
+    /// The files it reads besides the outputs of the steps it waits for
+    /// and its headers: a compile's source, and the libraries of `links`
+    /// a link finds in `lib-dirs` (`build.md`, "Deciding what changed").
+    pub reads: Vec<PathBuf>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -89,15 +98,23 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .map(|name| name.to_string_lossy().into_owned()),
             Family::Llvm => None,
         };
+        let headers = match p.kind.dependencies() {
+            Dependencies::SourceDependencies => Headers::Json(object.with_extension("json")),
+            Dependencies::DepFile => Headers::DepFile(object.with_extension("d")),
+        };
+        let mut args = compile_args(&settings.input(), &source.path, Some(&object));
+        args.extend(dependency_args(p.kind, headers.file()));
         steps.push(Step {
             kind: StepKind::Compile {
                 source: source.path.clone(),
             },
             program: p.program.to_owned(),
-            args: compile_args(&settings.input(), &source.path, Some(&object)),
+            args,
             output: object,
             after: Vec::new(),
             echo,
+            headers: Some(headers),
+            reads: vec![source.path.clone()],
         });
         steps.len() - 1
     };
@@ -123,9 +140,28 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             output: exe,
             after,
             echo: None,
+            headers: None,
+            reads: libraries(p.link.0),
         });
     }
     Graph { steps }
+}
+
+/// The libraries of `links` found in `lib-dirs`: for each, the first
+/// `<lib>.lib` searching `lib-dirs` in order, as the linker searches them.
+/// A library found nowhere there is a system one, found through `LIB`.
+fn libraries(build: &BuildSettings) -> Vec<PathBuf> {
+    build
+        .links
+        .iter()
+        .filter_map(|lib| {
+            build
+                .lib_dirs
+                .iter()
+                .map(|dir| dir.join(format!("{lib}.lib")))
+                .find(|path| path.is_file())
+        })
+        .collect()
 }
 
 #[cfg(test)]

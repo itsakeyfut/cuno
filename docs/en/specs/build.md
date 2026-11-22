@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob f9794f0d340c4ba8c4b69f46615413c24e6bd59a -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 9afb4d1e936132e89e443c675331fd5b9887a621 -->
 
 # Build
 
@@ -10,7 +10,8 @@
 
 ## Incremental and parallel builds
 
-- Header dependencies are obtained from `-MD`-style dependency files for GCC / Clang, `/sourceDependencies` (JSON output; VS 16.7 or later) for MSVC, and `/showIncludes` for clang-cl (clang-cl's output is in English regardless of language settings, so it does not have MSVC's problem).
+- Header dependencies are obtained from `-MD`-style dependency files for GCC / Clang, `/sourceDependencies` (JSON output; VS 16.7 or later) for MSVC. clang-cl uses clang's `-MD` too, through `/clang:`.
+  - clang-cl does not use `/showIncludes` because a file read by `#embed` does not appear in its output, so a change to it would be missed (it does appear in a `-MD` dependency file).
   - MSVC does not use `/showIncludes` because on the Japanese edition of Visual Studio the output is in Japanese (「メモ: インクルード ファイル:」), making it language-dependent.
 - Only what has changed is recompiled.
 - Compilation runs in parallel.
@@ -18,18 +19,21 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, and the compiler's location and version);
-  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files.
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change;
+  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first `<lib>.lib` found, searching `lib-dirs` in order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above.
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
   - the command line differs from the record (a setting, the compiler or the profile changed);
   - an input's modification time or size differs from the record, and its content hash differs too.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
+- Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it.
 - Rationale:
   - Judging only whether an input is newer than its output misses a file put back with an older modification time (restored from a backup, for example), and reports success with the old code. Comparing with the recorded values catches a time that went backwards too.
   - Hashing everything on every build would read the standard and Windows headers (thousands of files) even when nothing changed. Inputs whose time and size match are not read.
-  - What it misses is only a file whose content changed while its modification time and size stayed the same, which ordinary editing does not produce.
+  - What it misses is the following, and then it reports success with the old code:
+    - a file whose content changed while its modification time and size stayed the same, which ordinary editing does not produce;
+    - a header of the same name newly created where the include search finds it before the recorded one (and likewise a library), since the record holds the files read and not the places that were not.
 - The records are kept inside the output directory (`target/<profile name>/`). Their format is cuno's own and not meant for users to read. A record from another cuno version, or one that cannot be read, is treated as absent (the step runs).
 
 ## Default include paths
@@ -55,8 +59,10 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
 | Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
+| Header dependencies (when building) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
 
-- The flags that find header dependencies (`/showIncludes` etc.) are decided with the build engine (M2) ([architecture.md](architecture.md)), and are not in this table.
+- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang).
+- The flags of this table (the language, the source, the object file and the header dependencies) come after `[build.<compiler>] flags`, so that cuno's win over a user's `-MF` and the like: cuno reads the dependency file. When a dependency file holds several rules (a user's `-MP`, for example), only the first is read.
 
 ### Compiling
 
@@ -75,7 +81,7 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | `debug-info = true` | `/Z7` | `/Z7` | `-g` |
 | `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
 | `lto = true` | `/GL` | `-flto` | `-flto` |
-| `[build.<compiler>] flags` | Last, as given | Last, as given | Last, as given |
+| `[build.<compiler>] flags` | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given |
 
 ### Linking
 

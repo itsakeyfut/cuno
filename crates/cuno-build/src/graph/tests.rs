@@ -3,6 +3,7 @@ use crate::input::compile_settings;
 use crate::sources::Bin;
 use cuno_manifest::Profile;
 use cuno_toolchain::HostOs;
+use cuno_toolchain::compiler::Dependencies;
 use cuno_toolchain::flags::{Mode, Subsystem};
 
 fn source(path: &str, lang: Lang) -> Source {
@@ -149,4 +150,76 @@ fn only_cl_compiles_have_an_echo() {
             "{kind:?}"
         );
     }
+}
+
+/// Each compile writes its headers to its own file beside its object,
+/// named by the dependency arguments that come after everything else, and
+/// reads its source; a link has no header file.
+///
+/// Mutation: share one dependency file between compiles, put the
+/// dependency arguments before the user's flags, give a link a header
+/// file, or leave the source out of what a compile reads; this test fails.
+#[test]
+fn each_compile_names_its_own_header_file() {
+    for kind in [
+        CompilerKind::Msvc,
+        CompilerKind::Clang,
+        CompilerKind::ClangCl,
+    ] {
+        let g = graph(kind);
+        let mut files = Vec::new();
+        for step in &g.steps[..4] {
+            let headers = step.headers.as_ref().unwrap();
+            assert_eq!(headers.file().parent(), step.output.parent(), "{kind:?}");
+            let tail = dependency_args(kind, headers.file());
+            assert!(step.args.ends_with(&tail), "{kind:?}: {:?}", step.args);
+            let StepKind::Compile { source } = &step.kind else {
+                panic!("{kind:?}");
+            };
+            assert_eq!(step.reads, std::slice::from_ref(source));
+            files.push(headers.file().to_owned());
+        }
+        files.sort();
+        files.dedup();
+        assert_eq!(files.len(), 4, "{kind:?}");
+        let expected = match kind.dependencies() {
+            Dependencies::SourceDependencies => "json",
+            Dependencies::DepFile => "d",
+        };
+        assert_eq!(files[0].extension().unwrap(), expected, "{kind:?}");
+        assert!(g.steps[4..].iter().all(|s| s.headers.is_none()), "{kind:?}");
+    }
+}
+
+/// A link reads the libraries of `links` found in `lib-dirs`, the first
+/// directory that has one winning; a library found in none is left to
+/// `LIB`.
+///
+/// Mutation: read every directory's copy, the last one, or a library found
+/// nowhere; this test fails.
+#[test]
+fn a_link_reads_the_libraries_found_in_lib_dirs() {
+    let root = tempfile::tempdir().unwrap();
+    let (first, second) = (root.path().join("one"), root.path().join("two"));
+    for dir in [&first, &second] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("foo.lib"), "").unwrap();
+    }
+    std::fs::write(second.join("bar.lib"), "").unwrap();
+    let mut build = compile_settings(
+        None,
+        CompilerKind::Clang,
+        Profile::Dev,
+        Lang::Cxx,
+        HostOs::Windows,
+        false,
+        Mode::Compile,
+    )
+    .build;
+    build.links = vec!["foo".into(), "bar".into(), "kernel32".into()];
+    build.lib_dirs = vec![first.clone(), second.clone()];
+    assert_eq!(
+        libraries(&build),
+        [first.join("foo.lib"), second.join("bar.lib")]
+    );
 }

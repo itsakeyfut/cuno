@@ -617,3 +617,24 @@ fn an_edition_cl_does_not_know_is_an_error() {
         }
     }
 }
+
+/// Each driver is asked for its header dependencies in its own way, the
+/// file named where it writes one (`build.md`, "Settings and flags").
+///
+/// Mutation: ask clang-cl for `/showIncludes` (which leaves out `#embed`
+/// files) or its runtime `-MD`, cl for a `-MD` file, or leave out `-MF`;
+/// this test fails.
+#[test]
+fn each_driver_reports_its_headers_its_own_way() {
+    let file = Path::new("C:/p/a.cpp.d");
+    let args = |kind| strings(dependency_args(kind, file));
+    assert_eq!(
+        args(CompilerKind::Msvc),
+        ["/sourceDependencies", "C:/p/a.cpp.d"]
+    );
+    assert_eq!(
+        args(CompilerKind::ClangCl),
+        ["/clang:-MD", "/clang:-MFC:/p/a.cpp.d"]
+    );
+    assert_eq!(args(CompilerKind::Clang), ["-MD", "-MF", "C:/p/a.cpp.d"]);
+}

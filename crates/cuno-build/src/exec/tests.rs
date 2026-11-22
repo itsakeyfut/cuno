@@ -1,5 +1,7 @@
 use super::*;
+use crate::deps::Headers;
 use crate::graph::StepKind;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,6 +17,8 @@ fn step(name: &str, after: &[usize]) -> Step {
         output: PathBuf::new(),
         after: after.to_vec(),
         echo: None,
+        headers: None,
+        reads: Vec::new(),
     }
 }
 
@@ -54,6 +58,7 @@ fn run(graph: &Graph, jobs: usize, fake: &Fake) -> (Result<(), Failed>, Vec<Stri
         Path::new("."),
         jobs,
         fake,
+        None,
         &mut |event| match event {
             Event::Started(s) => seen.push(format!("start {}", s.program.display())),
             Event::Finished(s, out) => seen.push(format!(
@@ -185,6 +190,7 @@ fn a_step_that_cannot_start_fails_with_why() {
         Path::new("."),
         1,
         &Missing,
+        None,
         &mut |event| {
             if let Event::Finished(_, out) = event {
                 stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -219,6 +225,7 @@ fn a_panicking_step_fails_rather_than_hangs() {
             Path::new("."),
             1,
             &Panics,
+            None,
             &mut |_| {},
         );
         let _ = done.send(result);
@@ -250,6 +257,7 @@ fn an_output_directory_that_cannot_be_made_is_named() {
         root.path(),
         1,
         &fake,
+        None,
         &mut |event| {
             if let Event::Finished(_, out) = event {
                 stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -290,4 +298,144 @@ fn a_non_ascii_echo_in_the_console_code_page_is_dropped() {
         without_echo(&step, out(&diagnostic)).stdout,
         out(&diagnostic).stdout
     );
+}
+
+/// A compiler stand-in that writes its output and a dependency file naming
+/// `header`, fails while `fail` is set, and runs `during` while it
+/// "compiles".
+struct Compiles {
+    header: PathBuf,
+    fail: std::sync::atomic::AtomicBool,
+    runs: AtomicUsize,
+    during: Box<dyn Fn() + Sync>,
+}
+
+impl Spawner for Compiles {
+    fn run(&self, step: &Step, _env: &Env, _cwd: &Path) -> io::Result<Output> {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        (self.during)();
+        std::fs::write(&step.output, "obj")?;
+        if let Some(headers) = &step.headers {
+            // Named relative to the working directory, as a compiler names
+            // a header found through a relative `-I`.
+            let name = self.header.file_name().unwrap().to_string_lossy();
+            std::fs::write(
+                headers.file(),
+                format!("out: {}\n", name.replace(' ', "\\ ")),
+            )?;
+        }
+        Ok(Output {
+            success: !self.fail.load(Ordering::SeqCst),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+/// One compile of `a.cpp`, reading `a.h`, in a temporary directory.
+fn compile_case(during: Box<dyn Fn() + Sync>) -> (tempfile::TempDir, Graph, Compiles) {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("a.cpp");
+    let header = root.path().join("a h.h");
+    std::fs::write(&source, "int a;").unwrap();
+    std::fs::write(&header, "#define A").unwrap();
+    let output = root.path().join("obj").join("a.obj");
+    let step = Step {
+        output: output.clone(),
+        headers: Some(Headers::DepFile(output.with_extension("d"))),
+        reads: vec![source],
+        ..step("clang", &[])
+    };
+    let spawner = Compiles {
+        header,
+        fail: Default::default(),
+        runs: AtomicUsize::new(0),
+        during,
+    };
+    (root, Graph { steps: vec![step] }, spawner)
+}
+
+fn build(root: &Path, graph: &Graph, spawner: &Compiles) -> Result<(), Failed> {
+    let records = Records::new([OsStr::new("v1")]);
+    execute(
+        graph,
+        &Env::default(),
+        root,
+        1,
+        spawner,
+        Some(&records),
+        &mut |_| {},
+    )
+}
+
+/// With records, a step that succeeded is skipped until its source or a
+/// header it read changes; a step that fails is not recorded, so it runs
+/// again even with nothing changed.
+///
+/// Mutation: record a failed step, skip forgetting the record before a
+/// run, leave the headers or the source out of what is recorded, or take
+/// a relative header from the directory cuno runs in; this test fails.
+#[test]
+fn records_skip_what_succeeded_and_rerun_what_changed_or_failed() {
+    let (root, graph, spawner) = compile_case(Box::new(|| {}));
+    let root = root.path();
+    assert_eq!(build(root, &graph, &spawner), Ok(()));
+    assert_eq!(build(root, &graph, &spawner), Ok(()));
+    assert_eq!(spawner.runs.load(Ordering::SeqCst), 1);
+
+    std::fs::write(&spawner.header, "#define B").unwrap();
+    assert_eq!(build(root, &graph, &spawner), Ok(()));
+    assert_eq!(spawner.runs.load(Ordering::SeqCst), 2);
+    std::fs::write(root.join("a.cpp"), "int b;").unwrap();
+    assert_eq!(build(root, &graph, &spawner), Ok(()));
+    assert_eq!(spawner.runs.load(Ordering::SeqCst), 3);
+
+    std::fs::write(root.join("a.cpp"), "int c;").unwrap();
+    spawner.fail.store(true, Ordering::SeqCst);
+    assert_eq!(build(root, &graph, &spawner), Err(Failed(vec![0])));
+    // Nothing changed since the failure, and it still runs.
+    spawner.fail.store(false, Ordering::SeqCst);
+    assert_eq!(build(root, &graph, &spawner), Ok(()));
+    assert_eq!(spawner.runs.load(Ordering::SeqCst), 5);
+}
+
+/// A source saved while its compile runs leaves the step unrecorded, so
+/// the next build compiles what is now there.
+///
+/// Mutation: take the inputs' stamps without the step's start time; this
+/// test fails.
+#[test]
+fn a_source_saved_during_its_compile_is_compiled_again() {
+    let saved = std::sync::Arc::new(Mutex::new(None::<PathBuf>));
+    let during = {
+        let saved = saved.clone();
+        Box::new(move || {
+            if let Some(source) = saved.lock().unwrap().take() {
+                std::thread::sleep(Duration::from_millis(20));
+                std::fs::write(source, "int saved;").unwrap();
+            }
+        })
+    };
+    let (root, graph, spawner) = compile_case(during);
+    *saved.lock().unwrap() = Some(root.path().join("a.cpp"));
+    assert_eq!(build(root.path(), &graph, &spawner), Ok(()));
+    assert_eq!(build(root.path(), &graph, &spawner), Ok(()));
+    assert_eq!(spawner.runs.load(Ordering::SeqCst), 2);
+}
+
+/// A step with no jobs to run on still runs: `jobs` of 0 is taken as 1.
+///
+/// Mutation: take 0 as given; this test fails.
+#[test]
+fn no_jobs_is_one_job() {
+    let fake = Fake::default();
+    let (result, _) = run(
+        &Graph {
+            steps: vec![step("cl", &[])],
+        },
+        0,
+        &fake,
+    );
+    assert_eq!(result, Ok(()));
+    assert_eq!(*fake.started.lock().unwrap(), ["cl"]);
 }

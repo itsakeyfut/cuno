@@ -5,7 +5,9 @@ mod compile;
 mod link;
 mod settings;
 
-pub use compile::{CompileInput, Mode, check_edition, compile_args, compile_flags};
+pub use compile::{
+    CompileInput, Mode, check_edition, compile_args, compile_flags, dependency_args,
+};
 pub use link::{LinkInput, link_args};
 
 pub use settings::{
