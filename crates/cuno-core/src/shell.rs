@@ -82,6 +82,15 @@ impl Shell {
         self.write(format_args!("{verb} {message}"));
     }
 
+    /// Another program's output (a compiler's diagnostics), written as it
+    /// was produced: not decoded, so text in the console's code page reaches
+    /// the console as such, and without anything added.
+    pub fn raw(&mut self, bytes: &[u8]) {
+        // A failed write to stderr cannot be reported anywhere better.
+        let _ = self.out.write_all(bytes);
+        let _ = self.out.flush();
+    }
+
     fn line(&mut self, style: &str, label: &str, message: impl Display) {
         let label = self.paint(style, label);
         self.write(format_args!("{label}: {message}"));
@@ -155,6 +164,19 @@ mod tests {
             out.text(),
             "error: no compiler found\nhelp: install Build Tools\nwarning: unused key\n   Compiling mygame v0.1.0\n"
         );
+    }
+
+    /// Another program's output goes through byte for byte, with nothing
+    /// added and nothing painted, even when it is not UTF-8.
+    ///
+    /// Mutation: decode it, add a newline, or paint it; this test fails.
+    #[test]
+    fn raw_output_is_written_as_produced() {
+        let (mut sh, out) = shell(Some(ColorChoice::Always), &[], false);
+        let cp932 = [0x83, 0x81, 0x83, 0x82, 0x0d, 0x0a];
+        sh.raw(&cp932);
+        sh.raw(b"x");
+        assert_eq!(*out.0.lock().unwrap(), [&cp932[..], b"x"].concat());
     }
 
     /// Mutation: swap or drop the style of any label, or stop painting the

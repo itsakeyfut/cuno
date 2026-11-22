@@ -33,6 +33,19 @@ pub fn detect(env: &Env, host: HostOs, explicit: &ExplicitPaths, run: &dyn Runne
     Detected { installs, llvm }
 }
 
+/// Variables compilers and linkers read options or include paths from by
+/// themselves, which would add flags no command line shows
+/// (`toolchain.md`, "How it is resolved").
+pub const TOOL_OPTION_VARIABLES: [&str; 7] = [
+    "CL",
+    "_CL_",
+    "LINK",
+    "_LINK_",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+];
+
 /// The environment the selected compiler runs in.
 #[derive(Clone, Debug)]
 pub struct Prepared {
@@ -41,6 +54,9 @@ pub struct Prepared {
     pub env: Env,
     /// The Windows SDK, when a toolset is used.
     pub sdk: Option<WindowsSdk>,
+    /// The [`TOOL_OPTION_VARIABLES`] that were set and are left out of
+    /// `env`, for the build to warn about.
+    pub ignored: Vec<&'static str>,
 }
 
 /// Resolves the environment for `selected`: with an MSVC toolset (every
@@ -51,16 +67,23 @@ pub fn prepare(
     env: &Env,
     registry: &dyn Registry,
 ) -> Result<Prepared, ToolchainError> {
+    let ignored: Vec<&'static str> = TOOL_OPTION_VARIABLES
+        .into_iter()
+        .filter(|name| env.get(name).is_some())
+        .collect();
+    let clean = env.without(&TOOL_OPTION_VARIABLES);
     let Some(toolset) = &selected.msvc else {
         return Ok(Prepared {
-            env: env.clone(),
+            env: clean,
             sdk: None,
+            ignored,
         });
     };
     let sdk = msvc::find_windows_sdk(env, registry)?;
     Ok(Prepared {
-        env: msvc::resolve(toolset, &sdk).apply(env),
+        env: msvc::resolve(toolset, &sdk).apply(&clean),
         sdk: Some(sdk),
+        ignored,
     })
 }
 
@@ -253,5 +276,30 @@ mod tests {
         let llvm = detected.llvm.unwrap();
         assert_eq!(llvm.len(), 1, "{llvm:?}");
         assert_eq!(llvm[0].path, llvm_dir.join("clang.exe"));
+    }
+
+    /// Variables that add compiler or linker options unseen are left out of
+    /// the build's environment, with or without a toolset, and named so the
+    /// build can warn; others are kept.
+    ///
+    /// Mutation: keep any of them, or name one that was not set; this test
+    /// fails.
+    #[test]
+    fn option_variables_are_left_out_and_named() {
+        let env = Env::from_pairs(
+            [
+                ("cl".into(), "/DX".into()),
+                ("_LINK_".into(), "/STACK:1".into()),
+                ("CPATH".into(), "C:/x".into()),
+                ("KEEP".into(), "1".into()),
+            ],
+            NameCase::Insensitive,
+        );
+        let prepared = prepare(&selected(None), &env, &Kits(PathBuf::new())).unwrap();
+        assert_eq!(prepared.ignored, ["CL", "_LINK_", "CPATH"]);
+        for name in TOOL_OPTION_VARIABLES {
+            assert_eq!(prepared.env.get(name), None, "{name}");
+        }
+        assert_eq!(prepared.env.get("KEEP").unwrap(), "1");
     }
 }

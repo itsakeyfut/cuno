@@ -3,7 +3,7 @@
 //! `docs/en/specs/commands.md`, "`cuno doctor`".
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cuno_build::input;
 use cuno_core::{CunoError, Env, Shell};
@@ -15,6 +15,8 @@ use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare;
 use cuno_toolchain::select::{self, Choices, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
+
+use crate::scratch;
 
 /// Prints `error:` and `help:` and counts problems.
 struct Problems<'a> {
@@ -90,6 +92,7 @@ pub fn doctor(
         found,
         no_visual_studio,
         env,
+        cwd,
         host,
         &runner,
         &mut problems,
@@ -136,6 +139,9 @@ struct StlInputs {
     kind: CompilerKind,
     env: Env,
     flags: Vec<OsString>,
+    /// Where the build would run: the project root, or the current
+    /// directory outside a project.
+    cwd: PathBuf,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -145,6 +151,7 @@ fn diagnose(
     found: Found<'_>,
     no_visual_studio: bool,
     env: &Env,
+    cwd: &Path,
     host: HostOs,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
@@ -281,15 +288,17 @@ fn diagnose(
         kind: selected.kind,
         env: prepared.env,
         flags,
+        cwd: project.map_or_else(|| cwd.to_owned(), |(p, _)| p.root.clone()),
     };
     if borrows_msvc {
-        let result = in_scratch(selected.kind.name(), |scratch| {
+        let result = scratch::in_scratch("doctor", selected.kind.name(), |scratch| {
             select::check(
                 &selected,
                 &stl.env,
                 ProbeInputs {
                     scratch,
                     flags: &stl.flags,
+                    cwd: &stl.cwd,
                 },
                 runner,
             )
@@ -327,7 +336,7 @@ fn tools(
             .status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
             && let Some(stl) = stl
-            && let Err(error) = in_scratch("clang-tidy", |scratch| {
+            && let Err(error) = scratch::in_scratch("doctor", "clang-tidy", |scratch| {
                 select::check_tidy(
                     &chosen,
                     stl.kind,
@@ -335,6 +344,7 @@ fn tools(
                     ProbeInputs {
                         scratch,
                         flags: &stl.flags,
+                        cwd: &stl.cwd,
                     },
                     runner,
                 )
@@ -383,59 +393,6 @@ fn others(
             Err(error) => format!("{} not usable: {error}", kind.name()),
         };
         problems.shell.status("Info", line);
-    }
-}
-
-/// Runs the check of `what` with a scratch directory of this process's own
-/// in the temporary directory, removed afterwards.
-fn in_scratch(
-    what: &'static str,
-    check: impl FnOnce(&Path) -> Result<(), ToolchainError>,
-) -> Result<(), Box<dyn CunoError>> {
-    // `create_dir`, not `create_dir_all`: a temporary directory that does not
-    // exist is a problem to report, not a tree to make.
-    let scratch = std::env::temp_dir().join(format!("cuno-doctor-{}", std::process::id()));
-    std::fs::create_dir(&scratch).map_err(|e| {
-        Box::new(ScratchError {
-            what,
-            dir: scratch.clone(),
-            reason: e.to_string(),
-        }) as Box<dyn CunoError>
-    })?;
-    let result = check(&scratch);
-    let _ = std::fs::remove_dir_all(&scratch);
-    result.map_err(|e| Box::new(e) as Box<dyn CunoError>)
-}
-
-/// The probe's scratch directory cannot be made in the temporary
-/// directory (`TEMP` names one that does not exist or cannot be written).
-#[derive(Debug)]
-struct ScratchError {
-    what: &'static str,
-    dir: std::path::PathBuf,
-    reason: String,
-}
-
-impl std::fmt::Display for ScratchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "cannot create {} to check {}: {}",
-            self.dir.display(),
-            self.what,
-            self.reason
-        )
-    }
-}
-
-impl std::error::Error for ScratchError {}
-
-impl CunoError for ScratchError {
-    fn exit_class(&self) -> cuno_core::ExitClass {
-        cuno_core::ExitClass::Setup
-    }
-    fn help(&self) -> Option<String> {
-        Some("set TEMP to a directory that exists and can be written".to_owned())
     }
 }
 

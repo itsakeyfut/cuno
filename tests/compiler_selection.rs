@@ -64,6 +64,7 @@ fn probe(selected: &Selected, env: &Env, flags: &[&str]) -> Result<(), Toolchain
         ProbeInputs {
             scratch: scratch.path(),
             flags: &flags,
+            cwd: scratch.path(),
         },
         &SystemRunner::new(),
     )

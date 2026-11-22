@@ -3,11 +3,16 @@
 //! See `docs/en/specs/commands.md` for the commands, options, output and exit
 //! codes, and `docs/en/specs/architecture.md` for how the crates are split.
 
+mod build;
 mod doctor;
+mod scratch;
 
 use std::io::IsTerminal;
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell};
 
 /// The top-level command line. Subcommands are added with the milestones that
@@ -31,6 +36,14 @@ struct Cli {
     #[arg(long, value_name = "WHEN", value_enum, global = true)]
     color: Option<Color>,
 
+    /// Show more, such as each command a build runs
+    #[arg(short, long, global = true, conflicts_with = "quiet")]
+    verbose: bool,
+
+    /// Show only errors, warnings and the compilers' output
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -38,12 +51,51 @@ struct Cli {
 /// The commands (docs/en/specs/commands.md).
 #[derive(Subcommand)]
 enum Command {
+    /// Compile the package
+    Build(BuildOpts),
     /// Diagnose the environment and show a fix for each problem
     Doctor {
         /// The compiler to diagnose (msvc / clang / clang-cl / gcc / safec)
         #[arg(long, value_name = "NAME")]
         compiler: Option<String>,
     },
+}
+
+/// The options of the build commands (docs/en/specs/commands.md, "Build
+/// commands").
+#[derive(Args)]
+struct BuildOpts {
+    /// Build with the release profile
+    #[arg(long, conflicts_with = "profile")]
+    release: bool,
+    /// Build with the given profile (dev / release)
+    #[arg(long, value_name = "NAME")]
+    profile: Option<String>,
+    /// The compiler to use (msvc / clang / clang-cl / gcc / safec)
+    #[arg(long, value_name = "NAME")]
+    compiler: Option<String>,
+    /// Cross-compile for a target (reserved)
+    #[arg(long, value_name = "TRIPLE")]
+    target: Option<String>,
+    /// Where to put the build's output
+    #[arg(long, value_name = "PATH")]
+    target_dir: Option<PathBuf>,
+    /// How many steps to run at once (default: the number of cores)
+    #[arg(short, long, value_name = "N")]
+    jobs: Option<NonZeroU32>,
+}
+
+impl From<BuildOpts> for build::BuildArgs {
+    fn from(o: BuildOpts) -> build::BuildArgs {
+        build::BuildArgs {
+            release: o.release,
+            profile: o.profile,
+            compiler: o.compiler,
+            target: o.target,
+            target_dir: o.target_dir,
+            jobs: o.jobs,
+        }
+    }
 }
 
 /// The values of `--color`. A separate type because `cuno-core` does not
@@ -93,12 +145,30 @@ fn main() {
 fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>> {
     // Destructured rather than ignored, so that adding a field to `Cli`
     // fails to compile here until it is handled.
-    let Cli { color: _, command } = cli;
+    let Cli {
+        color: _,
+        verbose,
+        quiet,
+        command,
+    } = cli;
 
     #[cfg(debug_assertions)]
     test_trigger::fire(env)?;
 
     match command {
+        Some(Command::Build(opts)) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
+            build::build(
+                opts.into(),
+                build::Verbosity { verbose, quiet },
+                env,
+                &cwd,
+                cuno_toolchain::HostOs::current(),
+                shell,
+            )?;
+            return Ok(0);
+        }
         Some(Command::Doctor { compiler }) => {
             // The binary alone reads the process (architecture.md).
             let cwd = std::env::current_dir()

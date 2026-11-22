@@ -447,9 +447,12 @@ pub struct ProbeInputs<'a> {
     /// include directories, defines and the user's `flags`, as
     /// [`crate::flags::compile_flags`] gives them for a C++ input: the probe
     /// compiles C++, so a C package's are built with `Lang::Cxx` and a C++
-    /// edition, or a C standard switch would be rejected. Paths must be
-    /// absolute: the probe does not run in the project directory.
+    /// edition, or a C standard switch would be rejected.
     pub flags: &'a [OsString],
+    /// Where the compiler runs: the project root, as for the build, so a
+    /// relative path in `flags` means the same (`toolchain.md`, "Minimum
+    /// compiler versions").
+    pub cwd: &'a Path,
 }
 
 /// Whether the selected compiler can build here: on Windows a Clang must be
@@ -481,7 +484,7 @@ pub fn check(
             args.push("--target=x86_64-pc-windows-msvc".into());
             args.extend(inputs.flags.iter().cloned());
             args.push(probe.into());
-            run.run(&selected.executable, &as_args(&args), env)
+            run.run_in(&selected.executable, &as_args(&args), env, inputs.cwd)
         },
     )
 }
@@ -515,7 +518,7 @@ pub fn check_tidy(
         }
         args.push("--target=x86_64-pc-windows-msvc".into());
         args.extend(inputs.flags.iter().cloned());
-        run.run(&tidy.path, &as_args(&args), env)
+        run.run_in(&tidy.path, &as_args(&args), env, inputs.cwd)
     })
 }
 
@@ -1208,6 +1211,7 @@ mod tests {
         let inputs = ProbeInputs {
             scratch: root.path(),
             flags: &[],
+            cwd: root.path(),
         };
         let clang = selected(CompilerKind::Clang);
         let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer.\n";
@@ -1273,6 +1277,7 @@ mod tests {
         let inputs = ProbeInputs {
             scratch: root.path(),
             flags: &flags,
+            cwd: root.path(),
         };
         let mut probes = Vec::new();
         for (kind, mode) in [
@@ -1614,6 +1619,7 @@ mod tests {
         let inputs = ProbeInputs {
             scratch: root.path(),
             flags: &flags,
+            cwd: root.path(),
         };
         let tidy = LlvmChoice {
             path: "clang-tidy".into(),

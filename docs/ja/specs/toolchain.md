@@ -54,7 +54,7 @@ C++20 の指定を受け付けるものとする。
 - Clang を 17 以降とする理由: cuno が対応する Clang の最も古い版として、すべての OS で共通の下限を置く。17 は VS 2022 17.10〜17.12 の標準ライブラリ（MSVC STL）が要求する版で、それ以前の Clang を対象に含めない。また、GNU 形式の `clang` で C ランタイムの種類を指定する `-fms-runtime-lib` は Clang 16 以降でしか使えない（指定しないと既定が静的ランタイムになり、`runtime = "dynamic"` の既定と食い違う）。17 は下限であり、Windows では下の確認でさらに上がりうる。
 - **Windows では、MSVC 標準ライブラリ（MSVC STL）が受け付ける Clang であることも条件とする。** MSVC STL は自分の下限より古い Clang をエラー（STL1000）にし、その下限は Visual Studio の更新とともに上がる。固定の数値では表せないため、cuno は標準ライブラリ自身に確かめる。
   - 下限の例（MSVC STL の `yvals_core.h`）: VS 2022 17.0 は Clang 12、17.7 は 16、17.10 は 17、17.13 は 18、17.14 は 19、MSVC 14.51 は 20、14.52 は 22。
-  - **確認の方法**: `<yvals_core.h>` だけを含むファイルを、ビルドのコンパイルコマンドと同じ条件（同じ Clang、解決した Windows の環境、ターゲット `x86_64-pc-windows-msvc`、そしてビルドのコンパイルフラグのうち入力と出力の指定を除くすべて。言語規格、RTTI や例外の設定、インクルードパス、`defines`、利用者の `flags` を含む）で、**C++ として**構文チェックだけ行う（`clang-cl` は `/TP /Zs`、`clang` は `-x c++ -fsyntax-only`）。ファイルはプロジェクトの外（一時ディレクトリ）に置く。
+  - **確認の方法**: `<yvals_core.h>` だけを含むファイルを、ビルドのコンパイルコマンドと同じ条件（同じ Clang、解決した Windows の環境、ターゲット `x86_64-pc-windows-msvc`、そしてビルドのコンパイルフラグのうち入力と出力の指定を除くすべて。言語規格、RTTI や例外の設定、インクルードパス、`defines`、利用者の `flags` を含む）で、**C++ として**構文チェックだけ行う（`clang-cl` は `/TP /Zs`、`clang` は `-x c++ -fsyntax-only`）。ファイルはプロジェクトの外（一時ディレクトリ）に置き、コンパイラはビルドと同じくプロジェクトのルートで実行する（プロジェクトの外ではカレントディレクトリ）。`flags` の相対パスがビルドと同じ意味になるように。
     - C++ として行う理由: C として扱うと標準ライブラリが別のエラー（STL1003）で止まるため。
     - ビルドのフラグを渡す理由: MSVC STL の判定はフラグとマクロに左右される。`_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH` が定義されていれば STL1000 を出さず（利用者が意図的に許した組み合わせは、実際のビルドと同じく通す）、`rtti = false` で `_HAS_STATIC_RTTI=0` を定義したプロジェクトは `/GR-` なしでは別のエラーで止まる。一部のフラグだけを渡すと、実際のビルドとは違う判定になる。
   - **判定**: 終了コードが 0 でなく、標準出力・標準エラーのどちらかに `STL1000:` があれば、その組み合わせは使えない。必要な Clang の版は、標準ライブラリのメッセージ `expected Clang <バージョン> or newer` の `<バージョン>` から取り、そのままの形で示す（`22` のことも `17.0.0` のこともある）。取り出せなければ、標準ライブラリのメッセージをそのまま `help:` に出す。
@@ -110,6 +110,9 @@ C++20 の指定を受け付けるものとする。
   | `LIB` | `<MSVC>\lib\x64`、`<SDK>\Lib\<バージョン>\ucrt\x64`、`<SDK>\Lib\<バージョン>\um\x64` |
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
+
+- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang のインクルードパス）は、ビルド、標準ライブラリの確認、`cuno doctor` の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
+  - 理由: これらはコマンドラインに現れずにフラグを足すため、`cuno.toml` と違うフラグで黙ってビルドし、成功と報告することになる（例: `_CL_=-DNDEBUG` で dev プロファイルにも `NDEBUG` が定義される）。`-v` の表示にも出ない。エラーにしないのは、全体に `CL=/MP` などを設定している利用者が、cuno を使うたびに消さずに済むように。
 
 - **Developer Command Prompt の変数は取り除く。** `VSINSTALLDIR`、`VCINSTALLDIR`、`VCToolsInstallDir`、`EXTERNAL_INCLUDE`、`WindowsSdkDir`、`WindowsSDKVersion`、`UniversalCRTSdkDir`、`UCRTVersion`。clang / clang-cl はこれらからツールセットとリンカーを探すため、別の Visual Studio の Developer Command Prompt から cuno を実行すると、cuno が選んだものと違うツールセットで成功してしまう。
 - `vcvars64.bat` が設定するもののうち、次は設定しない（使えばエラーで分かる）。
