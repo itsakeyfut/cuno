@@ -227,3 +227,271 @@ fn a_setting_reaches_doctor_and_the_build_alike() {
         build.stderr
     );
 }
+
+/// A program that prints which of `NDEBUG`, `SNEAKED` and `CFG` it was
+/// built with.
+const REPORTS_DEFINES: &str = r#"#include <cstdio>
+int main() {
+#ifdef NDEBUG
+    std::puts("NDEBUG");
+#endif
+#ifdef SNEAKED
+    std::puts("SNEAKED");
+#endif
+#ifdef CFG
+    std::puts("CFG");
+#endif
+    std::puts("ran");
+}
+"#;
+
+/// The C runtime writes `\n` as `\r\n`.
+fn printed(run: &Run) -> String {
+    run.stdout.replace("\r\n", "\n")
+}
+
+/// `CL`, `_CL_`, `LINK` and the like would add flags no command line
+/// shows; the build leaves them out and warns about each, so a dev build
+/// stays without `NDEBUG` and a define from the environment does not
+/// arrive.
+///
+/// Mutation: pass them through, or leave them out without a warning; this
+/// test fails.
+#[test]
+fn compiler_option_variables_are_left_out_with_a_warning() {
+    for (name, compiler) in [("msvc", Compiler::Msvc), ("clang-cl", Compiler::ClangCl)] {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", REPORTS_DEFINES);
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["build", "--compiler", name])
+            .env("CL", "/DSNEAKED")
+            .env("_CL_", "/DNDEBUG");
+        let run = project.run_command(cmd);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        assert!(
+            run.stderr.contains(
+                "warning: CL is set in the environment and is not used\nhelp: write the flags in cuno.toml\n\
+                 warning: _CL_ is set in the environment and is not used\nhelp: write the flags in cuno.toml\n"
+            ),
+            "{name}: {}",
+            run.stderr
+        );
+        let ran = project.run(project.path().join("target/debug/app.exe"), &[]);
+        assert_eq!(printed(&ran), "ran\n", "{name}");
+    }
+}
+
+/// The build runs the same wherever in the project it is started: a
+/// relative path in `[build.<compiler>] flags` means the same to the
+/// standard library check and to the compiles.
+///
+/// Mutation: run the check, or the compiles, in the directory cuno was
+/// started in; this test fails.
+#[test]
+fn a_build_started_below_the_root_runs_in_the_root() {
+    for (name, compiler, flags) in [
+        ("clang", Compiler::Clang, r#"["-include", "src/cfg.h"]"#),
+        ("clang-cl", Compiler::ClangCl, r#"["/FIsrc/cfg.h"]"#),
+    ] {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                &format!("{MANIFEST}[build.{name}]\nflags = {flags}\n"),
+            )
+            .file("src/cfg.h", "#define CFG 1\n")
+            .file("src/main.cpp", REPORTS_DEFINES);
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["build", "--compiler", name])
+            .current_dir(project.path().join("src"));
+        let run = project.run_command(cmd);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        let ran = project.run(project.path().join("target/debug/app.exe"), &[]);
+        assert_eq!(printed(&ran), "CFG\nran\n", "{name}");
+    }
+}
+
+/// `--target-dir` puts the build where it says, and `[term] verbose`
+/// shows the commands as `-v` does.
+///
+/// Mutation: ignore `--target-dir`, or `[term] verbose`; this test fails.
+#[test]
+fn target_dir_and_configured_verbosity_apply() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("").file(".cuno/config.toml", "[term]\nverbose = true\n");
+    let run = project.cuno(&["build", "--compiler", "msvc", "--target-dir", "out"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(project.path().join("out/debug/app.exe").is_file());
+    assert!(!project.path().join("target").exists());
+    assert!(run.stderr.contains("     Running `"), "{}", run.stderr);
+}
+
+/// `-v` shows the command each step runs: the compiler, the source's
+/// language switch and the source.
+///
+/// Mutation: show another command, or none; this test fails.
+#[test]
+fn verbose_shows_the_command_run() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = package("");
+    let run = project.cuno(&["-v", "build", "--compiler", "clang"]);
+    let source = project.path().join("src").join("util.cpp");
+    let line = run
+        .stderr
+        .lines()
+        .find(|l| l.contains(&source.display().to_string()))
+        .unwrap_or_else(|| panic!("{}", run.stderr));
+    assert!(line.starts_with("     Running `\""), "{line}");
+    assert!(line.contains("clang.exe\" -c "), "{line}");
+    assert!(line.contains(" -x c++ "), "{line}");
+}
+
+/// A C package builds and runs on every compiler, with no standard library
+/// check (it uses no C++ standard library).
+///
+/// Mutation: link or check a C package as C++; this test fails.
+#[test]
+fn a_c_package_builds_on_every_compiler() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                &format!("{MANIFEST}lang = \"c\"\n"),
+            )
+            .file("src/yvals_core.h", "#error the C++ check ran\n")
+            .file(
+                "src/main.c",
+                "#include <stdio.h>\nint main(void) { printf(\"c %ld\\n\", __STDC_VERSION__); return 0; }\n",
+            );
+        let run = project.cuno(&["build", "--compiler", name]);
+        assert_built(&run, name, "dev", "unoptimized + debuginfo");
+        let ran = project.run(project.path().join("target/debug/app.exe"), &[]);
+        assert_eq!(printed(&ran), "c 201710\n", "{name}");
+    }
+}
+
+/// `-q` keeps what a failure needs: the compiler's message and the error.
+///
+/// Mutation: hide the compiler's output under `-q`; this test fails.
+#[test]
+fn quiet_still_shows_a_failure() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let run = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/main.cpp", "int main() { return undeclared; }\n")
+        .cuno(&["-q", "build", "--compiler", "clang"]);
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert!(run.stderr.contains("undeclared"), "{}", run.stderr);
+    assert!(
+        run.stderr.ends_with("error: could not compile `app`\n"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// Warnings from reading `cuno.toml` and from classifying the sources are
+/// shown, and the build goes on.
+///
+/// Mutation: drop either kind of warning; this test fails.
+#[test]
+fn warnings_are_shown_and_the_build_goes_on() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let run = package("unknown = 1\n[[bin]]\nname = \"app\"\npath = \"src/main.cpp\"\n").cuno(&[
+        "build",
+        "--compiler",
+        "msvc",
+    ]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("warning: unknown key `package.unknown` in cuno.toml, ignored"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains(
+            "warning: src/bin/tool.c is not built: [[bin]] is written and does not list it"
+        ),
+        "{}",
+        run.stderr
+    );
+}
+
+/// `--profile release` is the release profile, as `--release` is.
+///
+/// Mutation: build `--profile release` as dev; this test fails.
+#[test]
+fn profile_release_is_release() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("");
+    let run = project.cuno(&["build", "--profile", "release", "--compiler", "msvc"]);
+    assert_built(&run, "msvc", "release", "optimized");
+}
+
+/// An edition the cl lacks is refused before anything is built (on a cl
+/// older than 19.52, as on CI; elsewhere it builds).
+///
+/// Mutation: build without checking the edition; this test fails on a cl
+/// older than 19.52.
+#[test]
+fn an_edition_the_compiler_lacks_is_refused_before_building() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let run = package("edition = \"c++23\"\n").cuno(&["build", "--compiler", "msvc"]);
+    if run.code == Some(3) {
+        assert!(run.stderr.starts_with("error: "), "{}", run.stderr);
+        assert!(!run.stderr.contains("Compiling"), "{}", run.stderr);
+    } else {
+        assert_built(&run, "msvc", "dev", "unoptimized + debuginfo");
+    }
+}
+
+/// A source whose name is not ASCII builds with cl, and cl's echo of its
+/// name, in the console's code page, is not shown.
+///
+/// Mutation: compare cl's first line as UTF-8; this test fails.
+#[test]
+fn a_non_ascii_source_name_shows_no_echo() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("").file("src/日本語.cpp", "int japanese() { return 1; }\n");
+    let run = project.cuno(&["build", "--compiler", "msvc"]);
+    assert_built(&run, "msvc", "dev", "unoptimized + debuginfo");
+}
+
+/// An output directory that cannot be made is named, not blamed on the
+/// compiler.
+///
+/// Mutation: report it as the compiler failing to run; this test fails.
+#[test]
+fn an_output_directory_that_cannot_be_made_is_named() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("").file("target", "a file\n");
+    let run = project.cuno(&["build", "--compiler", "msvc"]);
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    assert!(run.stderr.contains("could not create "), "{}", run.stderr);
+    assert!(!run.stderr.contains("could not run"), "{}", run.stderr);
+}

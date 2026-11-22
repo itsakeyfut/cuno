@@ -3,7 +3,7 @@
 //! `docs/en/specs/commands.md`, "`cuno doctor`".
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cuno_build::input;
 use cuno_core::{CunoError, Env, Shell};
@@ -92,6 +92,7 @@ pub fn doctor(
         found,
         no_visual_studio,
         env,
+        cwd,
         host,
         &runner,
         &mut problems,
@@ -138,6 +139,9 @@ struct StlInputs {
     kind: CompilerKind,
     env: Env,
     flags: Vec<OsString>,
+    /// Where the build would run: the project root, or the current
+    /// directory outside a project.
+    cwd: PathBuf,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,6 +151,7 @@ fn diagnose(
     found: Found<'_>,
     no_visual_studio: bool,
     env: &Env,
+    cwd: &Path,
     host: HostOs,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
@@ -283,6 +288,7 @@ fn diagnose(
         kind: selected.kind,
         env: prepared.env,
         flags,
+        cwd: project.map_or_else(|| cwd.to_owned(), |(p, _)| p.root.clone()),
     };
     if borrows_msvc {
         let result = scratch::in_scratch("doctor", selected.kind.name(), |scratch| {
@@ -292,6 +298,7 @@ fn diagnose(
                 ProbeInputs {
                     scratch,
                     flags: &stl.flags,
+                    cwd: &stl.cwd,
                 },
                 runner,
             )
@@ -337,6 +344,7 @@ fn tools(
                     ProbeInputs {
                         scratch,
                         flags: &stl.flags,
+                        cwd: &stl.cwd,
                     },
                     runner,
                 )

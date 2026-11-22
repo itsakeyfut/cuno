@@ -105,7 +105,10 @@ impl Project {
     /// [`Project::run_command`] with `vars` set after the environment is
     /// made hermetic, so that a `CUNO_*` variable a test sets survives.
     pub fn run_command_with(&self, mut cmd: Command, vars: &[(&str, &str)]) -> Run {
-        cmd.current_dir(self.path());
+        // The project, unless the test chose a directory in it.
+        if cmd.get_current_dir().is_none() {
+            cmd.current_dir(self.path());
+        }
         hermetic(&mut cmd, std::env::vars_os().map(|(name, _)| name));
         // After `hermetic`, which removes every inherited `CUNO_*` variable.
         cmd.env("CUNO_HOME", &self.home);

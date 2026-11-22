@@ -32,6 +32,19 @@ pub trait Runner {
     /// inherited from the process running cuno); `Err` when it could not be
     /// started, or did not finish in time (`ErrorKind::TimedOut`).
     fn run(&self, program: &Path, args: &[&OsStr], env: &Env) -> std::io::Result<Output>;
+
+    /// [`Runner::run`] in the working directory `cwd`. A runner that does
+    /// not start processes may ignore it.
+    fn run_in(
+        &self,
+        program: &Path,
+        args: &[&OsStr],
+        env: &Env,
+        cwd: &Path,
+    ) -> std::io::Result<Output> {
+        let _ = cwd;
+        self.run(program, args, env)
+    }
 }
 
 /// How long a tool may run before it is stopped (`docs/en/specs/toolchain.md`,
@@ -65,9 +78,20 @@ impl Runner for SystemRunner {
     /// Runs `program` with stdin closed, stopping it once the limit has
     /// passed.
     fn run(&self, program: &Path, args: &[&OsStr], env: &Env) -> io::Result<Output> {
+        self.wait(Command::new(program).args(args), env)
+    }
+
+    fn run_in(&self, program: &Path, args: &[&OsStr], env: &Env, cwd: &Path) -> io::Result<Output> {
+        self.wait(Command::new(program).args(args).current_dir(cwd), env)
+    }
+}
+
+impl SystemRunner {
+    /// Starts `command` with exactly `env` and stdin closed, and waits for
+    /// it, stopping it once the limit has passed.
+    fn wait(&self, command: &mut Command, env: &Env) -> io::Result<Output> {
         let limit = self.limit;
-        let mut child = Command::new(program)
-            .args(args)
+        let mut child = command
             .env_clear()
             .envs(env.vars())
             .stdin(Stdio::null())

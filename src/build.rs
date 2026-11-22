@@ -100,6 +100,12 @@ pub fn build(
         select::select(&settings.compiler, found, &settings.constraints, host).map_err(boxed)?;
     check_edition(selected.kind, selected.version, manifest.package.edition).map_err(boxed)?;
     let prepared = prepare::prepare(&selected, env, &SystemRegistry).map_err(boxed)?;
+    // Left out of the build's environment, since they add flags no command
+    // line shows (toolchain.md, "How it is resolved").
+    for name in &prepared.ignored {
+        shell.warning(format!("{name} is set in the environment and is not used"));
+        shell.help("write the flags in cuno.toml");
+    }
     let compile = |lang: Lang, mode: Mode| {
         compile_settings(
             Some((root, manifest)),
@@ -120,6 +126,7 @@ pub fn build(
                 ProbeInputs {
                     scratch: dir,
                     flags: &flags,
+                    cwd: root,
                 },
                 &runner,
             )
@@ -237,13 +244,35 @@ fn profile_name(profile: Profile) -> &'static str {
 /// A step's command as `-v` shows it: the program and its arguments,
 /// each quoted when it holds a space.
 fn command_line(step: &Step) -> String {
+    // Quoted as the Windows command line reads it back: an argument with a
+    // space, a tab or a quote, or an empty one, in quotes, with each quote
+    // escaped and the backslashes before it doubled.
     let quote = |s: &OsStr| {
         let s = s.to_string_lossy();
-        if s.contains(' ') {
-            format!("\"{s}\"")
-        } else {
-            s.into_owned()
+        if !s.is_empty() && !s.contains([' ', '\t', '"']) {
+            return s.into_owned();
         }
+        let mut quoted = String::from('"');
+        let mut backslashes = 0;
+        for c in s.chars() {
+            match c {
+                '\\' => backslashes += 1,
+                '"' => {
+                    quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                    backslashes = 0;
+                }
+                _ => {
+                    quoted.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                }
+            }
+            if c != '\\' {
+                quoted.push(c);
+            }
+        }
+        quoted.push_str(&"\\".repeat(backslashes * 2));
+        quoted.push('"');
+        quoted
     };
     std::iter::once(quote(step.program.as_os_str()))
         .chain(step.args.iter().map(|a| quote(a)))
@@ -317,5 +346,39 @@ impl CunoError for CommandError {
             CommandError::UnknownProfile { .. } => Some("use dev or release".to_owned()),
             CommandError::TargetNotSupported | CommandError::Failed { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn shown(program: &str, args: &[&str]) -> String {
+        command_line(&Step {
+            kind: StepKind::Link { bin: "app".into() },
+            program: program.into(),
+            args: args.iter().map(OsString::from).collect(),
+            output: PathBuf::new(),
+            after: Vec::new(),
+            echo: None,
+        })
+    }
+
+    /// `-v` shows each argument as the Windows command line would read it
+    /// back: plain when it can be, otherwise quoted with its quotes escaped
+    /// and the backslashes before a quote doubled.
+    ///
+    /// Mutation: quote only on a space, leave inner quotes as they are, or
+    /// drop an empty argument; this test fails.
+    #[test]
+    fn verbose_quotes_as_the_command_line_reads() {
+        assert_eq!(shown("cl.exe", &["/c", "a.cpp"]), "cl.exe /c a.cpp");
+        assert_eq!(
+            shown(r"C:\Program Files\cl.exe", &[r#"/DGREETING="hi there""#]),
+            r#""C:\Program Files\cl.exe" "/DGREETING=\"hi there\"""#
+        );
+        assert_eq!(shown("x", &[r"C:\a b\"]), r#"x "C:\a b\\""#);
+        assert_eq!(shown("x", &["a\tb", ""]), "x \"a\tb\" \"\"");
     }
 }
