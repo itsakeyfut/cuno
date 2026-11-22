@@ -15,7 +15,7 @@ use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
 
 use crate::read::{Doc, key};
-use crate::{ConfigError, ConfigWarning, Project, resolve_path, shown_path};
+use crate::{ConfigError, ConfigWarning, LocatedDir, Project, resolve_path, shown_path};
 
 /// A value read from a file, with what cuno read past.
 #[derive(Clone, Debug)]
@@ -37,7 +37,7 @@ pub struct Manifest {
     /// `[toolchain.version]` for the compilers cuno builds with.
     pub constraints: Constraints,
     /// `[build] target-dir`, resolved against the project root.
-    pub target_dir: Option<PathBuf>,
+    pub target_dir: Option<LocatedDir>,
     /// `[build]`.
     pub build: BuildTable,
     /// `[build.<compiler>] flags`.
@@ -429,22 +429,16 @@ impl Check<'_> {
         if build.rule.is_some() {
             return Err(self.not_yet("build.rule", "`[[build.rule]]`"));
         }
-        // An empty output directory would be the project root (build.md).
-        if build
-            .target_dir
-            .as_ref()
-            .is_some_and(|dir| dir.as_os_str().is_empty())
-        {
-            return Err(self.doc.error(
-                "build.target-dir",
-                format!("`build.target-dir` in {} is empty", self.doc.file.display()),
-                Some("write the output directory, such as \"target\"".to_owned()),
-            ));
-        }
         let target_dir = build
             .target_dir
             .take()
-            .map(|dir| self.path("build.target-dir", &dir))
+            .map(|dir| {
+                Ok::<_, ConfigError>(LocatedDir {
+                    path: self.path("build.target-dir", &dir)?,
+                    written: dir,
+                    location: self.doc.locate("build.target-dir"),
+                })
+            })
             .transpose()?;
         let mut compiler_flags = BTreeMap::new();
         for (name, flags) in [
@@ -913,7 +907,7 @@ indent-width = 2
             ">=17, <30"
         );
         assert_eq!(m.constraints.clang_cl.as_ref().unwrap().to_string(), "=22");
-        assert_eq!(m.target_dir, Some(r.join("out")));
+        assert_eq!(m.target_dir.clone().map(|t| t.path), Some(r.join("out")));
         assert_eq!(
             m.build,
             BuildTable {
@@ -1212,7 +1206,7 @@ indent-width = 2
         let r = root();
         assert_eq!(m.build.include_dirs, Some(vec![r.join("a")]));
         assert_eq!(m.build.lib_dirs, Some(vec![r.join("b")]));
-        assert_eq!(m.target_dir, Some(r.join("t")));
+        assert_eq!(m.target_dir.clone().map(|t| t.path), Some(r.join("t")));
         assert_eq!(
             m.platform[&Os::Windows].include_dirs,
             Some(vec![r.join("c")])

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 9032f42c6be3772368f8487ac566232186a7f2e8 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 69d05f5b73b851ef58e5f407e7198ea8efb2d027 -->
 
 # Build
 
@@ -187,6 +187,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files.
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
+- A build (`build` / `run` / `check`) puts a marker file `.cuno-target` directly in the output directory when it creates the directory, or when it starts using an empty one. It does not put one in an existing directory that has contents. `cuno clean` does not delete an output directory without this marker.
+  - Rationale: even when the output directory points inside the project, it may be a directory cuno did not create, such as `src` or `.git`. Naming rules cannot fully guard against this, so cuno deletes only what it knows it created itself.
 - Users can change the output directory. Precedence:
   1. Command-line argument `--target-dir`
   2. Environment variable `CUNO_TARGET_DIR`
@@ -194,9 +196,10 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   4. `[build] target-dir` in `cuno.toml`
   5. User-level `<cuno home>/config.toml`
   6. Default value `target/`
-- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3), whichever layer sets it.
+- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3). This holds whichever layer sets it, and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `cuno.toml` is an error).
+  - Rationale: if the result depended on how the path is written (`""`, `"."`, `"a/.."`) or on which layer wins, the error would first appear only when another layer's setting is removed.
   - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
-- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3). To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
+- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3), even in a layer that does not win. The error names the file and line where it was written, with ``error: `build.target-dir` in .cuno/config.toml points outside the project: <path>`` and `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project`. To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
   - Rationale: these files can be distributed with a repository. `cuno clean` deletes the output directory without running anything, so a cloned project must not be able to make it delete a directory outside the project. On builds trusting a project's settings, see [manifest.md](manifest.md#a-projects-settings-and-trust).
 - `cuno new` adds the output directory to `.gitignore`.
 

@@ -4,6 +4,7 @@
 //! codes, and `docs/en/specs/architecture.md` for how the crates are split.
 
 mod build;
+mod clean;
 mod doctor;
 mod scratch;
 
@@ -65,6 +66,18 @@ enum Command {
         /// Arguments for the program
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<OsString>,
+    },
+    /// Remove the build's output
+    Clean {
+        /// Remove only the release profile's output
+        #[arg(long, conflicts_with = "profile")]
+        release: bool,
+        /// Remove only the given profile's output (dev / release)
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// The output directory to remove from
+        #[arg(long, value_name = "PATH")]
+        target_dir: Option<PathBuf>,
     },
     /// Diagnose the environment and show a fix for each problem
     Doctor {
@@ -172,6 +185,21 @@ fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>
         Some(Command::Build(opts)) => (build::Goal::Build, opts),
         Some(Command::Check(opts)) => (build::Goal::Check, opts),
         Some(Command::Run { bin, opts, args }) => (build::Goal::Run { bin, args }, opts),
+        Some(Command::Clean {
+            release,
+            profile,
+            target_dir,
+        }) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
+            let args = clean::CleanArgs {
+                release,
+                profile,
+                target_dir,
+            };
+            clean::clean(args, quiet, env, &cwd, shell)?;
+            return Ok(0);
+        }
         Some(Command::Doctor { compiler }) => {
             // The binary alone reads the process (architecture.md).
             let cwd = std::env::current_dir()

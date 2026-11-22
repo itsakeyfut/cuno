@@ -557,3 +557,181 @@ fn paths_that_do_not_exist_are_compared_after_resolving_dots() {
     assert!(holds(&base.join("."), base));
     assert!(!holds(&base.join("y").join("out"), base));
 }
+
+/// Every layer that sets an output directory is checked, winning or not:
+/// `"."` in `cuno.toml` and `""` in `.cuno/config.toml` are errors even
+/// when the command line or the environment wins.
+///
+/// Mutation: check only the winning layer, or stop at the first layer
+/// that sets one; this test fails.
+#[test]
+fn a_losing_layer_is_checked_too() {
+    let f = Fixture::new();
+    let cli = CliSettings {
+        target_dir: Some("out".into()),
+        ..Default::default()
+    };
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \".\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &cli);
+    assert!(
+        err.message
+            .contains("(`build.target-dir` in cuno.toml) is the project root"),
+        "{err}"
+    );
+    assert_eq!(err.location.unwrap().line, 5);
+    f.write("project/cuno.toml", MANIFEST);
+
+    f.write("project/.cuno/config.toml", "[build]\ntarget-dir = \"\"\n");
+    let err = resolve_err(
+        &f,
+        &f.root,
+        &f.env(&[("CUNO_TARGET_DIR", "out")]),
+        &CliSettings::default(),
+    );
+    assert!(err.message.ends_with("is empty"), "{err}");
+    assert_eq!(err.location.unwrap().line, 2);
+}
+
+/// A file the project carries may not put the output outside the project,
+/// from `cuno.toml` or `.cuno/config.toml`, winning or not; the user's own
+/// config, the environment and the command line may.
+///
+/// Mutation: accept a project file's directory outside the project, check
+/// only `.cuno/config.toml`, or refuse the user config; this test fails.
+#[test]
+fn only_the_users_own_layers_may_point_outside_the_project() {
+    let f = Fixture::new();
+    let none = CliSettings::default();
+    for (file, text) in [
+        (
+            "project/cuno.toml",
+            format!("{MANIFEST}[build]\ntarget-dir = \"../out\"\n"),
+        ),
+        (
+            "project/.cuno/config.toml",
+            "[build]\ntarget-dir = \"../out\"\n".to_owned(),
+        ),
+    ] {
+        f.write(file, &text);
+        let err = resolve_err(&f, &f.root, &f.env(&[("CUNO_TARGET_DIR", "out")]), &none);
+        assert!(
+            err.message.contains("points outside the project: "),
+            "{file}: {err}"
+        );
+        assert!(err.location.is_some(), "{file}");
+        assert!(
+            err.help
+                .as_deref()
+                .unwrap()
+                .contains("user-level config, CUNO_TARGET_DIR or --target-dir"),
+            "{file}"
+        );
+        if file.ends_with("cuno.toml") {
+            f.write(file, MANIFEST);
+        } else {
+            std::fs::remove_file(f.root.join(".cuno/config.toml")).unwrap();
+        }
+    }
+
+    let outside = f.outside.join("out");
+    let written = outside.display().to_string().replace('\\', "/");
+    f.write(
+        "home/config.toml",
+        &format!("[build]\ntarget-dir = \"{written}\"\n"),
+    );
+    assert_eq!(
+        f.resolve(&f.root, &f.env(&[]), &none).value.target_dir,
+        outside
+    );
+    std::fs::remove_file(f.home.join("config.toml")).unwrap();
+    let s = f
+        .resolve(&f.root, &f.env(&[("CUNO_TARGET_DIR", &written)]), &none)
+        .value;
+    assert_eq!(s.target_dir, outside);
+    let cli = CliSettings {
+        target_dir: Some(outside.clone()),
+        ..Default::default()
+    };
+    assert_eq!(
+        f.resolve(&f.root, &f.env(&[]), &cli).value.target_dir,
+        outside
+    );
+}
+
+/// The user's config and the environment are checked as the project's
+/// files are, winning or not: a user config naming a directory above the
+/// project is refused with its file and line, and so is `CUNO_TARGET_DIR`
+/// at the root when the command line wins. An empty `target-dir` in
+/// `cuno.toml` says it is empty.
+///
+/// Mutation: check only the project's files, skip the environment when the
+/// command line is given, name no file for the user config, or let an
+/// empty `cuno.toml` value fall through to the root check; this test fails.
+#[test]
+fn the_users_layers_are_checked_too() {
+    let f = Fixture::new();
+    let above = f
+        .root
+        .parent()
+        .unwrap()
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    f.write(
+        "home/config.toml",
+        &format!("[build]\ntarget-dir = \"{above}\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
+    assert!(
+        err.message.contains("config.toml) is the project root"),
+        "{err}"
+    );
+    assert_eq!(err.location.unwrap().line, 2);
+    std::fs::remove_file(f.home.join("config.toml")).unwrap();
+
+    let cli = CliSettings {
+        target_dir: Some("out".into()),
+        ..Default::default()
+    };
+    let err = resolve_err(&f, &f.root, &f.env(&[("CUNO_TARGET_DIR", ".")]), &cli);
+    assert!(err.message.contains("(CUNO_TARGET_DIR)"), "{err}");
+
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \"\"\n"),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &cli);
+    assert_eq!(err.message, "`build.target-dir` in cuno.toml is empty");
+}
+
+/// A directory inside the project, spelled in another case or not made
+/// yet, is inside it: the comparison is the file system's, not the
+/// spelling's.
+///
+/// Mutation: compare the part that does not exist yet as written, with
+/// case; this test fails.
+#[cfg(windows)]
+#[test]
+fn a_directory_inside_the_project_in_another_case_is_inside() {
+    let f = Fixture::new();
+    let upper = f
+        .root
+        .display()
+        .to_string()
+        .replace('\\', "/")
+        .to_uppercase();
+    f.write(
+        "project/cuno.toml",
+        &format!("{MANIFEST}[build]\ntarget-dir = \"{upper}/out\"\n"),
+    );
+    let s = f.resolve(&f.root, &f.env(&[]), &CliSettings::default());
+    assert!(!f.root.join("out").exists());
+    assert!(
+        s.value.target_dir.to_string_lossy().ends_with("out"),
+        "{}",
+        s.value.target_dir.display()
+    );
+}

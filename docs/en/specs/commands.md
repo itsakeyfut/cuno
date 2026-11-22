@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob e87aa98999df86f95362ea523da4cb7a2ea24b95 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 01f2517660d6f0ab8db530062bcf7c45af0d23ab -->
 
 # Commands
 
@@ -156,6 +156,18 @@ Values of `--vcs`:
 |---|---|
 | `--release` / `--profile <name>` | Delete only that profile's output. If not specified, the entire output directory is deleted |
 | `--target-dir <path>` | The output directory to delete (follows the precedence in [build.md](build.md)) |
+
+- Without a profile, the entire output directory is deleted; with one, only `<output dir>/<profile dir>` (`debug` for `dev`). Nothing outside the output directory is deleted.
+- Before deleting, the output directory is checked by the rules in [build.md](build.md#output-directory). An output directory that is the project itself or above it, or one outside the project set by the project's own settings (`cuno.toml`, `.cuno/config.toml`), is an error (exit code 3), and nothing is deleted.
+- Run outside a project, it is the same error as `cuno build` (exit code 3).
+- If the output directory exists and has no cuno marker (`.cuno-target`, [build.md](build.md#output-directory)) directly in it, nothing is deleted and it is an error. With a profile too, it is the marker directly in the output directory that is checked (``error: `<output dir>` was not made by cuno; not removing it``, `help: remove it yourself, or set target-dir to a directory cuno builds into`, exit code 3).
+- If the directory to delete does not exist, nothing is done and it succeeds.
+- If a removal fails (a file is in use by another program, for example), it is an error (exit code 3). What was already removed stays removed.
+- At the end, the number of files deleted is shown (`file` for one; not printed with `-q`).
+
+```
+     Removed 42 files
+```
 
 ### `cuno fmt`
 
