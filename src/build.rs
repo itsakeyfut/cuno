@@ -8,6 +8,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use cuno_build::compdb;
 use cuno_build::exec::{self, Event, SystemSpawner};
 use cuno_build::graph::{self, Plan, Step, StepKind};
 use cuno_build::input::compile_settings;
@@ -184,6 +185,40 @@ pub fn build(
         compile: &compile_for,
         link: (&link.build, &link.profile),
     });
+
+    // Written before anything runs, so it is current even when a compile
+    // fails, and always from the `dev` profile with `CUNO_TEST` defined,
+    // whatever is built (build.md, "Output").
+    let for_editors = |lang| {
+        compile_settings(
+            Some((root, manifest)),
+            selected.kind,
+            Profile::Dev,
+            lang,
+            host,
+            true,
+            Mode::Compile,
+        )
+    };
+    let editors = graph::plan(&Plan {
+        package,
+        sources: &sources,
+        layout: &Layout::new(&settings.target_dir, Profile::Dev, root, host),
+        kind: selected.kind,
+        program: &selected.executable,
+        mode: Mode::Compile,
+        compile: &for_editors,
+        link: (&link.build, &link.profile),
+    });
+    let include = compdb::include_dirs(prepared.env.get("INCLUDE"));
+    let compiler = compdb::Compiler {
+        kind: selected.kind,
+        include: &include,
+        msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
+    };
+    if let Err(e) = compdb::write(root, &editors, compiler) {
+        shell.warning(format!("could not write {}: {e}", compdb::FILE));
+    }
 
     let version = selected.version.to_string();
     // So that `cuno clean` knows the output directory is cuno's; one it

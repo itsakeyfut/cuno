@@ -122,9 +122,26 @@ pub fn require(compiler: Compiler, language: Language, source: &str, exe: &str) 
         Ok(cmd) => return Some(cmd),
         Err(missing) => missing,
     };
+    skip_or_fail(&missing)
+}
+
+/// The LLVM tool `name` (such as `clang-tidy`) beside the clang the tests
+/// use, under the same missing-compiler policy as [`require`].
+#[track_caller]
+pub fn require_llvm_tool(name: &str) -> Option<PathBuf> {
+    match llvm_tool(Compiler::Clang, name) {
+        Ok(path) => Some(path),
+        Err(missing) => skip_or_fail(&missing),
+    }
+}
+
+/// Applies the missing-compiler policy to the real environment: panics when
+/// the test must fail, and reports and returns `None` when it is skipped.
+#[track_caller]
+fn skip_or_fail<T>(missing: &Missing) -> Option<T> {
     let ci = std::env::var_os("CI").is_some_and(|v| v == "true");
     let allow = std::env::var_os("CUNO_TEST_ALLOW_MISSING").is_some_and(|v| v == "1");
-    match on_missing(&missing, ci, allow) {
+    match on_missing(missing, ci, allow) {
         Outcome::Fail(message) => panic!("{message}"),
         Outcome::Skip(message) => {
             // Written to stderr directly rather than with `eprintln!`, which

@@ -3,6 +3,7 @@
 //!
 //! See `docs/en/specs/build.md`.
 
+pub mod compdb;
 pub mod deps;
 mod error;
 pub mod exec;
