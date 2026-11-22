@@ -6,8 +6,8 @@ mod link;
 mod settings;
 
 pub use compile::{
-    CompileInput, Mode, TARGET, TARGET_SWITCH, check_edition, compile_args, compile_flags,
-    dependency_args, for_clang_tools,
+    CompileInput, Mode, TARGET_SWITCH, check_edition, compile_args, compile_flags, dependency_args,
+    for_clang_tools,
 };
 pub use link::{LinkInput, link_args};
 

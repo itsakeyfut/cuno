@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use cuno_build::input::{CompileSettings, compile_settings};
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
-use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, check_edition};
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
@@ -36,9 +35,6 @@ pub fn detect(
 /// C++ input in `profile`, the resolved environment, and where the build
 /// runs. Doctor's clang-tidy check reads the same compile.
 pub struct ProbeCompile {
-    /// The compiler, whose syntax the command is in; clang-tidy's check
-    /// needs it, having no `Selected`.
-    pub kind: CompilerKind,
     /// The resolved Windows environment.
     pub env: Env,
     /// The build's compile settings for a C++ input, from which the probe
@@ -75,7 +71,6 @@ pub fn probe_compile(
         Mode::Check,
     );
     Some(ProbeCompile {
-        kind: selected.kind,
         env: prepared.env.clone(),
         settings,
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),

@@ -25,10 +25,7 @@ macro_rules! target {
     };
 }
 
-/// The target cuno builds for, as a triple.
-pub const TARGET: &str = target!();
-
-/// The switch that names [`TARGET`] to an LLVM driver or tool.
+/// The switch that names the target to an LLVM driver or tool.
 pub const TARGET_SWITCH: &str = concat!("--target=", target!());
 
 /// What one compile of the build is made from.
@@ -56,8 +53,7 @@ pub struct CompileInput<'a> {
 }
 
 /// The flags every source of the build gets, without the mode, the source
-/// and the output: what the standard library probe is given
-/// (`probe::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
+/// and the output. `[build.<compiler>] flags` come last.
 pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     let mut out = Flags::default();
     let msvc_style = match input.kind.syntax() {

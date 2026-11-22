@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
-use crate::compiler::{CompilerKind, Family, Syntax};
+use crate::compiler::{Family, Syntax};
 use crate::flags::{CompileInput, Mode, TARGET_SWITCH, compile_args};
 use crate::select::{LlvmChoice, Selected};
 use crate::{Runner, ToolchainError, Version};
@@ -24,10 +24,11 @@ pub struct ProbeInputs<'a> {
     /// The build's compile input for a C++ source: the probe compiles C++,
     /// so a C package's is made with `Lang::Cxx` and a C++ edition, or a C
     /// standard switch would be rejected. Its command line is the build's
-    /// own ([`compile_args`]), in check mode whatever `mode` says.
+    /// own ([`compile_args`]), in check mode whatever `input.mode` says.
     pub input: &'a CompileInput<'a>,
     /// Where the compiler runs: the project root, as for the build, so a
-    /// relative path in `flags` means the same (`toolchain.md`, "Minimum
+    /// relative path in the project's flags or include directories means
+    /// the same (`toolchain.md`, "Minimum
     /// compiler versions").
     pub cwd: &'a Path,
 }
@@ -72,12 +73,10 @@ fn check_command(inputs: &ProbeInputs<'_>, probe: &Path) -> Vec<OsString> {
 /// Whether `tidy` is accepted by the MSVC standard library: the same probe
 /// as [`check`], analysed by clang-tidy with one harmless check enabled
 /// (with none it stops without analysing) and, after `--`, the same
-/// command for `kind` without the source, which clang-tidy is given as
-/// its file (`toolchain.md`, "Minimum compiler versions"). The project's
+/// command without the source, which clang-tidy is given as its file (`toolchain.md`, "Minimum compiler versions"). The project's
 /// `.clang-tidy` is not read.
 pub fn check_tidy(
     tidy: &LlvmChoice,
-    kind: CompilerKind,
     env: &Env,
     inputs: ProbeInputs<'_>,
     run: &dyn Runner,
@@ -89,6 +88,7 @@ pub fn check_tidy(
             probe.into(),
             "--".into(),
         ];
+        let kind = inputs.input.kind;
         let cl_syntax = match kind.syntax() {
             Syntax::Cl => true,
             Syntax::Gnu => false,
@@ -172,6 +172,7 @@ fn needed_clang(message: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::Output;
+    use crate::compiler::CompilerKind;
     use crate::flags::{
         BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings,
     };
@@ -446,16 +447,16 @@ mod tests {
     }
 
     /// clang-tidy is asked about the probe file, with one check, no
-    /// configuration, and after `--` the same check-mode command without
-    /// the file: in cl's mode for a cl-syntax compiler, with the target
+    /// configuration, and after `--` the same check-mode command (whatever
+    /// mode it is handed) without the file: in cl's mode for a cl-syntax compiler, with the target
     /// named once (an MSVC compile's flags carry none).
     ///
     /// Mutation: read only stderr (clang-tidy reports STL1000 on stdout),
     /// name the compiler instead of clang-tidy, leave out the one check or
     /// `--`, give the command before `--` or with the file again, put
     /// cl-style flags through clang-tidy without `--driver-mode=cl` (or
-    /// GNU-style ones with it), or name the target twice or not at all for
-    /// MSVC; this test fails.
+    /// GNU-style ones with it), name the target twice or not at all for
+    /// MSVC, or run the command in the mode it is handed; this test fails.
     #[test]
     fn clang_tidy_is_asked_the_standard_librarys_verdict() {
         let root = tempfile::tempdir().unwrap();
@@ -468,7 +469,6 @@ mod tests {
         let msvc = input(CompilerKind::Msvc, &settings, Mode::Check);
         let err = check_tidy(
             &tidy,
-            CompilerKind::Msvc,
             &Env::default(),
             ProbeInputs {
                 scratch: root.path(),
@@ -492,14 +492,15 @@ mod tests {
             (CompilerKind::ClangCl, &["--driver-mode=cl"][..]),
             (CompilerKind::Clang, &[][..]),
         ] {
-            let compile = input(kind, &settings, Mode::Check);
+            let handed = input(kind, &settings, Mode::Compile);
             let inputs = ProbeInputs {
                 scratch: root.path(),
-                input: &compile,
+                input: &handed,
                 cwd: root.path(),
             };
             let run = answers(true, "", "");
-            check_tidy(&tidy, kind, &Env::default(), inputs, &run).unwrap();
+            check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+            let compile = input(kind, &settings, Mode::Check);
             let args = run.args.borrow().clone();
             assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
             let probe = &args[2];

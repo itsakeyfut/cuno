@@ -302,7 +302,6 @@ fn tools(
             && let Err(error) = scratch::in_scratch("doctor", "clang-tidy", |scratch| {
                 probe::check_tidy(
                     &chosen,
-                    stl.kind,
                     &stl.env,
                     ProbeInputs {
                         scratch,
