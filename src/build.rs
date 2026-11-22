@@ -81,7 +81,7 @@ pub fn build(
     if args.target.is_some() {
         return Err(Box::new(CommandError::TargetNotSupported));
     }
-    let profile = profile(&args)?;
+    let profile = profile(args.release, args.profile.as_deref())?;
     let cli = CliSettings {
         compiler: args.compiler,
         target_dir: args.target_dir,
@@ -321,11 +321,11 @@ fn identity<'a>(version: &'a str, env: &'a Env) -> [&'a OsStr; 4] {
 
 /// The profile `--release` or `--profile` names, `dev` by default; only the
 /// two built in are accepted (`build.md`, "Profiles").
-fn profile(args: &BuildArgs) -> Result<Profile, Box<dyn CunoError>> {
-    if args.release {
+pub(crate) fn profile(release: bool, name: Option<&str>) -> Result<Profile, Box<dyn CunoError>> {
+    if release {
         return Ok(Profile::Release);
     }
-    match args.profile.as_deref() {
+    match name {
         None | Some("dev") => Ok(Profile::Dev),
         Some("release") => Ok(Profile::Release),
         Some(other) => Err(Box::new(CommandError::UnknownProfile {
@@ -381,7 +381,7 @@ fn command_line(step: &Step) -> String {
         .join(" ")
 }
 
-fn boxed<E: CunoError + 'static>(error: E) -> Box<dyn CunoError> {
+pub(crate) fn boxed<E: CunoError + 'static>(error: E) -> Box<dyn CunoError> {
     Box::new(error)
 }
 
