@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob f0023002653f08044a324e41c59efb47a43cc95e -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob ef062587293706258e939e83504152c4faaf6968 -->
 
 # Commands
 
@@ -252,7 +252,7 @@ Follows cargo.
 ```
 
 - cuno's own errors are shown as `error: ...`, and fixes as `help: ...`.
-- Compiler errors and warnings are displayed as is.
+- Compiler errors and warnings are displayed as is. A step that is up to date and does not run shows nothing (not even the warnings of its last run).
   - The exception is the source's file name (`main.cpp`, for example) that cl.exe prints as the first line of every compile, which is not shown. It is removed only when the first line of the output is the compiled source's file name. cl prints a name with non-ASCII characters in the console's code page (CP932 on Japanese Windows), so for such a name the line counts as the file name when the ASCII parts at its start and end match and it holds no `:` (no Windows file name has a `:`, and every cl diagnostic does).
     - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.
   - They are not translated (cl.exe from a Japanese-language Visual Studio stays in Japanese). Only cuno's own messages are unified in English.
