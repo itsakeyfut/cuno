@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob ee5a1d35f3a20a8d5a26e6cef89903152faf1c3e -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob c33b582f34fb667ed0d30ea98d188097939afb55 -->
 
 # Toolchain
 
@@ -64,6 +64,7 @@ A compiler must accept a C++20 specification.
   - Rationale: reading the header's condition, or keeping a table of MSVC versions in cuno, could judge an unusable pairing as fine once a new Visual Studio changes how the header is written or which version it requires. The probe compile takes tens of milliseconds and uses the standard library's own answer.
 - **The same check applies to clang-tidy.** clang-tidy analyzes with the commands in compile_commands.json and reads the MSVC standard headers, so an old clang-tidy fails on every file with STL1000.
   - Method: clang-tidy analyzes the same file with `--checks=-*,readability-braces-around-statements` (with no check enabled it stops without analyzing, so one harmless check is enabled) and, after `--`, the same compile conditions as above. The project's `.clang-tidy` is not read. clang-tidy reports STL1000 on stdout. The verdict is as above.
+    - When MSVC is selected, clang-tidy reads these conditions as a clang-cl command. So they are passed rewritten into a form clang-cl reads with the same meaning (MSVC's standard switch becomes clang-cl's; the same rewrite as compile_commands.json, [build.md](build.md#output)). Left as they are, clang-cl would, for example, not know `/std:c++23` and ignore it, and under `warnings-as-errors` its warning about the unused argument becomes an error, reporting a problem that does not exist.
 - **Where it is checked**:
 
   | Command | What is checked | C-only project (`[package] lang = "c"`) |
