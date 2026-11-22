@@ -1,11 +1,13 @@
 //! `compile_commands.json`: the compile commands of a build graph, for
 //! clang-tidy and editors (`docs/en/specs/build.md`, "Output").
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use cuno_toolchain::Version;
 use cuno_toolchain::compiler::{CompilerKind, Syntax};
-use cuno_toolchain::flags::dependency_args;
+use cuno_toolchain::flags::{dependency_args, for_clang_tools};
 use serde_json::{Value, json};
 
 use crate::graph::{Graph, StepKind};
@@ -13,48 +15,96 @@ use crate::graph::{Graph, StepKind};
 /// The file's name, written at the project root.
 pub const FILE: &str = "compile_commands.json";
 
-/// Writes `<root>/compile_commands.json` from `graph`: one entry per
-/// compile, none for links. The graph is the one `build.md`, "Output",
-/// fixes (the `dev` profile with `CUNO_TEST` defined), whatever is being
-/// built. `include` (the resolved `INCLUDE`) is written out as system
-/// include directories, so the file resolves outside a Developer Prompt.
-///
-/// The file is written beside and renamed over the old one, so a reader
-/// never sees half of it.
-pub fn write(
-    root: &Path,
-    graph: &Graph,
-    include: &[PathBuf],
-    kind: CompilerKind,
-) -> io::Result<()> {
-    let text = serde_json::to_string_pretty(&entries(root, graph, include, kind))
-        .map_err(io::Error::other)?;
-    let path = root.join(FILE);
-    let partial = root.join(format!("{FILE}.partial"));
-    std::fs::write(&partial, text)?;
-    std::fs::rename(&partial, &path)
+/// What the commands in the file are run with, besides their arguments.
+#[derive(Clone, Copy, Debug)]
+pub struct Compiler<'a> {
+    /// The compiler.
+    pub kind: CompilerKind,
+    /// The resolved `INCLUDE`, in order.
+    pub include: &'a [PathBuf],
+    /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees.
+    pub msvc: Option<&'a Version>,
 }
 
-/// The entries [`write()`] writes.
-fn entries(root: &Path, graph: &Graph, include: &[PathBuf], kind: CompilerKind) -> Value {
-    let system: Vec<String> = include
+/// The directories of an `INCLUDE` value, in order. An empty entry (`a;;b`,
+/// or a trailing `;`) names no directory and is left out, rather than
+/// written as an empty include directory.
+pub fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
+    include
+        .map(|dirs| {
+            std::env::split_paths(dirs)
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Writes `<root>/compile_commands.json` from `graph`: one entry per
+/// compile, none for a link. The graph is the one `build.md`, "Output",
+/// fixes (the `dev` profile with `CUNO_TEST` defined), whatever is being
+/// built.
+///
+/// The file is written beside and renamed over the old one, so a reader
+/// never sees half of it, and not at all when it would not change, so an
+/// editor watching it does not analyse everything again after every
+/// build. A write that fails leaves no partial file behind; the caller
+/// warns and the build goes on (`build.md`, "Output").
+pub fn write(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> io::Result<()> {
+    let text =
+        serde_json::to_string_pretty(&entries(root, graph, compiler)).map_err(io::Error::other)?;
+    let path = root.join(FILE);
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+        return Ok(());
+    }
+    let partial = root.join(format!("{FILE}.partial"));
+    let written = std::fs::write(&partial, text).and_then(|()| std::fs::rename(&partial, &path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    written
+}
+
+/// The entries, apart from writing them, so they can be tested without a
+/// file.
+///
+/// The file is for clang-based tools, which analyse with their own
+/// headers first and the compiler's `INCLUDE` after, as the build's
+/// compiler searches. So each command carries what lets such a tool, run
+/// anywhere, see what the build saw:
+///
+/// - `INCLUDE`, after the tool's own headers: `/imsvc` for cl syntax (read
+///   as clang-cl), `-idirafter` for clang (`-isystem` would put the MSVC
+///   and Windows headers before clang's own `stddef.h` and `limits.h`);
+/// - the MSVC version, which a tool would otherwise guess from whatever
+///   Visual Studio it finds;
+/// - the arguments as such a tool reads them ([`for_clang_tools`]).
+fn entries(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> Value {
+    let kind = compiler.kind;
+    let mut extra: Vec<String> = compiler
+        .include
         .iter()
         .flat_map(|dir| match kind.syntax() {
             Syntax::Cl => vec![format!("/imsvc{}", dir.display())],
-            Syntax::Gnu => vec!["-isystem".to_owned(), dir.display().to_string()],
+            Syntax::Gnu => vec!["-idirafter".to_owned(), dir.display().to_string()],
         })
         .collect();
+    if let Some(version) = compiler.msvc {
+        extra.push(format!("-fms-compatibility-version={version}"));
+    }
     let entries: Vec<Value> = graph
         .steps
         .iter()
         .filter_map(|step| {
+            // Only compiles: the graph this is planned from builds, so it
+            // has no checks, and a link has no source to analyse.
             let source = match &step.kind {
                 StepKind::Compile { source } => source,
                 StepKind::Check { .. } | StepKind::Link { .. } => return None,
             };
             // The dependency file is the build's own bookkeeping, not part
-            // of what a source means; a tool reading this file is left to
-            // write none.
+            // of what a source means. `graph::plan` puts those arguments
+            // last (see `dependency_args`); were they elsewhere they would
+            // stay, which a tool only writes a stray file for.
             let mut args = step.args.clone();
             if let Some(headers) = &step.headers {
                 let tail = dependency_args(kind, headers.file());
@@ -63,8 +113,12 @@ fn entries(root: &Path, graph: &Graph, include: &[PathBuf], kind: CompilerKind) 
                 }
             }
             let arguments: Vec<String> = std::iter::once(step.program.display().to_string())
-                .chain(args.iter().map(|a| a.to_string_lossy().into_owned()))
-                .chain(system.iter().cloned())
+                .chain(
+                    for_clang_tools(kind, &args)
+                        .iter()
+                        .map(|a| a.to_string_lossy().into_owned()),
+                )
+                .chain(extra.iter().cloned())
                 .collect();
             Some(json!({
                 "directory": root.display().to_string(),
@@ -82,17 +136,20 @@ mod tests {
     use super::*;
     use crate::deps::Headers;
     use crate::graph::Step;
+    use cuno_toolchain::compiler::Dependencies;
     use std::ffi::OsString;
 
-    fn compile(kind: CompilerKind, source: &str) -> Step {
+    /// A compile of `source` with `kind`, its arguments `/c`, `extra`, the
+    /// source and the dependency arguments, as `graph::plan` orders them.
+    fn compile(kind: CompilerKind, source: &str, extra: &[&str]) -> Step {
         let object = PathBuf::from(format!("C:/p/target/debug/obj/app/{source}.obj"));
-        let headers = match kind.syntax() {
-            Syntax::Cl if kind == CompilerKind::Msvc => {
-                Headers::Json(object.with_extension("json"))
-            }
-            _ => Headers::DepFile(object.with_extension("d")),
+        let headers = match kind.dependencies() {
+            Dependencies::SourceDependencies => Headers::Json(object.with_extension("json")),
+            Dependencies::DepFile => Headers::DepFile(object.with_extension("d")),
         };
-        let mut args: Vec<OsString> = vec!["/c".into(), format!("C:/p/{source}").into()];
+        let mut args: Vec<OsString> = vec!["/c".into()];
+        args.extend(extra.iter().map(OsString::from));
+        args.push(format!("C:/p/{source}").into());
         args.extend(dependency_args(kind, headers.file()));
         Step {
             kind: StepKind::Compile {
@@ -108,79 +165,196 @@ mod tests {
         }
     }
 
-    /// Each compile is an entry, with its command but not its dependency
-    /// file, and the include directories in the compiler's syntax; a link
-    /// is not.
+    fn arguments(entry: &Value) -> Vec<&str> {
+        entry["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap())
+            .collect()
+    }
+
+    /// Each compile is an entry, with its source, object and command but
+    /// not its dependency file, then `INCLUDE` after the tool's own headers
+    /// in the compiler's syntax and the MSVC version; a link is not.
     ///
-    /// Mutation: write the links too, keep the dependency arguments, drop
-    /// the include directories, or write them in the other syntax; this
-    /// test fails.
+    /// Mutation: write the links too, drop `output`, keep the dependency
+    /// arguments, drop the include directories or the version, write them
+    /// with `-isystem` or in the other syntax; this test fails.
     #[test]
-    fn every_compile_and_no_link_with_the_include_directories() {
+    fn every_compile_and_no_link_with_what_resolves_it() {
         let include = [
             PathBuf::from("C:/sdk/ucrt"),
             PathBuf::from("C:/msvc/include"),
         ];
-        for (kind, system) in [
+        let version = Version {
+            major: 19,
+            minor: 52,
+            patch: 37029,
+        };
+        for (kind, mode, system) in [
             (
                 CompilerKind::Msvc,
+                "-c",
                 vec!["/imsvcC:/sdk/ucrt", "/imsvcC:/msvc/include"],
             ),
             (
                 CompilerKind::ClangCl,
+                "-c",
                 vec!["/imsvcC:/sdk/ucrt", "/imsvcC:/msvc/include"],
             ),
             (
                 CompilerKind::Clang,
-                vec!["-isystem", "C:/sdk/ucrt", "-isystem", "C:/msvc/include"],
+                "/c",
+                vec!["-idirafter", "C:/sdk/ucrt", "-idirafter", "C:/msvc/include"],
             ),
         ] {
-            let mut link = compile(kind, "src/main.cpp");
+            let mut link = compile(kind, "src/main.cpp", &[]);
             link.kind = StepKind::Link { bin: "app".into() };
             link.headers = None;
             let graph = Graph {
                 steps: vec![
-                    compile(kind, "src/main.cpp"),
-                    compile(kind, "src/a.c"),
+                    compile(kind, "src/main.cpp", &[]),
+                    compile(kind, "src/a.c", &[]),
                     link,
                 ],
             };
-            let value = entries(Path::new("C:/p"), &graph, &include, kind);
+            let compiler = Compiler {
+                kind,
+                include: &include,
+                msvc: Some(&version),
+            };
+            let value = entries(Path::new("C:/p"), &graph, compiler);
             let entries = value.as_array().unwrap();
             assert_eq!(entries.len(), 2, "{kind:?}");
             assert_eq!(entries[0]["file"], "C:/p/src/main.cpp");
             assert_eq!(entries[0]["directory"], "C:/p");
-            let arguments: Vec<&str> = entries[0]["arguments"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|a| a.as_str().unwrap())
-                .collect();
-            let mut expected = vec!["C:/bin/cc.exe", "/c", "C:/p/src/main.cpp"];
+            assert_eq!(
+                entries[0]["output"],
+                "C:/p/target/debug/obj/app/src/main.cpp.obj"
+            );
+            let mut expected = vec!["C:/bin/cc.exe", mode, "C:/p/src/main.cpp"];
             expected.extend(system);
-            assert_eq!(arguments, expected, "{kind:?}");
+            expected.push("-fms-compatibility-version=19.52.37029");
+            assert_eq!(arguments(&entries[0]), expected, "{kind:?}");
         }
     }
 
-    /// The file is written whole at the root, replacing what was there.
+    /// An MSVC command's standard switch that clang-cl does not know is
+    /// written as clang-cl's, so a tool analyses the standard the build
+    /// compiles; one it knows, and clang-cl's own, stay.
     ///
-    /// Mutation: write it anywhere else, or leave the partial file; this
-    /// test fails.
+    /// Mutation: leave cl's `/std:c++23` or `/std:clatest`, or rewrite a
+    /// clang-cl command; this test fails.
     #[test]
-    fn the_file_is_written_at_the_root() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join(FILE), "old").unwrap();
-        let graph = Graph {
-            steps: vec![compile(CompilerKind::Clang, "src/main.cpp")],
-        };
-        write(root.path(), &graph, &[], CompilerKind::Clang).unwrap();
-        let text = std::fs::read_to_string(root.path().join(FILE)).unwrap();
-        let value: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(value.as_array().unwrap().len(), 1);
-        let names: Vec<_> = std::fs::read_dir(root.path())
+    fn an_msvc_standard_is_written_as_clang_cl_reads_it() {
+        let cases = [
+            (CompilerKind::Msvc, "/std:c++23", "/clang:-std=c++23"),
+            (CompilerKind::Msvc, "/std:clatest", "/clang:-std=c2x"),
+            (CompilerKind::Msvc, "/std:c++20", "/std:c++20"),
+            (
+                CompilerKind::ClangCl,
+                "/clang:-std=c++23",
+                "/clang:-std=c++23",
+            ),
+        ];
+        for (kind, written, read) in cases {
+            let graph = Graph {
+                steps: vec![compile(kind, "src/main.cpp", &[written])],
+            };
+            let compiler = Compiler {
+                kind,
+                include: &[],
+                msvc: None,
+            };
+            let value = entries(Path::new("C:/p"), &graph, compiler);
+            assert_eq!(arguments(&value[0])[2], read, "{kind:?} {written}");
+        }
+    }
+
+    /// Mutation: keep an empty `INCLUDE` entry; this test fails.
+    #[test]
+    fn an_empty_include_entry_is_no_directory() {
+        assert_eq!(
+            include_dirs(Some(OsStr::new("C:/a;;C:/b;"))),
+            [PathBuf::from("C:/a"), PathBuf::from("C:/b")]
+        );
+        assert!(include_dirs(None).is_empty());
+    }
+
+    /// Arguments that only look like the dependency arguments, because they
+    /// are not last, are kept.
+    ///
+    /// Mutation: drop the last arguments whether or not they are the
+    /// dependency arguments; this test fails.
+    #[test]
+    fn only_trailing_dependency_arguments_are_dropped() {
+        let mut step = compile(CompilerKind::Clang, "src/main.cpp", &[]);
+        step.args.push("-DLAST".into());
+        let graph = Graph { steps: vec![step] };
+        let value = entries(Path::new("C:/p"), &graph, clang());
+        let args = arguments(&value[0]);
+        assert!(args.contains(&"-MD"), "{args:?}");
+        assert_eq!(args.last(), Some(&"-DLAST"));
+    }
+
+    fn clang() -> Compiler<'static> {
+        Compiler {
+            kind: CompilerKind::Clang,
+            include: &[],
+            msvc: None,
+        }
+    }
+
+    fn names(dir: &Path) -> Vec<OsString> {
+        std::fs::read_dir(dir)
             .unwrap()
             .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(names, [FILE]);
+            .collect()
+    }
+
+    /// The file is written whole at the root, replacing what was there,
+    /// and not touched when it would not change.
+    ///
+    /// Mutation: write it anywhere else, leave the partial file, or write
+    /// it again unchanged; this test fails.
+    #[test]
+    fn the_file_is_written_at_the_root_only_when_it_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(FILE);
+        std::fs::write(&path, "old").unwrap();
+        let graph = Graph {
+            steps: vec![compile(CompilerKind::Clang, "src/main.cpp", &[])],
+        };
+        write(root.path(), &graph, clang()).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 1);
+        assert_eq!(names(root.path()), [FILE]);
+
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        write(root.path(), &graph, clang()).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), old);
+    }
+
+    /// A write that fails leaves nothing behind beside the file.
+    ///
+    /// Mutation: keep the partial file when the rename fails; this test
+    /// fails.
+    #[test]
+    fn a_failed_write_leaves_no_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(FILE)).unwrap();
+        let graph = Graph {
+            steps: vec![compile(CompilerKind::Clang, "src/main.cpp", &[])],
+        };
+        assert!(write(root.path(), &graph, clang()).is_err());
+        assert_eq!(names(root.path()), [FILE]);
     }
 }

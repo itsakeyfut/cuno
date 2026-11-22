@@ -210,16 +210,13 @@ pub fn build(
         compile: &for_editors,
         link: (&link.build, &link.profile),
     });
-    let include: Vec<PathBuf> = prepared
-        .env
-        .get("INCLUDE")
-        .map(|dirs| {
-            std::env::split_paths(dirs)
-                .filter(|dir| !dir.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Err(e) = compdb::write(root, &editors, &include, selected.kind) {
+    let include = compdb::include_dirs(prepared.env.get("INCLUDE"));
+    let compiler = compdb::Compiler {
+        kind: selected.kind,
+        include: &include,
+        msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
+    };
+    if let Err(e) = compdb::write(root, &editors, compiler) {
         shell.warning(format!("could not write {}: {e}", compdb::FILE));
     }
 

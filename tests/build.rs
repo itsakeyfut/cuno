@@ -844,13 +844,43 @@ fn compile_commands_hold_the_dev_commands_whatever_is_built() {
     }
 }
 
-/// clang-tidy finds the standard library and the Windows headers through
-/// `compile_commands.json` alone, with no environment, on every compiler.
+/// A C++23 program built with errors for warnings, which stops at an
+/// `#error` unless it is analysed as C++23 against MSVC 19.50 or newer,
+/// with the standard library and the Windows headers.
+const ANALYSED_AS_BUILT_CXX: &str = r#"#include <vector>
+#include <windows.h>
+#if __cplusplus < 202302L
+#error analysed below C++23
+#endif
+#if _MSC_VER < 1950
+#error analysed as an older MSVC
+#endif
+int main() { std::vector<int> v; return (int)v.size(); }
+"#;
+
+/// A C23 program that needs clang's own `stddef.h` and `limits.h`, not
+/// the Windows SDK's or MSVC's of the same name.
+const ANALYSED_AS_BUILT_C: &str = r#"#include <stddef.h>
+#include <limits.h>
+int main(void) {
+    max_align_t m;
+    (void)m;
+    return LLONG_WIDTH == 64 ? 0 : 1;
+}
+"#;
+
+/// On every compiler, clang-tidy analyses through `compile_commands.json`
+/// alone, with no environment but `SystemRoot` (which Windows programs
+/// need to start), the program the build compiled: C++23 against the same
+/// MSVC, with the same headers in the same order, and errors for warnings
+/// without failing on an argument it does not use. The exit status alone
+/// is not enough: a missing header is reported as a diagnostic.
 ///
-/// Mutation: leave the include directories out of the file; this test
-/// fails.
+/// Mutation: leave out the include directories or the MSVC version, write
+/// `INCLUDE` with `-isystem`, leave cl's `/std:c++23`, or write `/c`; this
+/// test fails.
 #[test]
-fn compile_commands_resolve_outside_a_developer_prompt() {
+fn compile_commands_analyse_the_program_that_was_built() {
     let Some(tidy) = support::compilers::require_llvm_tool("clang-tidy") else {
         return;
     };
@@ -858,28 +888,85 @@ fn compile_commands_resolve_outside_a_developer_prompt() {
         if !here(compiler) {
             continue;
         }
-        let project = Project::new().file("cuno.toml", MANIFEST).file(
-            "src/main.cpp",
-            "#include <vector>\n#include <windows.h>\nint main() { std::vector<int> v; return (int)v.size(); }\n",
-        );
-        let run = project.cuno(&["build", "--compiler", name]);
-        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
-        let mut cmd = std::process::Command::new(&tidy);
-        cmd.args([
-            "-p",
-            ".",
-            "src/main.cpp",
-            "--checks=-*,readability-braces-around-statements",
-        ])
-        .env_clear()
-        .current_dir(project.path());
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            cmd.env("SystemRoot", root);
+        for (manifest, source, text) in [
+            (
+                format!("{MANIFEST}edition = \"c++23\"\n[build]\nwarnings-as-errors = true\n"),
+                "src/main.cpp",
+                ANALYSED_AS_BUILT_CXX,
+            ),
+            (
+                format!("{MANIFEST}lang = \"c\"\nedition = \"c23\"\n"),
+                "src/main.c",
+                ANALYSED_AS_BUILT_C,
+            ),
+        ] {
+            // MSVC's own C library has neither name; the C case is for
+            // the compilers that bring clang's headers.
+            if compiler == Compiler::Msvc && source.ends_with(".c") {
+                continue;
+            }
+            let project = Project::new()
+                .file("cuno.toml", &manifest)
+                .file(source, text);
+            let run = project.cuno(&["build", "--compiler", name]);
+            assert_eq!(run.code, Some(0), "{name} {source}: {}", run.stderr);
+            // One check, so clang-tidy parses each source and reports
+            // little but the compiler's own diagnostics.
+            let mut cmd = std::process::Command::new(&tidy);
+            cmd.args([
+                "-p",
+                ".",
+                source,
+                "--checks=-*,readability-braces-around-statements",
+            ])
+            .env_clear()
+            .current_dir(project.path());
+            if let Some(root) = std::env::var_os("SystemRoot") {
+                cmd.env("SystemRoot", root);
+            }
+            let out = cmd.output().unwrap();
+            let shown = String::from_utf8_lossy(&out.stdout).into_owned()
+                + &String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{name} {source}: {shown}");
+            assert!(!shown.contains("error:"), "{name} {source}: {shown}");
         }
-        let out = cmd.output().unwrap();
-        let text = String::from_utf8_lossy(&out.stdout).into_owned()
-            + &String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{name}: {text}");
-        assert!(!text.contains("file not found"), "{name}: {text}");
     }
+}
+
+/// `cuno check` and `cuno run` write the file as `cuno build` does, from
+/// the `dev` graph, with each object where the `dev` build puts it; one
+/// that cannot be written is a warning and the build goes on.
+///
+/// Mutation: write it only for `cuno build`, lay the entries out for the
+/// built profile, or drop the warning; this test fails.
+#[test]
+fn compile_commands_are_written_by_every_build_command() {
+    let Some((name, _)) = COMPILERS.into_iter().find(|&(_, c)| here(c)) else {
+        return;
+    };
+    for command in ["check", "run"] {
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", "int main() {}\n");
+        let run = project.cuno(&[command, "--release", "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{command}: {}", run.stderr);
+        let text = std::fs::read_to_string(project.path().join("compile_commands.json"))
+            .unwrap_or_else(|e| panic!("{command}: {e}"));
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let output = value[0]["output"].as_str().unwrap().replace('\\', "/");
+        assert!(output.contains("/target/debug/obj/"), "{command}: {output}");
+    }
+
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/main.cpp", "int main() {}\n")
+        .file("compile_commands.json/keep", "");
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .starts_with("warning: could not write compile_commands.json: "),
+        "{}",
+        run.stderr
+    );
 }
