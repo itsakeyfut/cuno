@@ -495,3 +495,269 @@ fn an_output_directory_that_cannot_be_made_is_named() {
     assert!(run.stderr.contains("could not create "), "{}", run.stderr);
     assert!(!run.stderr.contains("could not run"), "{}", run.stderr);
 }
+
+/// A program that prints each argument in brackets and then its working
+/// directory, and exits 7.
+const REPORTS_ITS_RUN: &str = r#"#include <cstdio>
+#include <filesystem>
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; i++) std::printf("[%s]\n", argv[i]);
+    std::printf("%s\n", std::filesystem::current_path().string().c_str());
+    return 7;
+}
+"#;
+
+/// On every compiler, `cuno run` started below the root builds, says what
+/// it runs, and runs the program in the project root with the arguments
+/// after `--`; the program's exit code is cuno's.
+///
+/// Mutation: drop the arguments, run in the target directory or where cuno
+/// was started, or return 0; this test fails.
+#[test]
+fn run_passes_the_arguments_root_and_exit_code() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", REPORTS_ITS_RUN);
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["run", "--compiler", name, "--", "a", "b c"])
+            .current_dir(project.path().join("src"));
+        let run = project.run_command(cmd);
+        assert_eq!(run.code, Some(7), "{name}: {}", run.stderr);
+        let root = std::fs::canonicalize(project.path()).unwrap();
+        let shown = run.stdout.replace("\r\n", "\n");
+        let (args, cwd) = shown
+            .split_once("]\n[b c]\n")
+            .unwrap_or_else(|| panic!("{shown}"));
+        assert_eq!(args, "[a", "{name}");
+        assert_eq!(
+            std::fs::canonicalize(cwd.trim_end()).unwrap(),
+            root,
+            "{name}"
+        );
+        let exe = project.path().join("target").join("debug").join("app.exe");
+        assert!(
+            run.stderr
+                .ends_with(&format!("     Running `{}`\n", exe.display())),
+            "{name}: {}",
+            run.stderr
+        );
+    }
+}
+
+/// Started in the root, the `Running` line names the executable relative
+/// to it; `-q` prints nothing of cuno's own.
+///
+/// Mutation: always show the full path, or show it under `-q`; this test
+/// fails.
+#[test]
+fn run_shows_the_executable_relative_and_nothing_when_quiet() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/main.cpp", "int main() { return 0; }\n");
+    let run = project.cuno(&["run", "--compiler", "clang"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .ends_with("     Running `target\\debug\\app.exe`\n"),
+        "{}",
+        run.stderr
+    );
+    project
+        .cuno(&["-q", "run", "--compiler", "clang"])
+        .assert(0, "", "");
+}
+
+/// With several executables, `cuno run` needs `--bin`, and refuses a name
+/// that is not one, both with the candidates, exit 2, and before building
+/// anything; `--bin` runs the one it names.
+///
+/// Mutation: run the first executable, exit with another code, or build
+/// before choosing; this test fails.
+#[test]
+fn run_chooses_with_bin() {
+    let Some((name, _)) = COMPILERS.into_iter().find(|&(_, c)| here(c)) else {
+        return;
+    };
+    let project = package("");
+    project.cuno(&["run", "--compiler", name]).assert(
+        2,
+        "",
+        "error: several executables can be run; choose one with --bin\n\
+         help: available: app, tool\n",
+    );
+    project
+        .cuno(&["run", "--compiler", name, "--bin", "nope"])
+        .assert(
+            2,
+            "",
+            "error: no executable named `nope`\nhelp: available: app, tool\n",
+        );
+    assert!(!project.path().join("target").exists());
+    let run = project.cuno(&["run", "--compiler", name, "--bin", "tool"]);
+    assert_eq!(
+        (run.code, run.stdout.replace("\r\n", "\n")),
+        (Some(0), "tool 9\n".to_owned()),
+        "{}",
+        run.stderr
+    );
+}
+
+/// On every compiler, `cuno check` reports a compile error with the
+/// compiler's message and exit 1; a clean package prints `Checking` and
+/// `Finished`, writes no object and no executable, and a second check with
+/// nothing changed checks nothing.
+///
+/// Mutation: link in check mode, write objects, report success on an
+/// error, or check everything again; this test fails.
+#[test]
+fn check_writes_no_object_and_checks_only_what_changed() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let broken = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", "int main() { return undeclared; }\n");
+        let run = broken.cuno(&["check", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+        assert!(run.stderr.contains("undeclared"), "{name}: {}", run.stderr);
+        assert!(
+            run.stderr.ends_with("error: could not compile `app`\n"),
+            "{name}: {}",
+            run.stderr
+        );
+
+        let project = package("");
+        let run = project.cuno(&["check", "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        let lines: Vec<&str> = run.stderr.lines().collect();
+        assert_eq!(lines.len(), 2, "{name}: {}", run.stderr);
+        assert!(
+            lines[0].starts_with(&format!("    Checking app v0.1.0 ({name} ")),
+            "{}",
+            run.stderr
+        );
+        assert!(
+            lines[1].starts_with("    Finished `dev` profile"),
+            "{}",
+            run.stderr
+        );
+        for project in [&broken, &project] {
+            let mut stack = vec![project.path().join("target")];
+            while let Some(dir) = stack.pop() {
+                for entry in std::fs::read_dir(&dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    let ext = path.extension().and_then(|e| e.to_str());
+                    assert!(
+                        !matches!(ext, Some("obj" | "exe")),
+                        "{name}: {}",
+                        path.display()
+                    );
+                    if path.is_dir() {
+                        stack.push(path);
+                    }
+                }
+            }
+        }
+
+        let again = project.cuno(&["check", "--compiler", name]);
+        assert_eq!(again.code, Some(0), "{name}: {}", again.stderr);
+        assert_eq!(again.stderr.lines().count(), 1, "{name}: {}", again.stderr);
+        assert!(
+            again.stderr.starts_with("    Finished "),
+            "{}",
+            again.stderr
+        );
+    }
+}
+
+/// A `cuno run` whose build fails runs nothing, not even the executable an
+/// earlier build left behind.
+///
+/// Mutation: carry on to the run when the build of `cuno run` fails; this
+/// test fails.
+#[test]
+fn run_runs_nothing_when_the_build_fails() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new().file("cuno.toml", MANIFEST).file(
+            "src/main.cpp",
+            "#include <cstdio>\nint main() { std::puts(\"old\"); }\n",
+        );
+        let built = project.cuno(&["build", "--compiler", name]);
+        assert_eq!(built.code, Some(0), "{name}: {}", built.stderr);
+        std::fs::write(
+            project.path().join("src/main.cpp"),
+            "int main() { return undeclared; }\n",
+        )
+        .unwrap();
+        let run = project.cuno(&["run", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+        assert_eq!(run.stdout, "", "{name}");
+        assert!(!run.stderr.contains("Running"), "{name}: {}", run.stderr);
+    }
+}
+
+/// On every compiler, a check reads the headers its compiler reports, so
+/// breaking a header after a clean check makes the next check fail.
+///
+/// Mutation: record a check without its headers; this test fails.
+#[test]
+fn check_sees_a_changed_header() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/h.h", "#define VALUE 0\n")
+            .file(
+                "src/main.cpp",
+                "#include \"h.h\"\nint main() { return VALUE; }\n",
+            );
+        let run = project.cuno(&["check", "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        std::fs::write(project.path().join("src/h.h"), "#define VALUE undeclared\n").unwrap();
+        let run = project.cuno(&["check", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+        assert!(run.stderr.contains("undeclared"), "{name}: {}", run.stderr);
+    }
+}
+
+/// The program `cuno run` runs gets the environment cuno was given, not
+/// the one cuno resolved for the compiler.
+///
+/// Mutation: run it with no environment, or with the compiler's; this test
+/// fails.
+#[test]
+fn run_gives_the_program_cunos_environment() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", MANIFEST).file(
+        "src/main.cpp",
+        r#"#include <cstdio>
+#include <cstdlib>
+int main() {
+    std::printf("probe=%s\n", std::getenv("RUN_PROBE") ? std::getenv("RUN_PROBE") : "-");
+    std::printf("include=%s\n", std::getenv("INCLUDE") ? "set" : "-");
+}
+"#,
+    );
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["run", "--compiler", "msvc"])
+        .env("RUN_PROBE", "given")
+        .env_remove("INCLUDE");
+    let run = project.run_command(cmd);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(printed(&run), "probe=given\ninclude=-\n", "{}", run.stderr);
+}

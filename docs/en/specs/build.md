@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 9afb4d1e936132e89e443c675331fd5b9887a621 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 9032f42c6be3772368f8487ac566232186a7f2e8 -->
 
 # Build
 
@@ -28,6 +28,7 @@
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
 - Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it.
+- `cuno check` steps (checking one source) are judged the same way. A check produces no output, so when it succeeds cuno puts an empty file in place of the output. Like the records, this file is internal to cuno.
 - Rationale:
   - Judging only whether an input is newer than its output misses a file put back with an older modification time (restored from a backup, for example), and reports success with the old code. Comparing with the recorded values catches a time that went backwards too.
   - Hashing everything on every build would read the standard and Windows headers (thousands of files) even when nothing changed. Inputs whose time and size match are not read.
@@ -59,9 +60,11 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
 | Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
-| Header dependencies (when building) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
+| Header dependencies (when building and for `check`) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
 
-- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang).
+- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang). `check` uses the same name (so that `check`, which produces no object file, also avoids rechecking unchanged sources by the same mechanism).
+- MSVC's `/Zs` does not emit the diagnostics raised during code generation. For example, C4716 for a function that returns no value, under the default settings, and C4700 and C4701 for uninitialized variables and C4715 for a function with a path that returns no value, under `warnings-as-errors`, fail a build but do not appear with `check`. So on MSVC, `check` can succeed where the build fails. clang-cl's `/Zs` and clang's `-fsyntax-only` do emit them.
+  - Rationale: `check` is fast because it does no code generation. Making its result match the build's on MSVC would mean compiling and throwing the output away, which would make `check` take about as long as the build.
 - The flags of this table (the language, the source, the object file and the header dependencies) come after `[build.<compiler>] flags`, so that cuno's win over a user's `-MF` and the like: cuno reads the dependency file. When a dependency file holds several rules (a user's `-MP`, for example), only the first is read.
 
 ### Compiling

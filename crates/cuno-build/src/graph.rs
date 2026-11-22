@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use cuno_toolchain::compiler::{CompilerKind, Dependencies, Family};
 use cuno_toolchain::flags::{
-    BuildSettings, Lang, LinkInput, ProfileSettings, compile_args, dependency_args, link_args,
+    BuildSettings, Lang, LinkInput, Mode, ProfileSettings, compile_args, dependency_args, link_args,
 };
 
 use crate::deps::Headers;
@@ -22,6 +22,12 @@ use crate::sources::{Source, Sources};
 pub enum StepKind {
     /// Compiles one source.
     Compile {
+        /// The source.
+        source: PathBuf,
+    },
+    /// Checks one source without compiling it (`cuno check`); its output
+    /// is an empty stamp, written when the check succeeds.
+    Check {
         /// The source.
         source: PathBuf,
     },
@@ -77,6 +83,9 @@ pub struct Plan<'a> {
     pub kind: CompilerKind,
     /// Its driver, which compiles and links.
     pub program: &'a Path,
+    /// Whether to build, or to check without objects or links. The
+    /// settings `compile` gives must be for the same mode.
+    pub mode: Mode,
     /// The settings a source of each language compiles with.
     pub compile: &'a dyn Fn(Lang) -> CompileSettings,
     /// The settings every link uses.
@@ -85,12 +94,31 @@ pub struct Plan<'a> {
 
 /// Plans a build: one compile per source of the package body and per entry
 /// file, each once, and one link per executable of its entry file's object
-/// and every body object (`project-layout.md`, "Link rules").
+/// and every body object (`project-layout.md`, "Link rules"). In
+/// [`Mode::Check`], one check per source instead, each with its stamp
+/// where the object would be, and no links (`commands.md`, "`cuno build`
+/// / `cuno check`").
 pub fn plan(p: &Plan<'_>) -> Graph {
     let mut steps = Vec::new();
     let mut compile = |source: &Source| -> usize {
         let settings = (p.compile)(source.lang);
-        let object = p.layout.object(p.package, &source.path);
+        // A disagreement is a bug in cuno: a check planned with compile
+        // flags would write objects and stamp nothing it checked.
+        assert_eq!(settings.mode, p.mode, "compile settings for another mode");
+        let (kind, output) = match p.mode {
+            Mode::Compile => (
+                StepKind::Compile {
+                    source: source.path.clone(),
+                },
+                p.layout.object(p.package, &source.path),
+            ),
+            Mode::Check => (
+                StepKind::Check {
+                    source: source.path.clone(),
+                },
+                p.layout.check_stamp(p.package, &source.path),
+            ),
+        };
         let echo = match p.kind.family() {
             Family::Msvc => source
                 .path
@@ -99,18 +127,16 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             Family::Llvm => None,
         };
         let headers = match p.kind.dependencies() {
-            Dependencies::SourceDependencies => Headers::Json(object.with_extension("json")),
-            Dependencies::DepFile => Headers::DepFile(object.with_extension("d")),
+            Dependencies::SourceDependencies => Headers::Json(output.with_extension("json")),
+            Dependencies::DepFile => Headers::DepFile(output.with_extension("d")),
         };
-        let mut args = compile_args(&settings.input(), &source.path, Some(&object));
+        let mut args = compile_args(&settings.input(), &source.path, Some(&output));
         args.extend(dependency_args(p.kind, headers.file()));
         steps.push(Step {
-            kind: StepKind::Compile {
-                source: source.path.clone(),
-            },
+            kind,
             program: p.program.to_owned(),
             args,
-            output: object,
+            output,
             after: Vec::new(),
             echo,
             headers: Some(headers),
@@ -120,6 +146,11 @@ pub fn plan(p: &Plan<'_>) -> Graph {
     };
     let body: Vec<usize> = p.sources.body.iter().map(&mut compile).collect();
     let entries: Vec<usize> = p.sources.bins.iter().map(|b| compile(&b.entry)).collect();
+    // A match rather than an `if`, so a new mode has to say whether it links.
+    match p.mode {
+        Mode::Compile => {}
+        Mode::Check => return Graph { steps },
+    }
 
     for (bin, entry) in p.sources.bins.iter().zip(entries) {
         let after: Vec<usize> = std::iter::once(entry).chain(body.iter().copied()).collect();

@@ -32,7 +32,9 @@ impl Layout {
     pub fn new(target_dir: &Path, profile: Profile, root: &Path, host: HostOs) -> Layout {
         Layout {
             root: normalize(root),
-            profile_dir: target_dir.join(profile_dir_name(profile)),
+            // Normalized, so a `--target-dir` written with `..` gives the
+            // executable a path `cuno run` can show (commands.md, "`cuno run`").
+            profile_dir: normalize(target_dir).join(profile_dir_name(profile)),
             host,
         }
     }
@@ -53,6 +55,20 @@ impl Layout {
     /// so it lies in the project; one that does not is a bug in cuno, and
     /// panics rather than put an object outside the target directory.
     pub fn object(&self, package: &str, source: &Path) -> PathBuf {
+        self.beside_object(package, source, ".obj")
+    }
+
+    /// The stamp `cuno check` leaves for `source` of `package` once it is
+    /// checked: where [`Layout::object`] would be, ending `.check` instead.
+    /// It assumes and panics as [`Layout::object`] does.
+    pub fn check_stamp(&self, package: &str, source: &Path) -> PathBuf {
+        self.beside_object(package, source, ".check")
+    }
+
+    /// `source`'s path under `obj/<package>`, with `suffix` added to its
+    /// name. Panics on a `source` outside the project, as
+    /// [`Layout::object`] says.
+    fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
         let source = normalize(source);
         assert!(
             Names(self.host).within(&source, &self.root),
@@ -65,7 +81,7 @@ impl Layout {
             object.push(component);
         }
         let mut name = object.file_name().map(OsString::from).unwrap_or_default();
-        name.push(".obj");
+        name.push(suffix);
         object.set_file_name(name);
         object
     }
@@ -145,6 +161,21 @@ mod tests {
         );
         let outside = std::panic::catch_unwind(|| dev.object("app", Path::new("D:/q/a.cpp")));
         assert!(outside.is_err());
+    }
+
+    /// A target directory written with `..` is resolved, so the executable
+    /// `cuno run` names has no `..` in its path.
+    ///
+    /// Mutation: keep the target directory as given; this test fails.
+    #[test]
+    fn a_target_directory_with_dot_dot_is_resolved() {
+        let dev = Layout::new(
+            Path::new("C:/p/src/../out"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        );
+        assert_eq!(dev.exe("app"), Path::new("C:/p/out/debug/app.exe"));
     }
 
     /// Mutation: give executables `.exe` on every host; this test fails.

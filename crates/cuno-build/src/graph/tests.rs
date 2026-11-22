@@ -36,6 +36,10 @@ fn sources() -> Sources {
 }
 
 fn graph(kind: CompilerKind) -> Graph {
+    planned(kind, Mode::Compile)
+}
+
+fn planned(kind: CompilerKind, mode: Mode) -> Graph {
     let sources = sources();
     let layout = Layout::new(
         Path::new("C:/p/target"),
@@ -43,17 +47,8 @@ fn graph(kind: CompilerKind) -> Graph {
         Path::new("C:/p"),
         HostOs::Windows,
     );
-    let compile = |lang| {
-        compile_settings(
-            None,
-            kind,
-            Profile::Dev,
-            lang,
-            HostOs::Windows,
-            false,
-            Mode::Compile,
-        )
-    };
+    let compile =
+        |lang| compile_settings(None, kind, Profile::Dev, lang, HostOs::Windows, false, mode);
     let link = compile(Lang::Cxx);
     plan(&Plan {
         package: "app",
@@ -61,6 +56,7 @@ fn graph(kind: CompilerKind) -> Graph {
         layout: &layout,
         kind,
         program: Path::new("C:/cl.exe"),
+        mode,
         compile: &compile,
         link: (&link.build, &link.profile),
     })
@@ -222,4 +218,43 @@ fn a_link_reads_the_libraries_found_in_lib_dirs() {
         libraries(&build),
         [first.join("foo.lib"), second.join("bar.lib")]
     );
+}
+
+/// In check mode every source is checked, with the check switch and no
+/// object, each leaving its stamp beside where its object would be, and
+/// nothing is linked.
+///
+/// Mutation: keep the compile switch or the object, give the checks the
+/// objects' paths, or keep the links; this test fails.
+#[test]
+fn a_check_checks_every_source_and_links_nothing() {
+    for (kind, switch, object) in [
+        (CompilerKind::Msvc, "/Zs", "/Fo"),
+        (CompilerKind::ClangCl, "/Zs", "/Fo"),
+        (CompilerKind::Clang, "-fsyntax-only", "-o"),
+    ] {
+        let g = planned(kind, Mode::Check);
+        assert_eq!(g.steps.len(), 4, "{kind:?}");
+        for step in &g.steps {
+            let StepKind::Check { source } = &step.kind else {
+                panic!("{kind:?}: {:?}", step.kind);
+            };
+            let a = args(step);
+            assert_eq!(a[0], switch, "{kind:?}");
+            assert!(!a.iter().any(|x| x.starts_with(object)), "{kind:?}: {a:?}");
+            let name = source.file_name().unwrap().to_string_lossy();
+            assert!(
+                step.output.ends_with(format!("{name}.check")),
+                "{}",
+                step.output.display()
+            );
+        }
+        assert!(
+            g.steps[0]
+                .output
+                .starts_with("C:/p/target/debug/obj/app/src"),
+            "{}",
+            g.steps[0].output.display()
+        );
+    }
 }

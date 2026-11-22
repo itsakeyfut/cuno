@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use cuno_core::Env;
 
 use crate::deps;
-use crate::graph::{Graph, Step};
+use crate::graph::{Graph, Step, StepKind};
 use crate::state::Records;
 
 /// What a step's process did.
@@ -239,9 +239,22 @@ fn run(step: &Step, env: &Env, cwd: &Path, spawner: &dyn Spawner) -> Output {
     {
         return failed(format!("could not create {}: {e}", dir.display()));
     }
-    spawner
+    let output = spawner
         .run(step, env, cwd)
-        .unwrap_or_else(|e| failed(format!("could not run {}: {e}", step.program.display())))
+        .unwrap_or_else(|e| failed(format!("could not run {}: {e}", step.program.display())));
+    // A match rather than an `if`, so a new kind of step has to say whether
+    // it needs a stamp.
+    match step.kind {
+        // A check writes no object, only its header file; the stamp is the
+        // output its record is judged by, as an object is for a compile.
+        StepKind::Check { .. } if output.success => {
+            if let Err(e) = std::fs::write(&step.output, b"") {
+                return failed(format!("could not write {}: {e}", step.output.display()));
+            }
+        }
+        StepKind::Check { .. } | StepKind::Compile { .. } | StepKind::Link { .. } => {}
+    }
+    output
 }
 
 /// `output` without cl.exe's first line, the source's file name, when it is
