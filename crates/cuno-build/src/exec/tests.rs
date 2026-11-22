@@ -370,7 +370,10 @@ fn build(root: &Path, graph: &Graph, spawner: &Compiles) -> Result<(), Failed> {
 
 /// With records, a step that succeeded is skipped until its source or a
 /// header it read changes; a step that fails is not recorded, so it runs
-/// again even with nothing changed.
+/// again even with nothing changed. Each edit changes the file's size: an
+/// edit made within the file system's timestamp resolution that keeps the
+/// size is one the records do not see (`build.md`, "Deciding what
+/// changed"), and the test would then depend on the clock.
 ///
 /// Mutation: record a failed step, skip forgetting the record before a
 /// run, leave the headers or the source out of what is recorded, or take
@@ -383,14 +386,14 @@ fn records_skip_what_succeeded_and_rerun_what_changed_or_failed() {
     assert_eq!(build(root, &graph, &spawner), Ok(()));
     assert_eq!(spawner.runs.load(Ordering::SeqCst), 1);
 
-    std::fs::write(&spawner.header, "#define B").unwrap();
+    std::fs::write(&spawner.header, "#define BB").unwrap();
     assert_eq!(build(root, &graph, &spawner), Ok(()));
     assert_eq!(spawner.runs.load(Ordering::SeqCst), 2);
-    std::fs::write(root.join("a.cpp"), "int b;").unwrap();
+    std::fs::write(root.join("a.cpp"), "int bb;").unwrap();
     assert_eq!(build(root, &graph, &spawner), Ok(()));
     assert_eq!(spawner.runs.load(Ordering::SeqCst), 3);
 
-    std::fs::write(root.join("a.cpp"), "int c;").unwrap();
+    std::fs::write(root.join("a.cpp"), "int ccc;").unwrap();
     spawner.fail.store(true, Ordering::SeqCst);
     assert_eq!(build(root, &graph, &spawner), Err(Failed(vec![0])));
     // Nothing changed since the failure, and it still runs.
