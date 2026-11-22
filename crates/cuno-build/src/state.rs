@@ -134,8 +134,10 @@ impl Records {
             if started.is_some_and(|started| stamp.modified >= started) {
                 return Err(io::Error::other("an input changed while the step ran"));
             }
-            let name = path.to_str().filter(|p| !p.contains(['\n', '\r']));
-            let Some(name) = name else {
+            // A path that is not Unicode cannot be written. (A line break,
+            // which no Windows path has, would leave the record unreadable,
+            // and so the step would run again.)
+            let Some(name) = path.to_str() else {
                 return Err(io::Error::other("an input's path cannot be recorded"));
             };
             text.push_str(&format!(

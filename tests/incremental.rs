@@ -56,10 +56,12 @@ fn ran(run: &Run) -> (Vec<&'static str>, bool) {
             continue;
         }
         for name in ["main", "one", "two"] {
-            let file = format!("{name}.cpp");
-            let source = line
-                .split(' ')
-                .any(|arg| arg.trim_matches('"').ends_with(&format!("\\src\\{file}")));
+            let source = line.split(' ').any(|arg| {
+                let arg = arg.trim_matches('"');
+                [".cpp", ".c"]
+                    .iter()
+                    .any(|ext| arg.ends_with(&format!("\\src\\{name}{ext}")))
+            });
             if source {
                 compiled.push(name);
             }
@@ -196,8 +198,9 @@ fn an_edited_source_alone_is_recompiled() {
 /// A file read by `#embed` is an input like a header, on clang and
 /// clang-cl (cl has no `#embed`).
 ///
-/// Mutation: ask clang-cl for `/showIncludes`, which does not name it;
-/// this test fails.
+/// Mutation: ask clang-cl for `/showIncludes`, which does not name it, or
+/// leave it unable to write the file, so the step runs every time; this
+/// test fails.
 #[test]
 fn a_file_read_by_embed_is_an_input() {
     for (name, compiler) in [("clang", Compiler::Clang), ("clang-cl", Compiler::ClangCl)] {
@@ -217,8 +220,10 @@ fn a_file_read_by_embed_is_an_input() {
             );
         build(&project, name);
         std::fs::write(project.path().join("src/data.bin"), "B").unwrap();
-        build(&project, name);
+        assert!(ran(&build(&project, name)).1, "{name}");
         assert_eq!(output(&project), "B\n", "{name}");
+        // Recorded with the file, not left to run every time.
+        assert_eq!(ran(&build(&project, name)), (vec![], false), "{name}");
     }
 }
 

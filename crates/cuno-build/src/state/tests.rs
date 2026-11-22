@@ -247,19 +247,6 @@ fn the_program_and_each_part_identify_the_command() {
     assert_ne!(a.command(&case.step), b.command(&case.step));
 }
 
-/// A path that cannot be written on one line leaves the step unrecorded.
-///
-/// Mutation: write such a path into the record; this test fails.
-#[test]
-fn a_path_with_a_line_break_is_not_recorded() {
-    let (case, records) = recorded();
-    records.forget(&case.step);
-    let odd = case.input.with_file_name("a\nb.h");
-    let result = records.record(&case.step, &[case.input.clone(), odd], later());
-    assert!(result.is_err());
-    assert!(!state_path(&case.step.output).exists());
-}
-
 /// An input whose time and size match the record is not read again: a
 /// change that keeps both is the one miss the spec accepts, and it shows
 /// the bytes are not hashed on every build.

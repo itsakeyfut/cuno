@@ -316,12 +316,12 @@ impl Spawner for Compiles {
         (self.during)();
         std::fs::write(&step.output, "obj")?;
         if let Some(headers) = &step.headers {
+            // Named relative to the working directory, as a compiler names
+            // a header found through a relative `-I`.
+            let name = self.header.file_name().unwrap().to_string_lossy();
             std::fs::write(
                 headers.file(),
-                format!(
-                    "out: {}\n",
-                    self.header.display().to_string().replace(' ', "\\ ")
-                ),
+                format!("out: {}\n", name.replace(' ', "\\ ")),
             )?;
         }
         Ok(Output {
@@ -373,8 +373,8 @@ fn build(root: &Path, graph: &Graph, spawner: &Compiles) -> Result<(), Failed> {
 /// again even with nothing changed.
 ///
 /// Mutation: record a failed step, skip forgetting the record before a
-/// run, or leave the headers or the source out of what is recorded; this
-/// test fails.
+/// run, leave the headers or the source out of what is recorded, or take
+/// a relative header from the directory cuno runs in; this test fails.
 #[test]
 fn records_skip_what_succeeded_and_rerun_what_changed_or_failed() {
     let (root, graph, spawner) = compile_case(Box::new(|| {}));
@@ -393,8 +393,8 @@ fn records_skip_what_succeeded_and_rerun_what_changed_or_failed() {
     std::fs::write(root.join("a.cpp"), "int c;").unwrap();
     spawner.fail.store(true, Ordering::SeqCst);
     assert_eq!(build(root, &graph, &spawner), Err(Failed(vec![0])));
+    // Nothing changed since the failure, and it still runs.
     spawner.fail.store(false, Ordering::SeqCst);
-    std::fs::write(root.join("a.cpp"), "int b;").unwrap();
     assert_eq!(build(root, &graph, &spawner), Ok(()));
     assert_eq!(spawner.runs.load(Ordering::SeqCst), 5);
 }
