@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 6e5b21827a131fad6b62da11646e52b3b5c307e0 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 0841eff297980416de198adeefdea99f14fc1326 -->
 
 # Configuration Files
 
@@ -387,6 +387,13 @@ Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags
   6. Default values
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
 - For the cuno home directory, see [distribution.md](distribution.md).
+
+### A project's settings and trust
+
+- The build commands, such as `cuno build`, and `cuno doctor` trust the settings kept in the project (`cuno.toml`, `.cuno/config.toml`). A tool written in `[toolchain.paths]` of `.cuno/config.toml` is run as written.
+  - Rationale: the raw flags of `[build.<compiler>]` alone can make a compiler run arbitrary code, by loading a plugin for example. By the time it is built, a project is already trusted. Restricting tool paths alone would not make it safe, and would break projects that ship LLVM in their repository.
+  - Checking `cuno.toml` and `.cuno/config.toml` before building someone else's project is the user's responsibility.
+- The exception is `target-dir` in a layer kept in the project, which is limited to the project ([build.md](build.md#output-directory)). `cuno clean` deletes the output directory without running anything, so it is treated apart from building.
 
 ### Items
 

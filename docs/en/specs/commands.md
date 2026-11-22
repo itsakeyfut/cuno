@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob dadac57333eac02449f3b74a4c276d00f9d249ff -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 3146e6fdc7efe9c5832537daa4aa5511adda0ec8 -->
 
 # Commands
 
@@ -235,6 +235,8 @@ Follows cargo.
 
 - cuno's own errors are shown as `error: ...`, and fixes as `help: ...`.
 - Compiler errors and warnings are displayed as is.
+  - The exception is the source's file name (`main.cpp`, for example) that cl.exe prints as the first line of every compile, which is not shown. It is removed only when the first line of the output is exactly the compiled source's file name.
+    - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.
   - They are not translated (cl.exe from a Japanese-language Visual Studio stays in Japanese). Only cuno's own messages are unified in English.
   - Compilers that can produce colored output, such as Clang, are displayed in color. MSVC does not produce color, so its output is shown as is, without color.
 
