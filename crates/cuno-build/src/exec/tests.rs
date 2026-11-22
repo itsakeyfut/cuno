@@ -128,11 +128,10 @@ fn a_failure_stops_new_steps_and_waits_for_the_running() {
     };
     let (result, seen) = run(&graph, 2, &fake);
     assert_eq!(result, Err(Failed(vec![0])));
-    assert_eq!(
-        *fake.started.lock().unwrap(),
-        ["fast-bad", "slow"],
-        "{seen:?}"
-    );
+    // The two start on their own threads, in either order.
+    let mut started = fake.started.lock().unwrap().clone();
+    started.sort();
+    assert_eq!(started, ["fast-bad", "slow"], "{seen:?}");
     assert!(seen.contains(&"end slow slow".to_owned()), "{seen:?}");
 }
 
@@ -194,4 +193,101 @@ fn a_step_that_cannot_start_fails_with_why() {
     );
     assert_eq!(result, Err(Failed(vec![0])));
     assert_eq!(stderr, "could not run cl: program not found\n");
+}
+
+/// A step whose run panics fails and reports back, so the run ends rather
+/// than waiting for it for ever.
+///
+/// Mutation: let a panicking step report nothing; this test fails (by
+/// timing out instead of hanging the suite).
+#[test]
+fn a_panicking_step_fails_rather_than_hangs() {
+    struct Panics;
+    impl Spawner for Panics {
+        fn run(&self, _s: &Step, _e: &Env, _c: &Path) -> io::Result<Output> {
+            panic!("a bug in the spawner");
+        }
+    }
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let graph = Graph {
+            steps: vec![step("cl", &[])],
+        };
+        let result = execute(
+            &graph,
+            &Env::default(),
+            Path::new("."),
+            1,
+            &Panics,
+            &mut |_| {},
+        );
+        let _ = done.send(result);
+    });
+    let result = finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("execute returned");
+    assert_eq!(result, Err(Failed(vec![0])));
+}
+
+/// An output directory that cannot be made is named as the failure, not
+/// the program.
+///
+/// Mutation: report it as the program failing to run; this test fails.
+#[test]
+fn an_output_directory_that_cannot_be_made_is_named() {
+    let root = tempfile::tempdir().unwrap();
+    let blocker = root.path().join("target");
+    std::fs::write(&blocker, "a file").unwrap();
+    let step = Step {
+        output: blocker.join("debug").join("a.obj"),
+        ..step("cl", &[])
+    };
+    let mut stderr = String::new();
+    let fake = Fake::default();
+    let result = execute(
+        &Graph { steps: vec![step] },
+        &Env::default(),
+        root.path(),
+        1,
+        &fake,
+        &mut |event| {
+            if let Event::Finished(_, out) = event {
+                stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            }
+        },
+    );
+    assert_eq!(result, Err(Failed(vec![0])));
+    assert!(
+        stderr.starts_with(&format!(
+            "could not create {}: ",
+            blocker.join("debug").display()
+        )),
+        "{stderr}"
+    );
+    assert!(fake.started.lock().unwrap().is_empty());
+}
+
+/// cl prints a non-ASCII file name in the console's code page: `日本.cpp`
+/// arrives as CP932 bytes and is still the echo, while a diagnostic that
+/// starts with it is not.
+///
+/// Mutation: compare the line as UTF-8 text; this test fails.
+#[test]
+fn a_non_ascii_echo_in_the_console_code_page_is_dropped() {
+    let step = Step {
+        echo: Some("日本.cpp".to_owned()),
+        ..step("cl", &[])
+    };
+    let cp932_name = [0x93, 0xfa, 0x96, 0x7b, b'.', b'c', b'p', b'p'];
+    let out = |line: &[u8]| Output {
+        success: true,
+        stdout: [line, b"\r\nnext\r\n"].concat(),
+        stderr: Vec::new(),
+    };
+    assert_eq!(without_echo(&step, out(&cp932_name)).stdout, b"next\r\n");
+    let diagnostic = [&cp932_name[..], b"(3): error C2065"].concat();
+    assert_eq!(
+        without_echo(&step, out(&diagnostic)).stdout,
+        out(&diagnostic).stdout
+    );
 }

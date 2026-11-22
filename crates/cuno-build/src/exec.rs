@@ -3,6 +3,7 @@
 //! "`cuno build` / `cuno check`").
 
 use std::io;
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -102,7 +103,20 @@ pub fn execute(
                         on(Event::Started(step));
                         let done = done.clone();
                         scope.spawn(move || {
-                            let output = run(step, env, cwd, spawner);
+                            // A panic is a failure that still reports back,
+                            // so the wait below always ends.
+                            let output = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                run(step, env, cwd, spawner)
+                            }))
+                            .unwrap_or_else(|_| Output {
+                                success: false,
+                                stdout: Vec::new(),
+                                stderr: format!(
+                                    "cuno failed while running {}\n",
+                                    step.program.display()
+                                )
+                                .into_bytes(),
+                            });
                             // The receiver outlives every sender in this scope.
                             let _ = done.send((i, output));
                         });
@@ -134,16 +148,19 @@ pub fn execute(
 /// Runs one step, its output directory made first. A step that cannot
 /// start fails with why on its standard error.
 fn run(step: &Step, env: &Env, cwd: &Path, spawner: &dyn Spawner) -> Output {
-    let result = match step.output.parent() {
-        Some(dir) => std::fs::create_dir_all(dir),
-        None => Ok(()),
-    }
-    .and_then(|()| spawner.run(step, env, cwd));
-    result.unwrap_or_else(|e| Output {
+    let failed = |message: String| Output {
         success: false,
         stdout: Vec::new(),
-        stderr: format!("could not run {}: {e}\n", step.program.display()).into_bytes(),
-    })
+        stderr: format!("{message}\n").into_bytes(),
+    };
+    if let Some(dir) = step.output.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return failed(format!("could not create {}: {e}", dir.display()));
+    }
+    spawner
+        .run(step, env, cwd)
+        .unwrap_or_else(|e| failed(format!("could not run {}: {e}", step.program.display())))
 }
 
 /// `output` without cl.exe's first line, the source's file name, when it is
@@ -157,11 +174,33 @@ fn without_echo(step: &Step, mut output: Output) -> Output {
         .iter()
         .position(|&b| b == b'\n')
         .map_or(output.stdout.len(), |i| i + 1);
-    let first = String::from_utf8_lossy(&output.stdout[..end]);
-    if first.trim_end_matches(['\r', '\n']) == name {
+    let first = &output.stdout[..end];
+    let first = first.strip_suffix(b"\n").unwrap_or(first);
+    let first = first.strip_suffix(b"\r").unwrap_or(first);
+    if is_echo(first, name) {
         output.stdout.drain(..end);
     }
     output
+}
+
+/// Whether `line` is cl's echo of the file `name`. An ASCII name is
+/// compared exactly. A name with other characters reaches cl's output in
+/// the console's code page (CP932 on Japanese Windows), not UTF-8, so it is
+/// recognised by its ASCII start and end around non-ASCII bytes, and by
+/// holding no `:`, which no Windows file name has and every cl diagnostic
+/// does (`main.cpp(3): error ...`).
+fn is_echo(line: &[u8], name: &str) -> bool {
+    let name = name.as_bytes();
+    if name.is_ascii() {
+        return line == name;
+    }
+    let head = name.iter().take_while(|b| b.is_ascii()).count();
+    let tail = name.iter().rev().take_while(|b| b.is_ascii()).count();
+    line.len() > head + tail
+        && line.starts_with(&name[..head])
+        && line.ends_with(&name[name.len() - tail..])
+        && !line[head].is_ascii()
+        && !line.contains(&b':')
 }
 
 #[cfg(test)]
