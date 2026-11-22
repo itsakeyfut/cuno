@@ -761,3 +761,20 @@ int main() {
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert_eq!(printed(&run), "probe=given\ninclude=-\n", "{}", run.stderr);
 }
+
+/// A build marks the output directory it makes, so `cuno clean` removes
+/// it afterwards.
+///
+/// Mutation: build without marking the output directory; this test fails.
+#[test]
+fn a_build_marks_its_output_directory_for_clean() {
+    let Some((name, _)) = COMPILERS.into_iter().find(|&(_, c)| here(c)) else {
+        return;
+    };
+    let project = package("");
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let run = project.cuno(&["clean"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!project.path().join("target").exists());
+}

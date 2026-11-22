@@ -8,11 +8,16 @@ use support::Project;
 
 const MANIFEST: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
 
-/// A project with three files of `dev` output and two of `release`.
+/// The marker a build leaves in the output directory it made.
+const MARKER: &str = "target/.cuno-target";
+
+/// A project with three files of `dev` output, two of `release` and the
+/// marker.
 fn built() -> Project {
     Project::new()
         .file("cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() {}\n")
+        .file(MARKER, "")
         .file("target/debug/app.exe", "")
         .file("target/debug/obj/app/src/main.cpp.obj", "")
         .file("target/debug/obj/app/src/main.cpp.obj.cuno-state", "")
@@ -31,7 +36,7 @@ fn clean_removes_the_output_directory() {
     let project = built();
     project
         .cuno(&["clean"])
-        .assert(0, "", "     Removed 5 files\n");
+        .assert(0, "", "     Removed 6 files\n");
     assert!(!project.path().join("target").exists());
     assert!(project.path().join("src/main.cpp").is_file());
     project
@@ -56,6 +61,7 @@ fn a_profile_removes_only_its_own_output() {
 
     let project = Project::new()
         .file("cuno.toml", MANIFEST)
+        .file(MARKER, "")
         .file("target/debug/app.exe", "")
         .file("target/release/app.exe", "");
     project
@@ -70,10 +76,12 @@ fn a_profile_removes_only_its_own_output() {
 /// Mutation: ignore `--target-dir`; this test fails.
 #[test]
 fn target_dir_names_what_is_removed() {
-    let project = built().file("out/debug/app.exe", "");
+    let project = built()
+        .file("out/.cuno-target", "")
+        .file("out/debug/app.exe", "");
     project
         .cuno(&["clean", "--target-dir", "out"])
-        .assert(0, "", "     Removed 1 file\n");
+        .assert(0, "", "     Removed 2 files\n");
     assert!(!project.path().join("out").exists());
     assert!(project.path().join("target/debug/app.exe").is_file());
 }
@@ -85,13 +93,14 @@ fn target_dir_names_what_is_removed() {
 /// Mutation: remove before the settings are checked, or check only the
 /// winning layer; this test fails.
 #[test]
-fn an_output_directory_that_could_hold_the_project_removes_nothing() {
+fn a_refused_output_directory_removes_nothing() {
     let project = built().file(
         "cuno.toml",
         &format!("{MANIFEST}[build]\ntarget-dir = \"../out\"\n"),
     );
     let outside = project.path().parent().unwrap().join("out");
     std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join(".cuno-target"), "").unwrap();
     std::fs::write(outside.join("keep"), "").unwrap();
     let run = project.cuno(&["clean"]);
     assert_eq!(run.code, Some(3), "{}", run.stderr);
@@ -113,14 +122,50 @@ fn an_output_directory_that_could_hold_the_project_removes_nothing() {
     assert!(project.path().join("target/debug/app.exe").is_file());
 }
 
+/// An output directory without the marker is not cuno's: `cuno clean`
+/// removes nothing, says so, and exits 3, whether it is a `target` made by
+/// hand or the sources a project's `cuno.toml` names.
+///
+/// Mutation: remove an unmarked directory; this test fails.
+#[test]
+fn an_unmarked_output_directory_is_not_removed() {
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("target/notes.txt", "");
+    let run = project.cuno(&["clean"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.ends_with(
+            "was not made by cuno; not removing it\n\
+             help: remove it yourself, or set target-dir to a directory cuno builds into\n"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(project.path().join("target/notes.txt").is_file());
+
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &format!("{MANIFEST}[build]\ntarget-dir = \"src\"\n"),
+        )
+        .file("src/main.cpp", "int main() {}\n");
+    let run = project.cuno(&["clean"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(project.path().join("src/main.cpp").is_file());
+}
+
 /// Outside a project there is nothing to clean: the same error as `cuno
-/// build`, exit 3, and nothing removed; an unknown profile is exit 3 too.
+/// build`, exit 3, and nothing removed, even with an output directory that
+/// would be refused.
 ///
 /// Mutation: clean the current directory's `target` outside a project, or
-/// accept another profile; this test fails.
+/// judge the settings before looking for the project; this test fails.
 #[test]
-fn clean_outside_a_project_or_with_an_unknown_profile_exits_3() {
-    let outside = Project::new().file("target/x", "");
+fn clean_outside_a_project_exits_3() {
+    let outside = Project::new()
+        .file("target/x", "")
+        .file("target/.cuno-target", "");
     outside.cuno(&["clean"]).assert(
         3,
         "",
@@ -131,9 +176,69 @@ fn clean_outside_a_project_or_with_an_unknown_profile_exits_3() {
         ),
     );
     assert!(outside.path().join("target/x").is_file());
-    built().cuno(&["clean", "--profile", "bench"]).assert(
+    let run = outside.cuno(&["clean", "--target-dir", "."]);
+    assert!(
+        run.stderr.starts_with("error: could not find cuno.toml"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// A profile cuno does not have is exit 3, and `--release` with
+/// `--profile` is a usage error, exit 2; neither removes anything.
+///
+/// Mutation: accept another profile, or let `--release` win over
+/// `--profile`; this test fails.
+#[test]
+fn a_profile_that_is_not_one_is_refused() {
+    let project = built();
+    let run = project.cuno(&["clean", "--release", "--profile", "bench"]);
+    assert_eq!(run.code, Some(2), "{}", run.stderr);
+    assert!(project.path().join("target/release/app.exe").is_file());
+    project.cuno(&["clean", "--profile", "bench"]).assert(
         3,
         "",
         "error: no profile named `bench`\nhelp: use dev or release\n",
+    );
+    assert!(project.path().join("target/debug/app.exe").is_file());
+}
+
+/// What reading the settings warns about is shown by `cuno clean` too.
+///
+/// Mutation: drop the settings' warnings; this test fails.
+#[test]
+fn clean_shows_the_settings_warnings() {
+    let project = built().file("cuno.toml", &format!("{MANIFEST}nope = 1\n"));
+    let run = project.cuno(&["clean"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr.starts_with("warning: unknown key"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// A file another program holds open stops the removal: exit 3, naming
+/// what could not be removed.
+///
+/// Mutation: report a failed removal as success, or as another exit code;
+/// this test fails.
+#[cfg(windows)]
+#[test]
+fn a_file_in_use_fails_the_removal_with_exit_3() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let project = built();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(project.path().join("target/debug/app.exe"))
+        .unwrap();
+    let run = project.cuno(&["clean"]);
+    drop(held);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.starts_with("error: could not remove "),
+        "{}",
+        run.stderr
     );
 }

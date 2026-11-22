@@ -2,12 +2,42 @@
 //! (`docs/en/specs/build.md`, "Output directory").
 
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use cuno_manifest::Profile;
 use cuno_toolchain::HostOs;
 
 use crate::sources::{Names, normalize};
+
+/// The file a build leaves in an output directory it made, and without
+/// which `cuno clean` removes nothing (`docs/en/specs/build.md`, "Output
+/// directory").
+pub const MARKER: &str = ".cuno-target";
+
+/// Marks `target_dir` as cuno's when it is not there yet or is empty: it
+/// is created and [`MARKER`] written in it. A directory that already holds
+/// something unmarked is left as it is, since cuno cannot tell it made it.
+pub fn claim(target_dir: &Path) -> io::Result<()> {
+    if target_dir.join(MARKER).is_file() {
+        return Ok(());
+    }
+    match std::fs::read_dir(target_dir) {
+        Ok(mut entries) => {
+            if entries.next().is_some() {
+                return Ok(());
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => std::fs::create_dir_all(target_dir)?,
+        Err(e) => return Err(e),
+    }
+    std::fs::write(target_dir.join(MARKER), b"")
+}
+
+/// Whether `target_dir` carries [`MARKER`].
+pub fn is_claimed(target_dir: &Path) -> bool {
+    target_dir.join(MARKER).is_file()
+}
 
 /// The paths of one profile's build under a target directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +206,32 @@ mod tests {
             HostOs::Windows,
         );
         assert_eq!(dev.exe("app"), Path::new("C:/p/out/debug/app.exe"));
+    }
+
+    /// A missing or empty output directory is claimed; one that already
+    /// holds something unmarked is not, and one claimed stays claimed.
+    ///
+    /// Mutation: claim a directory that holds something, or claim nothing
+    /// that did not exist; this test fails.
+    #[test]
+    fn only_a_new_or_empty_output_directory_is_claimed() {
+        let root = tempfile::tempdir().unwrap();
+        let new = root.path().join("new/target");
+        claim(&new).unwrap();
+        assert!(is_claimed(&new));
+        claim(&new).unwrap();
+        assert!(is_claimed(&new));
+
+        let empty = root.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        claim(&empty).unwrap();
+        assert!(is_claimed(&empty));
+
+        let src = root.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("main.cpp"), "").unwrap();
+        claim(&src).unwrap();
+        assert!(!is_claimed(&src));
     }
 
     /// Mutation: give executables `.exe` on every host; this test fails.

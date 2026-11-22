@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob ebeeb74d7e5bd3169641b3bb6454a2830ed74245 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 69d05f5b73b851ef58e5f407e7198ea8efb2d027 -->
 
 # Build
 
@@ -187,6 +187,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files.
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
+- A build (`build` / `run` / `check`) puts a marker file `.cuno-target` directly in the output directory when it creates the directory, or when it starts using an empty one. It does not put one in an existing directory that has contents. `cuno clean` does not delete an output directory without this marker.
+  - Rationale: even when the output directory points inside the project, it may be a directory cuno did not create, such as `src` or `.git`. Naming rules cannot fully guard against this, so cuno deletes only what it knows it created itself.
 - Users can change the output directory. Precedence:
   1. Command-line argument `--target-dir`
   2. Environment variable `CUNO_TARGET_DIR`

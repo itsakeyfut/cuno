@@ -11,7 +11,7 @@ use std::time::Instant;
 use cuno_build::exec::{self, Event, SystemSpawner};
 use cuno_build::graph::{self, Plan, Step, StepKind};
 use cuno_build::input::compile_settings;
-use cuno_build::layout::Layout;
+use cuno_build::layout::{self, Layout};
 use cuno_build::sources::{self, Bin};
 use cuno_build::state::Records;
 use cuno_core::{CunoError, Env, ExitClass, Shell};
@@ -81,7 +81,7 @@ pub fn build(
     if args.target.is_some() {
         return Err(Box::new(CommandError::TargetNotSupported));
     }
-    let profile = profile(args.release, args.profile.as_deref())?;
+    let profile = profile_named(args.release, args.profile.as_deref())?;
     let cli = CliSettings {
         compiler: args.compiler,
         target_dir: args.target_dir,
@@ -186,6 +186,9 @@ pub fn build(
     });
 
     let version = selected.version.to_string();
+    // So that `cuno clean` knows the output directory is cuno's; one it
+    // cannot mark is only one `cuno clean` will refuse.
+    let _ = layout::claim(&settings.target_dir);
     let records = Records::new(identity(&version, &prepared.env));
     // Printed when the first step starts, so a build with nothing to do
     // shows only its Finished line (commands.md, "Output").
@@ -321,7 +324,10 @@ fn identity<'a>(version: &'a str, env: &'a Env) -> [&'a OsStr; 4] {
 
 /// The profile `--release` or `--profile` names, `dev` by default; only the
 /// two built in are accepted (`build.md`, "Profiles").
-pub(crate) fn profile(release: bool, name: Option<&str>) -> Result<Profile, Box<dyn CunoError>> {
+pub(crate) fn profile_named(
+    release: bool,
+    name: Option<&str>,
+) -> Result<Profile, Box<dyn CunoError>> {
     if release {
         return Ok(Profile::Release);
     }
