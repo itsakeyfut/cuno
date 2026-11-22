@@ -111,10 +111,13 @@ impl Project {
         cmd.env("CUNO_HOME", &self.home);
         cmd.envs(vars.iter().copied());
         let output = cmd.output().expect("the program should start");
+        // Decoded leniently: cuno passes a compiler's output through as the
+        // compiler wrote it, which on a Japanese Visual Studio is CP932, not
+        // UTF-8. cuno's own lines are ASCII and compare exactly either way.
         Run {
             code: output.status.code(),
-            stdout: String::from_utf8(output.stdout).expect("stdout should be UTF-8"),
-            stderr: String::from_utf8(output.stderr).expect("stderr should be UTF-8"),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
     }
 }

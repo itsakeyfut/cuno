@@ -33,11 +33,14 @@ One comfortable tool for C/C++ development.
 Usage: cuno [OPTIONS] [COMMAND]
 
 Commands:
+  build   Compile the package
   doctor  Diagnose the environment and show a fix for each problem
   help    Print this message or the help of the given subcommand(s)
 
 Options:
       --color <WHEN>  Coloring [possible values: auto, always, never]
+  -v, --verbose       Show more, such as each command a build runs
+  -q, --quiet         Show only errors, warnings and the compilers' output
   -h, --help          Print help
   -V, --version       Print version
 ";
