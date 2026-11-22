@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 69d05f5b73b851ef58e5f407e7198ea8efb2d027 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 1dd7e639847d695741582b07ee656bd4fdf5e548 -->
 
 # Build
 
@@ -178,6 +178,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - **Self-contained content**: MSVC / Windows SDK include paths (`/imsvc` etc. for clang-cl style) are written explicitly, so that clangd running outside a Developer Command Prompt can still find the standard headers and Windows headers.
   - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built.
     - Reason: editor completion and clang-tidy can analyze in-source test code as well (just as rust-analyzer analyzes test code). If the content changed with every build, the editor's analysis results would fluctuate.
+  - The header dependency arguments ([Always-on flags](#always-on-flags)) are left out of each compile's command. They make the compiler write a file that cuno uses to decide what changed, and have no bearing on what the source means.
+  - If the file cannot be written, cuno prints a warning (`warning: could not write compile_commands.json: <reason>`) and the build continues.
 
 ### Output directory
 

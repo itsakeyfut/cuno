@@ -778,3 +778,108 @@ fn a_build_marks_its_output_directory_for_clean() {
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(!project.path().join("target").exists());
 }
+
+/// The compile commands as `compile_commands.json` holds them: each entry's
+/// source and arguments.
+fn compile_commands(project: &Project) -> Vec<(String, Vec<String>)> {
+    let text = std::fs::read_to_string(project.path().join("compile_commands.json"))
+        .expect("compile_commands.json should be written");
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            let args = entry["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a.as_str().unwrap().to_owned())
+                .collect();
+            (entry["file"].as_str().unwrap().to_owned(), args)
+        })
+        .collect()
+}
+
+/// On every compiler, `compile_commands.json` lists every source with the
+/// `dev` command and `CUNO_TEST` defined, even after a `--release` build,
+/// and is written when a compile fails.
+///
+/// Mutation: write it from the built profile's graph, without the test
+/// define, leave a source out, or only after the build succeeds; this test
+/// fails.
+#[test]
+fn compile_commands_hold_the_dev_commands_whatever_is_built() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = package("");
+        let run = project.cuno(&["build", "--release", "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        let commands = compile_commands(&project);
+        let mut files: Vec<&str> = commands
+            .iter()
+            .map(|(file, _)| file.rsplit(['/', '\\']).next().unwrap())
+            .collect();
+        files.sort();
+        assert_eq!(files, ["main.cpp", "tool.c", "util.cpp"], "{name}");
+        for (file, args) in &commands {
+            assert!(
+                args.iter().any(|a| a.ends_with("DCUNO_TEST")),
+                "{name} {file}: {args:?}"
+            );
+            assert!(
+                !args.iter().any(|a| a.contains("NDEBUG")),
+                "{name} {file}: {args:?}"
+            );
+        }
+
+        let broken = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", "int main() { return undeclared; }\n");
+        let run = broken.cuno(&["build", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+        assert_eq!(compile_commands(&broken).len(), 1, "{name}");
+    }
+}
+
+/// clang-tidy finds the standard library and the Windows headers through
+/// `compile_commands.json` alone, with no environment, on every compiler.
+///
+/// Mutation: leave the include directories out of the file; this test
+/// fails.
+#[test]
+fn compile_commands_resolve_outside_a_developer_prompt() {
+    let Some(tidy) = support::compilers::require_llvm_tool("clang-tidy") else {
+        return;
+    };
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new().file("cuno.toml", MANIFEST).file(
+            "src/main.cpp",
+            "#include <vector>\n#include <windows.h>\nint main() { std::vector<int> v; return (int)v.size(); }\n",
+        );
+        let run = project.cuno(&["build", "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+        let mut cmd = std::process::Command::new(&tidy);
+        cmd.args([
+            "-p",
+            ".",
+            "src/main.cpp",
+            "--checks=-*,readability-braces-around-statements",
+        ])
+        .env_clear()
+        .current_dir(project.path());
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            cmd.env("SystemRoot", root);
+        }
+        let out = cmd.output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{name}: {text}");
+        assert!(!text.contains("file not found"), "{name}: {text}");
+    }
+}
