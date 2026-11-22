@@ -130,6 +130,7 @@ dependencies = [
  "cuno-core",
  "cuno-manifest",
  "cuno-toolchain",
+ "tempfile",
 ]
 
 [[package]]
