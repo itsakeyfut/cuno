@@ -5,12 +5,14 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use cuno_build::input;
 use cuno_core::{CunoError, Env, Shell};
-use cuno_manifest::{CliSettings, CompilerName, Inputs, Lang, Os, Profile, Settings};
+use cuno_manifest::{CliSettings, Inputs, Lang, Profile, Settings};
 use cuno_toolchain::compiler::{CompilerKind, Family};
-use cuno_toolchain::flags::{CompileInput, Mode, check_edition, compile_flags};
+use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
 use cuno_toolchain::llvm::Tool;
-use cuno_toolchain::msvc::{self, SystemRegistry};
+use cuno_toolchain::msvc::SystemRegistry;
+use cuno_toolchain::prepare;
 use cuno_toolchain::select::{self, Choices, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
@@ -64,24 +66,18 @@ pub fn doctor(
     };
     let settings = settings.as_ref();
 
-    let mut no_visual_studio = false;
-    let installs = if host == HostOs::Windows {
-        msvc::find_installations(env, &runner).unwrap_or_else(|error| {
-            problems.report(&error);
-            no_visual_studio = true;
-            Vec::new()
-        })
-    } else {
-        Vec::new()
-    };
     let explicit = settings.map(Settings::llvm_paths).unwrap_or_default();
-    let mut no_llvm = false;
-    let llvm = cuno_toolchain::llvm::find_llvm_tools(env, host, &explicit, &installs, &runner)
-        .unwrap_or_else(|error| {
-            problems.report(&error);
-            no_llvm = true;
-            Vec::new()
-        });
+    let detected = prepare::detect(env, host, &explicit, &runner);
+    let no_visual_studio = detected.installs.is_err();
+    let installs = detected.installs.unwrap_or_else(|error| {
+        problems.report(&error);
+        Vec::new()
+    });
+    let no_llvm = detected.llvm.is_err();
+    let llvm = detected.llvm.unwrap_or_else(|error| {
+        problems.report(&error);
+        Vec::new()
+    });
     let found = Found {
         installs: &installs,
         llvm: &llvm,
@@ -239,23 +235,27 @@ fn diagnose(
         Family::Msvc => false,
     };
     if borrows_msvc {
-        // <VS>\VC\Tools\MSVC\<version>
-        let install = toolset.dir.ancestors().nth(4).unwrap_or(&toolset.dir);
         problems.shell.status(
             "Using",
-            format!("MSVC {} ({})", toolset.cl_version, install.display()),
+            format!(
+                "MSVC {} ({})",
+                toolset.cl_version,
+                toolset.install_dir().display()
+            ),
         );
     }
-    let sdk = match msvc::find_windows_sdk(env, &SystemRegistry) {
-        Ok(sdk) => sdk,
+    let prepared = match prepare::prepare(&selected, env, &SystemRegistry) {
+        Ok(prepared) => prepared,
         Err(error) => {
             problems.report(&error);
             return diagnosed;
         }
     };
-    problems
-        .shell
-        .status("Using", format!("Windows SDK {}", sdk.version));
+    if let Some(sdk) = &prepared.sdk {
+        problems
+            .shell
+            .status("Using", format!("Windows SDK {}", sdk.version));
+    }
 
     // The standard library probe, in C++ projects and outside a project
     // (toolchain.md, "Minimum compiler versions").
@@ -263,16 +263,23 @@ fn diagnose(
     if c_project {
         return diagnosed;
     }
-    let flags = match probe_flags(selected.kind, project.map(|(p, m)| (p.root.as_path(), m))) {
-        Ok(flags) => flags,
-        Err(error) => {
-            problems.report(&*error);
-            return diagnosed;
-        }
-    };
+    // The build's dev-profile flags for a C++ input: only C++ projects (and
+    // none) are checked, and the check compiles C++.
+    let flags = compile_flags(
+        &input::compile_settings(
+            project.map(|(p, m)| (p.root.as_path(), m)),
+            selected.kind,
+            Profile::Dev,
+            Lang::Cxx,
+            host,
+            false,
+            Mode::Check,
+        )
+        .input(),
+    );
     let stl = StlInputs {
         kind: selected.kind,
-        env: msvc::resolve(toolset, &sdk).apply(env),
+        env: prepared.env,
         flags,
     };
     if borrows_msvc {
@@ -377,44 +384,6 @@ fn others(
         };
         problems.shell.status("Info", line);
     }
-}
-
-/// The build's dev-profile compile flags for a C++ input, in `kind`'s
-/// syntax: the project's settings for the host and `kind`, or the defaults
-/// outside a project, with the project's C++ edition (C++20 for a C one).
-fn probe_flags(
-    kind: CompilerKind,
-    project: Option<(&Path, &cuno_manifest::Manifest)>,
-) -> Result<Vec<OsString>, Box<dyn CunoError>> {
-    let name = CompilerName::from(kind);
-    let default_manifest;
-    let (root, manifest) = match project {
-        Some((root, manifest)) => (Some(root), manifest),
-        None => {
-            default_manifest = cuno_manifest::parse_manifest(
-                "[package]\nname = \"doctor\"\nversion = \"0.0.0\"\n",
-                Path::new("cuno.toml"),
-                Path::new("."),
-            )
-            .map_err(|e| Box::new(e) as Box<dyn CunoError>)?
-            .value;
-            (None, &default_manifest)
-        }
-    };
-    let build = manifest.build_settings(Os::Windows, name, Profile::Dev);
-    let profile = manifest.profile_settings(Profile::Dev);
-    let include_dirs: Vec<_> = root.map(|r| r.join("src")).into_iter().collect();
-    Ok(compile_flags(&CompileInput {
-        kind,
-        lang: Lang::Cxx,
-        // Only C++ projects (and none) are probed, so this is a C++ edition.
-        edition: manifest.package.edition,
-        build: &build,
-        profile: &profile,
-        include_dirs: &include_dirs,
-        test: false,
-        mode: Mode::Check,
-    }))
 }
 
 /// Runs the check of `what` with a scratch directory of this process's own

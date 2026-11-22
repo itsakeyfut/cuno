@@ -66,6 +66,12 @@ impl MsvcToolset {
     pub fn cl(&self) -> PathBuf {
         cl_in(&self.dir)
     }
+
+    /// The Visual Studio (or Build Tools) installation this toolset belongs
+    /// to: `dir` is `<installation>\VC\Tools\MSVC\<version>`.
+    pub fn install_dir(&self) -> &Path {
+        self.dir.ancestors().nth(4).unwrap_or(&self.dir)
+    }
 }
 
 fn cl_in(toolset_dir: &Path) -> PathBuf {
@@ -240,6 +246,28 @@ fn cl_version(cl: &Path, run: &dyn Runner, cl_env: &Env) -> Option<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mutation: take another ancestor of the toolset directory, or name a
+    /// directory too short to be one as nothing; this test fails.
+    #[test]
+    fn a_toolset_names_its_installation() {
+        let toolset = MsvcToolset {
+            dir: Path::new("C:/VS/2022/VC/Tools/MSVC/14.44.35207").to_owned(),
+            cl_version: crate::Version {
+                major: 19,
+                minor: 44,
+                patch: 35207,
+            },
+        };
+        assert_eq!(toolset.install_dir(), Path::new("C:/VS/2022"));
+        // Too short to be a toolset directory: named as itself rather than
+        // as nothing.
+        let short = MsvcToolset {
+            dir: Path::new("C:/x").to_owned(),
+            ..toolset
+        };
+        assert_eq!(short.install_dir(), Path::new("C:/x"));
+    }
     use crate::Output;
     use cuno_core::NameCase;
     use std::cell::RefCell;

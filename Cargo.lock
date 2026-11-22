@@ -115,6 +115,7 @@ name = "cuno"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "cuno-build",
  "cuno-core",
  "cuno-manifest",
  "cuno-toolchain",
@@ -125,6 +126,11 @@ dependencies = [
 [[package]]
 name = "cuno-build"
 version = "0.0.0"
+dependencies = [
+ "cuno-core",
+ "cuno-manifest",
+ "cuno-toolchain",
+]
 
 [[package]]
 name = "cuno-core"
