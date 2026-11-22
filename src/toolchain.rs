@@ -4,14 +4,13 @@
 //! `cuno doctor` calls the same steps one at a time and goes on after one.
 //! See `docs/en/specs/toolchain.md`.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use cuno_build::input::compile_settings;
+use cuno_build::input::{CompileSettings, compile_settings};
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
 use cuno_toolchain::compiler::CompilerKind;
-use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
+use cuno_toolchain::flags::{Mode, check_edition};
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
@@ -33,17 +32,18 @@ pub fn detect(
     prepare::detect(env, host, &explicit, runner)
 }
 
-/// What the standard library probe compiles: the build's flags for a C++
-/// input in `profile`, the resolved environment, and where the build runs.
-/// Doctor's clang-tidy check reads the same compile.
+/// What the standard library probe compiles: the build's settings for a
+/// C++ input in `profile`, the resolved environment, and where the build
+/// runs. Doctor's clang-tidy check reads the same compile.
 pub struct ProbeCompile {
-    /// The compiler, whose syntax the flags are in; clang-tidy's check
+    /// The compiler, whose syntax the command is in; clang-tidy's check
     /// needs it, having no `Selected`.
     pub kind: CompilerKind,
     /// The resolved Windows environment.
     pub env: Env,
-    /// The flags, in the compiler's syntax, without inputs or outputs.
-    pub flags: Vec<OsString>,
+    /// The build's compile settings for a C++ input, from which the probe
+    /// makes the build's own command line.
+    pub settings: CompileSettings,
     /// Where the build runs: the project root, or the current directory
     /// outside a project, so a relative path in the flags means the same.
     pub cwd: PathBuf,
@@ -77,7 +77,7 @@ pub fn probe_compile(
     Some(ProbeCompile {
         kind: selected.kind,
         env: prepared.env.clone(),
-        flags: compile_flags(&settings.input()),
+        settings,
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
     })
 }
@@ -98,7 +98,7 @@ pub fn probe(
             &compile.env,
             ProbeInputs {
                 scratch: dir,
-                flags: &compile.flags,
+                input: &compile.settings.input(),
                 cwd: &compile.cwd,
             },
             runner,

@@ -306,7 +306,7 @@ fn tools(
                     &stl.env,
                     ProbeInputs {
                         scratch,
-                        flags: &stl.flags,
+                        input: &stl.settings.input(),
                         cwd: &stl.cwd,
                     },
                     runner,
