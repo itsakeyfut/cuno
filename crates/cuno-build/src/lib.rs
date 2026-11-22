@@ -3,11 +3,13 @@
 //!
 //! See `docs/en/specs/build.md`.
 
+pub mod deps;
 mod error;
 pub mod exec;
 pub mod graph;
 pub mod input;
 pub mod layout;
 pub mod sources;
+pub mod state;
 
 pub use error::BuildError;

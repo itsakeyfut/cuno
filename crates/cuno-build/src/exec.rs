@@ -4,13 +4,15 @@
 
 use std::io;
 use std::panic::AssertUnwindSafe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 
 use cuno_core::Env;
 
-use crate::graph::{Graph, Step};
+use crate::deps::{self, Headers};
+use crate::graph::{Graph, Step, StepKind};
+use crate::state::Records;
 
 /// What a step's process did.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +55,7 @@ impl Spawner for SystemSpawner {
 /// What happens while a graph runs, in the order it happens.
 #[derive(Debug)]
 pub enum Event<'a> {
-    /// A step is about to start.
+    /// A step is about to start. A step that is up to date never starts.
     Started(&'a Step),
     /// A step finished, with what it printed.
     Finished(&'a Step, &'a Output),
@@ -71,23 +73,37 @@ enum State {
     Failed,
 }
 
+/// What a step's thread reports back.
+enum Report {
+    /// It is not up to date and is starting.
+    Starting,
+    /// It ran.
+    Ran(Output),
+    /// It was up to date and did not run.
+    UpToDate,
+}
+
 /// Runs `graph` with `env` in `cwd`, at most `jobs` steps at a time, each
-/// once every step it waits for has succeeded. After a failure no step
-/// starts; the steps running are waited for. `on` hears every start and
-/// finish, on this thread, so a step's output is shown whole when it ends.
+/// once every step it waits for has succeeded. With `records`, a step is
+/// skipped when it is up to date (a link's inputs are the objects, so it
+/// runs when one of them changed) (`docs/en/specs/build.md`, "Deciding what changed"), and recorded when
+/// it succeeds. After a failure no step starts; the steps running are
+/// waited for. `on` hears every start and finish, on this thread, so a
+/// step's output is shown whole when it ends.
 pub fn execute(
     graph: &Graph,
     env: &Env,
     cwd: &Path,
     jobs: usize,
     spawner: &dyn Spawner,
+    records: Option<&Records>,
     on: &mut dyn FnMut(Event<'_>),
 ) -> Result<(), Failed> {
     let jobs = jobs.max(1);
     let mut state = vec![State::Waiting; graph.steps.len()];
     let mut failed = Vec::new();
     let mut running = 0;
-    let (done, finished) = mpsc::channel::<(usize, Output)>();
+    let (done, finished) = mpsc::channel::<(usize, Report)>();
     std::thread::scope(|scope| {
         loop {
             if failed.is_empty() {
@@ -97,44 +113,65 @@ pub fn execute(
                     }
                     let ready = state[i] == State::Waiting
                         && step.after.iter().all(|&a| state[a] == State::Done);
-                    if ready {
-                        state[i] = State::Running;
-                        running += 1;
-                        on(Event::Started(step));
-                        let done = done.clone();
-                        scope.spawn(move || {
-                            // A panic is a failure that still reports back,
-                            // so the wait below always ends.
-                            let output = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                                run(step, env, cwd, spawner)
-                            }))
-                            .unwrap_or_else(|_| Output {
-                                success: false,
-                                stdout: Vec::new(),
-                                stderr: format!(
-                                    "cuno failed while running {}\n",
-                                    step.program.display()
-                                )
-                                .into_bytes(),
-                            });
-                            // The receiver outlives every sender in this scope.
-                            let _ = done.send((i, output));
-                        });
+                    if !ready {
+                        continue;
                     }
+                    state[i] = State::Running;
+                    running += 1;
+                    let waited: Vec<&Path> = step
+                        .after
+                        .iter()
+                        .map(|&a| graph.steps[a].output.as_path())
+                        .collect();
+                    let done = done.clone();
+                    scope.spawn(move || {
+                        let fresh = records.is_some_and(|r| r.up_to_date(step));
+                        if fresh {
+                            let _ = done.send((i, Report::UpToDate));
+                            return;
+                        }
+                        let _ = done.send((i, Report::Starting));
+                        // A panic is a failure that still reports back, so
+                        // the wait below always ends.
+                        let output = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            perform(step, &waited, env, cwd, spawner, records)
+                        }))
+                        .unwrap_or_else(|_| Output {
+                            success: false,
+                            stdout: Vec::new(),
+                            stderr: format!(
+                                "cuno failed while running {}\n",
+                                step.program.display()
+                            )
+                            .into_bytes(),
+                        });
+                        // The receiver outlives every sender in this scope.
+                        let _ = done.send((i, Report::Ran(output)));
+                    });
                 }
             }
             if running == 0 {
                 break;
             }
-            let (i, output) = finished.recv().expect("a running step always reports back");
-            running -= 1;
-            let output = without_echo(&graph.steps[i], output);
-            on(Event::Finished(&graph.steps[i], &output));
-            if output.success {
-                state[i] = State::Done;
-            } else {
-                state[i] = State::Failed;
-                failed.push(i);
+            let (i, report) = finished.recv().expect("a running step always reports back");
+            let step = &graph.steps[i];
+            match report {
+                Report::Starting => on(Event::Started(step)),
+                Report::UpToDate => {
+                    running -= 1;
+                    state[i] = State::Done;
+                }
+                Report::Ran(output) => {
+                    running -= 1;
+                    let output = without_echo(step, output);
+                    on(Event::Finished(step, &output));
+                    if output.success {
+                        state[i] = State::Done;
+                    } else {
+                        state[i] = State::Failed;
+                        failed.push(i);
+                    }
+                }
             }
         }
     });
@@ -143,6 +180,60 @@ pub fn execute(
     } else {
         Err(Failed(failed))
     }
+}
+
+/// Runs `step` and, with `records`, records it when it succeeds: a
+/// compile as having read its source and every header its compiler named,
+/// a link as having read the outputs of the steps it `waited` for.
+/// clang-cl's include notes are removed from what is shown either way.
+fn perform(
+    step: &Step,
+    waited: &[&Path],
+    env: &Env,
+    cwd: &Path,
+    spawner: &dyn Spawner,
+    records: Option<&Records>,
+) -> Output {
+    if let Some(records) = records {
+        records.forget(step);
+    }
+    let mut output = run(step, env, cwd, spawner);
+    let notes = match step.headers {
+        Some(Headers::Notes) => Some(deps::take_notes(&mut output.stdout)),
+        _ => None,
+    };
+    if !output.success {
+        return output;
+    }
+    let Some(records) = records else {
+        return output;
+    };
+    let inputs: Option<Vec<PathBuf>> = match &step.kind {
+        StepKind::Compile { source } => {
+            let headers = match &step.headers {
+                Some(Headers::Json(file)) => {
+                    std::fs::read(file).ok().and_then(|b| deps::from_json(&b))
+                }
+                Some(Headers::DepFile(file)) => std::fs::read_to_string(file)
+                    .ok()
+                    .and_then(|t| deps::from_depfile(&t)),
+                Some(Headers::Notes) => notes.flatten(),
+                None => Some(Vec::new()),
+            };
+            headers.map(|headers| {
+                std::iter::once(source.clone())
+                    .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
+                    .collect()
+            })
+        }
+        StepKind::Link { .. } => Some(waited.iter().map(|p| p.to_path_buf()).collect()),
+    };
+    // Headers that cannot be read leave the step unrecorded: it runs again
+    // next time rather than being judged on part of what it read.
+    if let Some(inputs) = inputs {
+        let _ = records.record(step, &inputs);
+    }
+    output
 }
 
 /// Runs one step, its output directory made first. A step that cannot

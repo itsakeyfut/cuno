@@ -13,6 +13,7 @@ use cuno_build::graph::{self, Plan, Step, StepKind};
 use cuno_build::input::compile_settings;
 use cuno_build::layout::Layout;
 use cuno_build::sources;
+use cuno_build::state::Records;
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Lang, OptLevel, Profile};
 use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
@@ -151,17 +152,26 @@ pub fn build(
         link: (&link.build, &link.profile),
     });
 
-    if !verbosity.quiet {
-        shell.status(
-            "Compiling",
-            format!(
-                "{package} v{} ({} {})",
-                manifest.package.version,
-                selected.kind.name(),
-                selected.version
-            ),
-        );
-    }
+    // What besides each step's arguments identifies its command: the
+    // compiler's version, and the variables that decide which headers and
+    // libraries it reads (build.md, "Deciding what changed").
+    let version = selected.version.to_string();
+    let empty = OsStr::new("");
+    let records = Records::new(
+        std::iter::once(OsStr::new(&version)).chain(
+            ["INCLUDE", "LIB", "LIBPATH"]
+                .into_iter()
+                .map(|name| prepared.env.get(name).unwrap_or(empty)),
+        ),
+    );
+    // Printed when the first step starts, so a build with nothing to do
+    // shows only its Finished line (commands.md, "Output").
+    let mut compiling = Some(format!(
+        "{package} v{} ({} {})",
+        manifest.package.version,
+        selected.kind.name(),
+        selected.version
+    ));
     let jobs = settings
         .jobs
         .map(|n| n.get() as usize)
@@ -172,8 +182,14 @@ pub fn build(
         root,
         jobs,
         &SystemSpawner,
+        Some(&records),
         &mut |event| match event {
             Event::Started(step) => {
+                if let Some(line) = compiling.take()
+                    && !verbosity.quiet
+                {
+                    shell.status("Compiling", line);
+                }
                 if verbose && !verbosity.quiet {
                     shell.status("Running", format!("`{}`", command_line(step)));
                 }
@@ -362,6 +378,7 @@ mod tests {
             output: PathBuf::new(),
             after: Vec::new(),
             echo: None,
+            headers: None,
         })
     }
 

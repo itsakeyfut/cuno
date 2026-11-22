@@ -6,10 +6,12 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use cuno_toolchain::compiler::{CompilerKind, Family};
+use cuno_toolchain::compiler::{CompilerKind, Dependencies, Family};
 use cuno_toolchain::flags::{
-    BuildSettings, Lang, LinkInput, ProfileSettings, compile_args, link_args,
+    BuildSettings, Lang, LinkInput, ProfileSettings, compile_args, dependency_args, link_args,
 };
+
+use crate::deps::Headers;
 
 use crate::input::CompileSettings;
 use crate::layout::Layout;
@@ -46,6 +48,9 @@ pub struct Step {
     /// The line cl.exe prints first on every compile, the source's file
     /// name, which is not shown (`commands.md`, "Output").
     pub echo: Option<String>,
+    /// Where a compile's headers are found once it has run; `None` for a
+    /// link.
+    pub headers: Option<Headers>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -89,15 +94,27 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .map(|name| name.to_string_lossy().into_owned()),
             Family::Llvm => None,
         };
+        let headers = match p.kind.dependencies() {
+            Dependencies::SourceDependencies => Headers::Json(object.with_extension("json")),
+            Dependencies::ShowIncludes => Headers::Notes,
+            Dependencies::DepFile => Headers::DepFile(object.with_extension("d")),
+        };
+        let file = match &headers {
+            Headers::Json(file) | Headers::DepFile(file) => file.as_path(),
+            Headers::Notes => Path::new(""),
+        };
+        let mut args = compile_args(&settings.input(), &source.path, Some(&object));
+        args.extend(dependency_args(p.kind, file));
         steps.push(Step {
             kind: StepKind::Compile {
                 source: source.path.clone(),
             },
             program: p.program.to_owned(),
-            args: compile_args(&settings.input(), &source.path, Some(&object)),
+            args,
             output: object,
             after: Vec::new(),
             echo,
+            headers: Some(headers),
         });
         steps.len() - 1
     };
@@ -123,6 +140,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             output: exe,
             after,
             echo: None,
+            headers: None,
         });
     }
     Graph { steps }

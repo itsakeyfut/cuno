@@ -15,6 +15,7 @@ fn step(name: &str, after: &[usize]) -> Step {
         output: PathBuf::new(),
         after: after.to_vec(),
         echo: None,
+        headers: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn run(graph: &Graph, jobs: usize, fake: &Fake) -> (Result<(), Failed>, Vec<Stri
         Path::new("."),
         jobs,
         fake,
+        None,
         &mut |event| match event {
             Event::Started(s) => seen.push(format!("start {}", s.program.display())),
             Event::Finished(s, out) => seen.push(format!(
@@ -185,6 +187,7 @@ fn a_step_that_cannot_start_fails_with_why() {
         Path::new("."),
         1,
         &Missing,
+        None,
         &mut |event| {
             if let Event::Finished(_, out) = event {
                 stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -219,6 +222,7 @@ fn a_panicking_step_fails_rather_than_hangs() {
             Path::new("."),
             1,
             &Panics,
+            None,
             &mut |_| {},
         );
         let _ = done.send(result);
@@ -250,6 +254,7 @@ fn an_output_directory_that_cannot_be_made_is_named() {
         root.path(),
         1,
         &fake,
+        None,
         &mut |event| {
             if let Event::Finished(_, out) = event {
                 stderr = String::from_utf8_lossy(&out.stderr).into_owned();
