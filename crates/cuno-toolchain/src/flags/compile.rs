@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings};
-use crate::compiler::{CompilerKind, Family, Syntax};
+use crate::compiler::{CompilerKind, Dependencies, Family, Syntax};
 use crate::{ToolchainError, Version};
 
 /// Whether a source is compiled to an object or only checked (`cuno check`).
@@ -195,6 +195,18 @@ pub fn compile_args(
         }
     }
     args
+}
+
+/// The arguments that make `kind` say which headers a compile read, into
+/// `file` where it writes them to one (`build.md`, "Settings and flags").
+/// They come after [`compile_args`], so the file is never taken for an
+/// input.
+pub fn dependency_args(kind: CompilerKind, file: &Path) -> Vec<OsString> {
+    match kind.dependencies() {
+        Dependencies::SourceDependencies => vec!["/sourceDependencies".into(), file.into()],
+        Dependencies::ShowIncludes => vec!["/showIncludes".into()],
+        Dependencies::DepFile => vec!["-MD".into(), "-MF".into(), file.into()],
+    }
 }
 
 /// The language standard switch, naming the standard on every driver:

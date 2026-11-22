@@ -39,6 +39,20 @@ pub enum Family {
     Llvm,
 }
 
+/// How a compiler says which headers a compile read
+/// (`docs/en/specs/build.md`, "Incremental and parallel builds").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dependencies {
+    /// cl's `/sourceDependencies` JSON file, whose paths do not depend on
+    /// the language Visual Studio is installed in.
+    SourceDependencies,
+    /// clang-cl's `/showIncludes` lines on standard output, always in
+    /// English.
+    ShowIncludes,
+    /// A `-MD` dependency file in make's syntax.
+    DepFile,
+}
+
 impl CompilerKind {
     /// Every compiler, in the order cuno lists them. A new variant is added
     /// here as well as to the matches below.
@@ -70,6 +84,15 @@ impl CompilerKind {
         match self {
             CompilerKind::Msvc => Family::Msvc,
             CompilerKind::Clang | CompilerKind::ClangCl => Family::Llvm,
+        }
+    }
+
+    /// How it says which headers a compile read.
+    pub fn dependencies(self) -> Dependencies {
+        match self {
+            CompilerKind::Msvc => Dependencies::SourceDependencies,
+            CompilerKind::ClangCl => Dependencies::ShowIncludes,
+            CompilerKind::Clang => Dependencies::DepFile,
         }
     }
 
