@@ -2,7 +2,7 @@
 //! sources, plan the graph and run it. See `docs/en/specs/commands.md`,
 //! "`cuno build` / `cuno check`".
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use cuno_build::exec::{self, Event, SystemSpawner};
 use cuno_build::graph::{self, Plan, Step, StepKind};
 use cuno_build::input::compile_settings;
 use cuno_build::layout::Layout;
-use cuno_build::sources;
+use cuno_build::sources::{self, Bin};
 use cuno_build::state::Records;
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Lang, OptLevel, Profile};
@@ -49,15 +49,34 @@ pub struct Verbosity {
     pub quiet: bool,
 }
 
-/// Builds the project around `cwd`.
+/// What a build command does once the project is built.
+#[derive(Debug)]
+pub enum Goal {
+    /// `cuno build`: compile and link.
+    Build,
+    /// `cuno check`: check every source, without objects or links.
+    Check,
+    /// `cuno run`: build, then run the executable `bin` names, or the only
+    /// one, with `args`.
+    Run {
+        /// `--bin`.
+        bin: Option<String>,
+        /// What follows `--`.
+        args: Vec<OsString>,
+    },
+}
+
+/// Carries out `goal` for the project around `cwd` and returns the exit
+/// code: 0, or for `cuno run` the program's.
 pub fn build(
+    goal: Goal,
     args: BuildArgs,
     verbosity: Verbosity,
     env: &Env,
     cwd: &Path,
     host: HostOs,
     shell: &mut Shell,
-) -> Result<(), Box<dyn CunoError>> {
+) -> Result<i32, Box<dyn CunoError>> {
     let started = Instant::now();
     if args.target.is_some() {
         return Err(Box::new(CommandError::TargetNotSupported));
@@ -139,8 +158,21 @@ pub fn build(
         shell.warning(warning);
     }
     let layout = Layout::new(&settings.target_dir, profile, root, host);
+    // Chosen before anything is built, so a wrong `--bin` costs nothing.
+    let (mode, run) = match &goal {
+        Goal::Build => (Mode::Compile, None),
+        Goal::Check => (Mode::Check, None),
+        Goal::Run { bin, args } => {
+            let exe = layout.exe(&choose(&sources.bins, bin.as_deref()).map_err(boxed)?.name);
+            (Mode::Compile, Some((exe, args)))
+        }
+    };
+    let verb = match mode {
+        Mode::Compile => "Compiling",
+        Mode::Check => "Checking",
+    };
     let link = compile(manifest.package.lang, Mode::Compile);
-    let compile_for = |lang| compile(lang, Mode::Compile);
+    let compile_for = |lang| compile(lang, mode);
     let package = &manifest.package.name;
     let graph = graph::plan(&Plan {
         package,
@@ -148,6 +180,7 @@ pub fn build(
         layout: &layout,
         kind: selected.kind,
         program: &selected.executable,
+        mode,
         compile: &compile_for,
         link: (&link.build, &link.profile),
     });
@@ -156,7 +189,7 @@ pub fn build(
     let records = Records::new(identity(&version, &prepared.env));
     // Printed when the first step starts, so a build with nothing to do
     // shows only its Finished line (commands.md, "Output").
-    let mut compiling = Some(format!(
+    let mut first_status = Some(format!(
         "{package} v{} ({} {})",
         manifest.package.version,
         selected.kind.name(),
@@ -175,10 +208,10 @@ pub fn build(
         Some(&records),
         &mut |event| match event {
             Event::Started(step) => {
-                if let Some(line) = compiling.take()
+                if let Some(line) = first_status.take()
                     && !verbosity.quiet
                 {
-                    shell.status("Compiling", line);
+                    shell.status(verb, line);
                 }
                 if verbose && !verbosity.quiet {
                     shell.status("Running", format!("`{}`", command_line(step)));
@@ -221,7 +254,56 @@ pub fn build(
             ),
         );
     }
-    Ok(())
+    let Some((exe, args)) = run else {
+        return Ok(0);
+    };
+    if !verbosity.quiet {
+        let shown = exe.strip_prefix(cwd).unwrap_or(&exe);
+        shell.status("Running", format!("`{}`", shown.display()));
+    }
+    // The environment cuno was given, not the compiler's; the standard
+    // streams are left connected (commands.md, "`cuno run`").
+    let status = std::process::Command::new(&exe)
+        .args(args)
+        .env_clear()
+        .envs(env.vars())
+        .current_dir(root)
+        .status()
+        .map_err(|e| {
+            Box::new(CommandError::CannotRun {
+                exe: exe.clone(),
+                reason: e.to_string(),
+            }) as Box<dyn CunoError>
+        })?;
+    // `None` only for a signal, which Windows does not have; the exit code
+    // for one is to be decided with the hosts that do (roadmap M8).
+    Ok(status.code().unwrap_or(1))
+}
+
+/// The executable `cuno run` runs: the one `bin` names, or the only one.
+fn choose<'a>(bins: &'a [Bin], bin: Option<&str>) -> Result<&'a Bin, CommandError> {
+    let available = || {
+        bins.iter()
+            .map(|b| b.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match (bin, bins) {
+        (Some(name), _) => {
+            bins.iter()
+                .find(|b| b.name == name)
+                .ok_or_else(|| CommandError::NoSuchBin {
+                    name: name.to_owned(),
+                    available: available(),
+                })
+        }
+        (None, [only]) => Ok(only),
+        (None, [_, _, ..]) => Err(CommandError::SeveralBins {
+            available: available(),
+        }),
+        // Classifying refuses a package with no executable before this.
+        (None, []) => unreachable!("a package to run has an executable"),
+    }
 }
 
 /// What besides each step's arguments identifies its command: the
@@ -318,6 +400,25 @@ pub enum CommandError {
     },
     /// `--target`, reserved for cross-compiling.
     TargetNotSupported,
+    /// `cuno run` without `--bin`, and more than one executable.
+    SeveralBins {
+        /// The executables' names, comma separated.
+        available: String,
+    },
+    /// `--bin` names no executable.
+    NoSuchBin {
+        /// The name given.
+        name: String,
+        /// The executables' names, comma separated.
+        available: String,
+    },
+    /// The built executable could not be started.
+    CannotRun {
+        /// The executable.
+        exe: PathBuf,
+        /// Why.
+        reason: String,
+    },
     /// A compile or a link failed; the compiler said why.
     Failed {
         /// The package.
@@ -337,6 +438,13 @@ impl fmt::Display for CommandError {
             ),
             CommandError::UnknownProfile { name } => write!(f, "no profile named `{name}`"),
             CommandError::TargetNotSupported => f.write_str("--target is not supported yet"),
+            CommandError::SeveralBins { .. } => {
+                f.write_str("several executables can be run; choose one with --bin")
+            }
+            CommandError::NoSuchBin { name, .. } => write!(f, "no executable named `{name}`"),
+            CommandError::CannotRun { exe, reason } => {
+                write!(f, "could not run {}: {reason}", exe.display())
+            }
             CommandError::Failed { package, link } => {
                 let what = if *link { "link" } else { "compile" };
                 write!(f, "could not {what} `{package}`")
@@ -350,7 +458,10 @@ impl std::error::Error for CommandError {}
 impl CunoError for CommandError {
     fn exit_class(&self) -> ExitClass {
         match self {
-            CommandError::Failed { .. } => ExitClass::Failure,
+            // The program cuno built would not start: a problem with what
+            // was built, not with the setup (commands.md, "Exit codes").
+            CommandError::Failed { .. } | CommandError::CannotRun { .. } => ExitClass::Failure,
+            CommandError::SeveralBins { .. } | CommandError::NoSuchBin { .. } => ExitClass::Usage,
             CommandError::NoProject { .. }
             | CommandError::UnknownProfile { .. }
             | CommandError::TargetNotSupported => ExitClass::Setup,
@@ -363,7 +474,12 @@ impl CunoError for CommandError {
                 Some("run it in a directory that holds a cuno.toml, or below one".to_owned())
             }
             CommandError::UnknownProfile { .. } => Some("use dev or release".to_owned()),
-            CommandError::TargetNotSupported | CommandError::Failed { .. } => None,
+            CommandError::SeveralBins { available } | CommandError::NoSuchBin { available, .. } => {
+                Some(format!("available: {available}"))
+            }
+            CommandError::TargetNotSupported
+            | CommandError::CannotRun { .. }
+            | CommandError::Failed { .. } => None,
         }
     }
 }

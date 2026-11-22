@@ -34,6 +34,8 @@ Usage: cuno [OPTIONS] [COMMAND]
 
 Commands:
   build   Compile the package
+  check   Check the package for errors without building it
+  run     Build the package and run one of its executables
   doctor  Diagnose the environment and show a fix for each problem
   help    Print this message or the help of the given subcommand(s)
 

@@ -7,8 +7,8 @@ mod build;
 mod doctor;
 mod scratch;
 
+use std::ffi::OsString;
 use std::io::IsTerminal;
-
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
@@ -53,6 +53,19 @@ struct Cli {
 enum Command {
     /// Compile the package
     Build(BuildOpts),
+    /// Check the package for errors without building it
+    Check(BuildOpts),
+    /// Build the package and run one of its executables
+    Run {
+        /// The executable to run, when there are several
+        #[arg(long, value_name = "NAME")]
+        bin: Option<String>,
+        #[command(flatten)]
+        opts: BuildOpts,
+        /// Arguments for the program
+        #[arg(last = true, value_name = "ARGS")]
+        args: Vec<OsString>,
+    },
     /// Diagnose the environment and show a fix for each problem
     Doctor {
         /// The compiler to diagnose (msvc / clang / clang-cl / gcc / safec)
@@ -155,20 +168,10 @@ fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>
     #[cfg(debug_assertions)]
     test_trigger::fire(env)?;
 
-    match command {
-        Some(Command::Build(opts)) => {
-            let cwd = std::env::current_dir()
-                .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
-            build::build(
-                opts.into(),
-                build::Verbosity { verbose, quiet },
-                env,
-                &cwd,
-                cuno_toolchain::HostOs::current(),
-                shell,
-            )?;
-            return Ok(0);
-        }
+    let (goal, opts) = match command {
+        Some(Command::Build(opts)) => (build::Goal::Build, opts),
+        Some(Command::Check(opts)) => (build::Goal::Check, opts),
+        Some(Command::Run { bin, opts, args }) => (build::Goal::Run { bin, args }, opts),
         Some(Command::Doctor { compiler }) => {
             // The binary alone reads the process (architecture.md).
             let cwd = std::env::current_dir()
@@ -182,15 +185,27 @@ fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>
             );
             return Ok(if problems == 0 { 0 } else { 1 });
         }
-        None => {}
-    }
-
-    // Reaching here means no command was given. Like Cargo, print the usage to
-    // stdout and succeed; see docs/en/specs/commands.md, "Without a command".
-    // A failed write (a closed stdout) is ignored, matching what clap does for
-    // `--help` and what Cargo does in both cases: the exit code stays 0.
-    let _ = Cli::command().print_help();
-    Ok(0)
+        None => {
+            // No command was given. Like Cargo, print the usage to stdout
+            // and succeed; see docs/en/specs/commands.md, "Without a
+            // command". A failed write (a closed stdout) is ignored,
+            // matching what clap does for `--help` and what Cargo does in
+            // both cases: the exit code stays 0.
+            let _ = Cli::command().print_help();
+            return Ok(0);
+        }
+    };
+    let cwd = std::env::current_dir()
+        .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
+    build::build(
+        goal,
+        opts.into(),
+        build::Verbosity { verbose, quiet },
+        env,
+        &cwd,
+        cuno_toolchain::HostOs::current(),
+        shell,
+    )
 }
 
 /// The current directory cannot be read (deleted, or no permission).

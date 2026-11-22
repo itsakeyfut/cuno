@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob ef062587293706258e939e83504152c4faaf6968 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob e87aa98999df86f95362ea523da4cb7a2ea24b95 -->
 
 # Commands
 
@@ -129,6 +129,19 @@ Values of `--vcs`:
 | `-- <args...>` | Everything after `--` is passed to the program |
 
 - The working directory at run time is **the project root** (where `cuno.toml` is). This is the base for loading game assets with relative paths.
+- Builds as `cuno build` does (with the same output and the same handling of failures), then runs the chosen executable.
+- How the executable is chosen: if there is only one, that one; with `--bin`, the one of that name. Both are checked before building.
+  - Several, and no `--bin`: `error: several executables can be run; choose one with --bin` and `help: available: app, tool` (the candidates' names), exit code 2.
+  - No executable of the name given to `--bin`: ``error: no executable named `x` `` and the same `help:`, exit code 2.
+- Before running, a `Running` line shows the executable's path (relative to the current directory; absolute if it is not under it). Not printed with `-q`.
+
+```
+    Finished `dev` profile [unoptimized + debuginfo] in 1.24s
+     Running `target\debug\app.exe`
+```
+
+- The program is given the environment variables cuno received, as they are (not the Windows environment resolved for the compiler). stdin, stdout and stderr stay connected.
+- The exit code is the program's exit code ([Exit codes](#exit-codes)).
 
 ### `cuno test [filter]`
 
@@ -177,6 +190,9 @@ Common options only.
 - When a compile or a link fails, the compiler's output is followed by an `error: could not compile` line (`could not link` for a link; both followed by the package's name), exit code 1. After the first failure no new step starts; the steps running are waited for and their output shown too.
 - The output of steps run in parallel is shown step by step, each when it finishes, so their lines do not mix.
 - `--target` is reserved for cross-compiling; giving it is an error (`error: --target is not supported yet`, exit code 3).
+- `cuno check` checks the same sources as the build with syntax-and-type-check-only flags ([build.md](build.md#settings-and-flags)); it produces no object files and does not link. Its output has a `Checking` line instead of `Compiling`, and the same `Finished` line. A failure ends, as a failed compile in a build does, with a `could not compile` line (followed by the package's name), exit code 1.
+  - By the same mechanism as the build, unchanged sources are not checked again ([build.md](build.md#deciding-what-changed)).
+  - On MSVC, `check` can succeed where the build fails (`/Zs` does not emit the diagnostics raised during code generation; [build.md](build.md#always-on-flags)).
 
 ### `cuno doctor`
 

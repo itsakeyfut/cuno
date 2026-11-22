@@ -439,3 +439,28 @@ fn no_jobs_is_one_job() {
     assert_eq!(result, Ok(()));
     assert_eq!(*fake.started.lock().unwrap(), ["cl"]);
 }
+
+/// A check that passes leaves its stamp, the file a later build judges it
+/// up to date by; one that fails leaves none, so it runs again. (`Fake`
+/// fails a program whose name contains `bad`.)
+///
+/// Mutation: write no stamp, or write it whether the check passed or not;
+/// this test fails.
+#[test]
+fn a_passing_check_leaves_its_stamp() {
+    let dir = tempfile::tempdir().unwrap();
+    let check = |program: &str| Step {
+        kind: StepKind::Check {
+            source: PathBuf::from("a.cpp"),
+        },
+        output: dir.path().join(format!("obj/{program}.check")),
+        ..step(program, &[])
+    };
+    let graph = Graph {
+        steps: vec![check("fast"), check("fast-bad")],
+    };
+    let (result, _) = run(&graph, 1, &Fake::default());
+    assert_eq!(result, Err(Failed(vec![1])));
+    assert_eq!(std::fs::read(&graph.steps[0].output).unwrap(), b"");
+    assert!(!graph.steps[1].output.exists());
+}
