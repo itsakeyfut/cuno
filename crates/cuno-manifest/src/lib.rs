@@ -9,7 +9,7 @@ mod project;
 mod read;
 mod settings;
 
-pub use config::{Config, Tool, load_config, parse_config};
+pub use config::{Config, TargetDir, Tool, load_config, parse_config};
 pub use cuno_toolchain::flags::{
     BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Subsystem, Warnings,
 };

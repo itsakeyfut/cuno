@@ -14,9 +14,9 @@ use cuno_toolchain::llvm::ExplicitPaths;
 use cuno_toolchain::select::{Choices, Constraints, ProjectChoices};
 
 use crate::{
-    CompilerName, Config, ConfigError, ConfigWarning, Loaded, Manifest, OptLevel, Os, Profile,
-    Project, Runtime, Tool, Warnings, find_project, load_config, load_manifest, resolve_path,
-    shown_path,
+    CompilerName, Config, ConfigError, ConfigWarning, Loaded, Location, Manifest, OptLevel, Os,
+    Profile, Project, Runtime, Tool, Warnings, find_project, load_config, load_manifest,
+    resolve_path, shown_path,
 };
 
 /// What the binary gathers from the process for [`resolve`].
@@ -129,72 +129,84 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
             .map(|value| value.to_owned())
     };
 
-    // Highest first: command line, environment, project config, cuno.toml,
-    // user config. The first two are relative to the current directory.
-    let from_command = cli
-        .target_dir
-        .clone()
-        .map(|dir| ("--target-dir", dir))
-        .or_else(|| from_env("CUNO_TARGET_DIR").map(|dir| ("CUNO_TARGET_DIR", dir.into())));
-    let (target_dir, source) = match from_command {
-        Some((name, dir)) => {
-            let invalid = |why: String| ConfigError {
-                message: format!("{name} is `{}`, {why}", dir.display()),
-                location: None,
-                help: Some(
-                    "write an absolute path, or a path relative to the current directory"
-                        .to_owned(),
-                ),
-            };
-            if dir.as_os_str().is_empty() {
-                return Err(invalid("which is empty".to_owned()));
-            }
-            let resolved = resolve_path(&dir, cwd)
-                .map_err(|_| invalid("which depends on the current drive".to_owned()))?;
-            (resolved, name.to_owned())
-        }
-        None => {
-            let shown = |file: PathBuf| {
-                format!("`build.target-dir` in {}", shown_path(&file, cwd).display())
-            };
-            let from_files = project
-                .as_ref()
-                .and_then(|(p, m, c)| {
-                    c.target_dir
-                        .clone()
-                        .map(|dir| (dir, shown(p.config())))
-                        .or_else(|| m.target_dir.clone().map(|dir| (dir, shown(p.manifest()))))
-                })
-                .or_else(|| {
-                    user.target_dir
-                        .clone()
-                        .map(|dir| (dir, shown(user_file.clone())))
-                });
-            match from_files {
-                Some(found) => found,
-                None => {
-                    let base = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
-                    (base.join("target"), "the default".to_owned())
-                }
-            }
-        }
-    };
-    // `cuno clean` deletes the output directory, so it must not hold the
-    // project, or the current directory outside one (build.md).
+    // Every layer that sets an output directory, highest first: command
+    // line, environment, project config, cuno.toml, user config. Each is
+    // checked, winning or not, and the first wins (build.md, "Output
+    // directory").
     let kept = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
-    if holds(&target_dir, kept) {
-        return Err(ConfigError {
-            message: format!(
-                "the output directory `{}` ({source}) is {} or a directory above it",
-                target_dir.display(),
-                if project.is_some() { "the project root" } else { "the current directory" },
-            ),
+    let mut set: Vec<(PathBuf, String)> = Vec::new();
+    let from_command = [
+        ("--target-dir", cli.target_dir.clone()),
+        (
+            "CUNO_TARGET_DIR",
+            from_env("CUNO_TARGET_DIR").map(PathBuf::from),
+        ),
+    ];
+    for (name, dir) in from_command {
+        let Some(dir) = dir else { continue };
+        let invalid = |why: String| ConfigError {
+            message: format!("{name} is `{}`, {why}", dir.display()),
             location: None,
             help: Some(
-                "choose a directory inside the project, such as `target`; `cuno clean` deletes the output directory".to_owned(),
+                "write an absolute path, or a path relative to the current directory".to_owned(),
             ),
-        });
+        };
+        if dir.as_os_str().is_empty() {
+            return Err(invalid("which is empty".to_owned()));
+        }
+        let resolved = resolve_path(&dir, cwd)
+            .map_err(|_| invalid("which depends on the current drive".to_owned()))?;
+        check_output_dir(&resolved, name, None, kept, project.is_some())?;
+        set.push((resolved, name.to_owned()));
     }
+    let carried = project.as_ref().map(|(p, m, c)| {
+        [
+            (c.target_dir.clone(), p.config()),
+            (m.target_dir.clone(), p.manifest()),
+        ]
+    });
+    let files = carried
+        .into_iter()
+        .flatten()
+        .map(|(dir, file)| (dir, file, true))
+        .chain([(user.target_dir.clone(), user_file.clone(), false)]);
+    for (dir, file, in_project) in files {
+        let Some(dir) = dir else { continue };
+        let source = format!("`build.target-dir` in {}", shown_path(&file, cwd).display());
+        if dir.written.as_os_str().is_empty() {
+            return Err(ConfigError {
+                message: format!("{source} is empty"),
+                location: Some(dir.location),
+                help: Some("write the output directory, such as \"target\"".to_owned()),
+            });
+        }
+        check_output_dir(
+            &dir.path,
+            &source,
+            Some(&dir.location),
+            kept,
+            project.is_some(),
+        )?;
+        // A file a cloned project carries must not make `cuno clean`
+        // delete what lies outside it (build.md, "Output directory").
+        if in_project && !holds(kept, &dir.path) {
+            return Err(ConfigError {
+                message: format!(
+                    "{source} points outside the project: {}",
+                    dir.path.display()
+                ),
+                location: Some(dir.location),
+                help: Some(
+                    "set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project".to_owned(),
+                ),
+            });
+        }
+        set.push((dir.path, source));
+    }
+    let target_dir = set
+        .into_iter()
+        .next()
+        .map_or_else(|| kept.join("target"), |(dir, _)| dir);
 
     let mut paths = user.paths.clone();
     if let Some(local) = local {
@@ -236,6 +248,32 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
 
 /// Whether `outer` is `inner` or one of its ancestors: compared after
 /// resolving `.` and `..`, and as the file system sees them when both exist.
+/// Refuses an output directory that is the project root, or outside a
+/// project the current directory, or a directory above it: `cuno clean`
+/// deletes the output directory (build.md, "Output directory").
+fn check_output_dir(
+    dir: &Path,
+    source: &str,
+    location: Option<&Location>,
+    kept: &Path,
+    in_project: bool,
+) -> Result<(), ConfigError> {
+    if !holds(dir, kept) {
+        return Ok(());
+    }
+    Err(ConfigError {
+        message: format!(
+            "the output directory `{}` ({source}) is {} or a directory above it",
+            dir.display(),
+            if in_project { "the project root" } else { "the current directory" },
+        ),
+        location: location.cloned(),
+        help: Some(
+            "choose a directory inside the project, such as `target`; `cuno clean` deletes the output directory".to_owned(),
+        ),
+    })
+}
+
 fn holds(outer: &Path, inner: &Path) -> bool {
     let canonical = |p: &Path| std::fs::canonicalize(p).ok();
     if let (Some(outer), Some(inner)) = (canonical(outer), canonical(inner)) {

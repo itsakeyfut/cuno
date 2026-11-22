@@ -10,13 +10,26 @@ use cuno_core::ColorChoice;
 use serde::Deserialize;
 
 use crate::read::{Doc, key};
-use crate::{ConfigError, Loaded, resolve_path};
+use crate::{ConfigError, Loaded, Location, resolve_path};
+
+/// `[build] target-dir` as a file writes it. It is judged where the
+/// layers are merged, since every layer's value is checked, winning or not
+/// (`docs/en/specs/build.md`, "Output directory").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetDir {
+    /// As written.
+    pub written: PathBuf,
+    /// Resolved against the file's base.
+    pub path: PathBuf,
+    /// Where it is written.
+    pub location: Location,
+}
 
 /// One `config.toml`; `None` where it does not say.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Config {
-    /// `[build] target-dir`, resolved against the file's base.
-    pub target_dir: Option<PathBuf>,
+    /// `[build] target-dir`.
+    pub target_dir: Option<TargetDir>,
     /// `[build] jobs`.
     pub jobs: Option<NonZeroU32>,
     /// `[toolchain] compiler`, as written; judged where the compiler is
@@ -169,21 +182,15 @@ pub fn parse_config(text: &str, file: &Path, base: &Path) -> Result<Loaded<Confi
             )
         })?),
     };
-    // An empty output directory would be the base itself (build.md).
-    if build
-        .target_dir
-        .as_ref()
-        .is_some_and(|dir| dir.as_os_str().is_empty())
-    {
-        return Err(doc.error(
-            "build.target-dir",
-            format!("`build.target-dir` in {shown} is empty"),
-            Some("write the output directory, such as \"target\"".to_owned()),
-        ));
-    }
     let target_dir = build
         .target_dir
-        .map(|dir| path("build.target-dir", &dir))
+        .map(|dir| {
+            Ok(TargetDir {
+                path: path("build.target-dir", &dir)?,
+                written: dir,
+                location: doc.locate("build.target-dir"),
+            })
+        })
         .transpose()?;
 
     let toolchain = raw.toolchain.unwrap_or_default();
@@ -258,7 +265,7 @@ mod tests {
         assert_eq!(loaded.warnings, []);
         let b = base();
         let c = loaded.value;
-        assert_eq!(c.target_dir, Some(b.join("out")));
+        assert_eq!(c.target_dir.map(|t| t.path), Some(b.join("out")));
         assert_eq!(c.jobs, NonZeroU32::new(16));
         assert_eq!(c.compiler.as_deref(), Some("clang"));
         let expected: BTreeMap<Tool, PathBuf> = [

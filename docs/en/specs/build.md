@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 9032f42c6be3772368f8487ac566232186a7f2e8 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob ebeeb74d7e5bd3169641b3bb6454a2830ed74245 -->
 
 # Build
 
@@ -194,9 +194,10 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   4. `[build] target-dir` in `cuno.toml`
   5. User-level `<cuno home>/config.toml`
   6. Default value `target/`
-- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3), whichever layer sets it.
+- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3). This holds whichever layer sets it, and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `cuno.toml` is an error).
+  - Rationale: if the result depended on how the path is written (`""`, `"."`, `"a/.."`) or on which layer wins, the error would first appear only when another layer's setting is removed.
   - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
-- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3). To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
+- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3), even in a layer that does not win. The error names the file and line where it was written, with ``error: `build.target-dir` in .cuno/config.toml points outside the project: <path>`` and `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project`. To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
   - Rationale: these files can be distributed with a repository. `cuno clean` deletes the output directory without running anything, so a cloned project must not be able to make it delete a directory outside the project. On builds trusting a project's settings, see [manifest.md](manifest.md#a-projects-settings-and-trust).
 - `cuno new` adds the output directory to `.gitignore`.
 
