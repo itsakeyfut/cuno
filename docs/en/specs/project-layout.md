@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob d051e0b99d6addf2becf751fb80fa7fa292b485a -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob a3c6d0570f3968e40ad9b9d4e8e2e41d8795cddc -->
 
 # Project Kinds and Layout
 
@@ -66,6 +66,11 @@ sources = ["Private"]
 - `src/main.*` and everything under `src/bin/` are **always excluded from the package body**, regardless of whether `[[bin]]` is written.
   - Rationale: writing `[[bin]]` disables automatic detection, so without this exclusion `src/main.cpp` and the like would be linked as package body into every executable and test, duplicating `main`.
   - When `[[bin]]` is written, files under `src/main.*` / `src/bin/` that are not listed in `[[bin]]` are not built (cuno warns about this).
+- The following are errors (exit code 3):
+  - There is no executable (no default entry file, nothing in `src/bin/`, and no `[[bin]]` written).
+  - A `[[bin]]` `path` has no file.
+  - An entry file is outside the project, since where its object file goes is decided from the source's place in the project ([build.md](build.md#output-directory)).
+  - Two executables get the same name (a `[[bin]]` `name` written twice, or an auto-detected `src/bin/app.cpp` beside the default executable `app`, for example), since they would be the same file in the output directory.
 
 ### Where the package's code lives
 
