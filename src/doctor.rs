@@ -11,7 +11,8 @@ use cuno_toolchain::flags::check_edition;
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare;
-use cuno_toolchain::select::{self, Choices, Found, ProbeInputs};
+use cuno_toolchain::probe::{self, ProbeInputs};
+use cuno_toolchain::select::{self, Choices, Found};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
 use crate::scratch;
@@ -299,7 +300,7 @@ fn tools(
         if tool == Tool::ClangTidy
             && let Some(stl) = stl
             && let Err(error) = scratch::in_scratch("doctor", "clang-tidy", |scratch| {
-                select::check_tidy(
+                probe::check_tidy(
                     &chosen,
                     stl.kind,
                     &stl.env,

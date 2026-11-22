@@ -9,9 +9,8 @@ use std::path::PathBuf;
 use cuno_core::Env;
 use cuno_toolchain::llvm::{ExplicitPaths, find_llvm_tools};
 use cuno_toolchain::msvc::{self, SystemRegistry};
-use cuno_toolchain::select::{
-    self, Choices, CompilerKind, Constraints, Found, ProbeInputs, Selected,
-};
+use cuno_toolchain::probe::{self, ProbeInputs};
+use cuno_toolchain::select::{self, Choices, CompilerKind, Constraints, Found, Selected};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 use support::compilers::{Compiler, Language, require};
 
@@ -58,7 +57,7 @@ fn selected(kind: CompilerKind) -> Option<(Selected, Env)> {
 fn probe(selected: &Selected, env: &Env, flags: &[&str]) -> Result<(), ToolchainError> {
     let scratch = tempfile::tempdir().unwrap();
     let flags: Vec<std::ffi::OsString> = flags.iter().map(Into::into).collect();
-    select::check(
+    probe::check(
         selected,
         env,
         ProbeInputs {
