@@ -2,14 +2,12 @@
 //! and how to fix it, without stopping at the first problem. See
 //! `docs/en/specs/commands.md`, "`cuno doctor`".
 
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use cuno_build::input;
 use cuno_core::{CunoError, Env, Shell};
-use cuno_manifest::{CliSettings, Inputs, Lang, Profile, Settings};
+use cuno_manifest::{CliSettings, Inputs, Profile, Settings};
 use cuno_toolchain::compiler::{CompilerKind, Family};
-use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
+use cuno_toolchain::flags::check_edition;
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare;
@@ -17,6 +15,7 @@ use cuno_toolchain::select::{self, Choices, Found, ProbeInputs};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
 use crate::scratch;
+use crate::toolchain::{self, ProbeCompile};
 
 /// Prints `error:` and `help:` and counts problems.
 struct Problems<'a> {
@@ -68,8 +67,7 @@ pub fn doctor(
     };
     let settings = settings.as_ref();
 
-    let explicit = settings.map(Settings::llvm_paths).unwrap_or_default();
-    let detected = prepare::detect(env, host, &explicit, &runner);
+    let detected = toolchain::detect(settings, env, host, &runner);
     let no_visual_studio = detected.installs.is_err();
     let installs = detected.installs.unwrap_or_else(|error| {
         problems.report(&error);
@@ -130,18 +128,7 @@ struct Diagnosed {
     vs_reported: bool,
     /// What clang-tidy's standard library check needs, when it is to be
     /// made: a compiler, a Windows environment and a C++ project or none.
-    stl: Option<StlInputs>,
-}
-
-/// The build's environment and dev-profile compile flags for a C++ input,
-/// in the selected compiler's syntax.
-struct StlInputs {
-    kind: CompilerKind,
-    env: Env,
-    flags: Vec<OsString>,
-    /// Where the build would run: the project root, or the current
-    /// directory outside a project.
-    cwd: PathBuf,
+    stl: Option<ProbeCompile>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -264,46 +251,21 @@ fn diagnose(
             .status("Using", format!("Windows SDK {}", sdk.version));
     }
 
-    // The standard library probe, in C++ projects and outside a project
-    // (toolchain.md, "Minimum compiler versions").
-    let c_project = project.is_some_and(|(_, m)| m.package.lang == Lang::C);
-    if c_project {
+    // The standard library probe, in C++ projects and outside a project,
+    // with the dev profile's flags (toolchain.md, "Minimum compiler
+    // versions").
+    let Some(stl) = toolchain::probe_compile(
+        &selected,
+        &prepared,
+        project.map(|(p, m)| (p.root.as_path(), m)),
+        Profile::Dev,
+        cwd,
+        host,
+    ) else {
         return diagnosed;
-    }
-    // The build's dev-profile flags for a C++ input: only C++ projects (and
-    // none) are checked, and the check compiles C++.
-    let flags = compile_flags(
-        &input::compile_settings(
-            project.map(|(p, m)| (p.root.as_path(), m)),
-            selected.kind,
-            Profile::Dev,
-            Lang::Cxx,
-            host,
-            false,
-            Mode::Check,
-        )
-        .input(),
-    );
-    let stl = StlInputs {
-        kind: selected.kind,
-        env: prepared.env,
-        flags,
-        cwd: project.map_or_else(|| cwd.to_owned(), |(p, _)| p.root.clone()),
     };
     if borrows_msvc {
-        let result = scratch::in_scratch("doctor", selected.kind.name(), |scratch| {
-            select::check(
-                &selected,
-                &stl.env,
-                ProbeInputs {
-                    scratch,
-                    flags: &stl.flags,
-                    cwd: &stl.cwd,
-                },
-                runner,
-            )
-        });
-        match result {
+        match toolchain::probe(&selected, &stl, "doctor", runner) {
             Ok(()) => problems
                 .shell
                 .status("Accepted", "by the MSVC standard library"),
@@ -318,7 +280,7 @@ fn diagnose(
 /// missing, and clang-tidy's standard library check when `stl` is given.
 fn tools(
     llvm: &[cuno_toolchain::llvm::LlvmTool],
-    stl: Option<&StlInputs>,
+    stl: Option<&ProbeCompile>,
     host: HostOs,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
