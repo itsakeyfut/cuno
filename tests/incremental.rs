@@ -5,6 +5,7 @@
 mod support;
 
 use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use support::compilers::{Compiler, Language, require};
@@ -168,4 +169,145 @@ fn set_time(path: &Path, time: SystemTime) {
         .unwrap()
         .set_modified(time)
         .unwrap();
+}
+
+/// Editing a source recompiles it alone, and relinks.
+///
+/// Mutation: leave the source out of what a compile records; this test
+/// fails on clang-cl and msvc, whose dependency files do not name it.
+#[test]
+fn an_edited_source_alone_is_recompiled() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = package("");
+        build(&project, name);
+        std::fs::write(
+            project.path().join("src/two.cpp"),
+            "int two() { return 22; }\n",
+        )
+        .unwrap();
+        assert_eq!(ran(&build(&project, name)), (vec!["two"], true), "{name}");
+        assert_eq!(output(&project), "1 1 22\n", "{name}");
+    }
+}
+
+/// A file read by `#embed` is an input like a header, on clang and
+/// clang-cl (cl has no `#embed`).
+///
+/// Mutation: ask clang-cl for `/showIncludes`, which does not name it;
+/// this test fails.
+#[test]
+fn a_file_read_by_embed_is_an_input() {
+    for (name, compiler) in [("clang", Compiler::Clang), ("clang-cl", Compiler::ClangCl)] {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c\"\nedition = \"c23\"\n",
+            )
+            .file("src/data.bin", "A")
+            .file(
+                "src/main.c",
+                "#include <stdio.h>\nstatic const char d[] = {\n#embed \"data.bin\"\n};\n\
+                 int main(void) { printf(\"%c\\n\", d[0]); return 0; }\n",
+            );
+        build(&project, name);
+        std::fs::write(project.path().join("src/data.bin"), "B").unwrap();
+        build(&project, name);
+        assert_eq!(output(&project), "B\n", "{name}");
+    }
+}
+
+/// Rebuilding a library of `links` found in `lib-dirs` relinks, without
+/// recompiling.
+///
+/// Mutation: leave the libraries out of what a link reads; this test
+/// fails.
+#[test]
+fn a_rebuilt_library_is_relinked() {
+    let Some(cl) = require(Compiler::Msvc, Language::Cxx, "foo.cpp", "foo.exe") else {
+        return;
+    };
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\nlinks = [\"foo\"]\nlib-dirs = [\"lib\"]\n",
+        )
+        .file(
+            "src/main.cpp",
+            "#include <cstdio>\nint foo();\nint main() { std::printf(\"%d\\n\", foo()); }\n",
+        );
+    let lib_dir = project.path().join("lib");
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let library = |value: u32| {
+        std::fs::write(
+            lib_dir.join("foo.cpp"),
+            format!("int foo() {{ return {value}; }}\n"),
+        )
+        .unwrap();
+        let mut compile = Command::new(cl.get_program());
+        let mut archive = Command::new(Path::new(cl.get_program()).with_file_name("lib.exe"));
+        for cmd in [&mut compile, &mut archive] {
+            for (key, value) in cl.get_envs() {
+                match value {
+                    Some(value) => cmd.env(key, value),
+                    None => cmd.env_remove(key),
+                };
+            }
+            cmd.current_dir(&lib_dir);
+        }
+        let compiled = compile.args(["/nologo", "/c", "foo.cpp"]).output().unwrap();
+        assert!(compiled.status.success(), "{compiled:?}");
+        let archived = archive.args(["/nologo", "foo.obj"]).output().unwrap();
+        assert!(archived.status.success(), "{archived:?}");
+    };
+    library(1);
+    build(&project, "msvc");
+    assert_eq!(output(&project), "1\n");
+    library(2);
+    assert_eq!(ran(&build(&project, "msvc")), (vec![], true));
+    assert_eq!(output(&project), "2\n");
+}
+
+/// A user's `-MP`, which adds a rule per header, does not make every build
+/// recompile.
+///
+/// Mutation: read every rule of the dependency file; this test fails.
+#[test]
+fn a_users_extra_dependency_rules_are_ignored() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = package("[build.clang]\nflags = [\"-MP\"]\n");
+    build(&project, "clang");
+    assert_eq!(ran(&build(&project, "clang")), (vec![], false));
+}
+
+/// A build started below the root records what a build at the root
+/// reads, so nothing runs again.
+///
+/// Mutation: resolve a relative header against the directory cuno was
+/// started in; this test fails.
+#[test]
+fn a_build_below_the_root_is_up_to_date_with_one_at_it() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = package("");
+        let below = |args: &[&str]| {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+            cmd.args(args).current_dir(project.path().join("src"));
+            project.run_command(cmd)
+        };
+        let first = below(&["-v", "build", "--compiler", name]);
+        assert_eq!(first.code, Some(0), "{name}: {}", first.stderr);
+        assert_eq!(ran(&build(&project, name)), (vec![], false), "{name}");
+        let again = below(&["-v", "build", "--compiler", name]);
+        assert_eq!(ran(&again), (vec![], false), "{name}");
+    }
 }
