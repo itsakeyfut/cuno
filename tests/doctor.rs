@@ -1166,3 +1166,49 @@ fn the_check_takes_the_selected_compilers_own_flags() {
         );
     }
 }
+
+/// The standard library check takes the host's own `[platform.<os>.build]`
+/// layer: an include directory written for Windows, holding a
+/// `yvals_core.h` that fails, is what the check reports, and the same
+/// written for Linux is not read.
+///
+/// Mutation: build doctor's check for another host or OS than the one it
+/// runs on; this test fails.
+#[test]
+fn the_check_takes_the_hosts_platform_layer() {
+    if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let header = "#error poisoned yvals_core.h reached the probe\n";
+    let windows = Project::new()
+        .file(
+            "cuno.toml",
+            &manifest("[platform.windows.build]\ninclude-dirs = [\"poison\"]\n"),
+        )
+        .file("poison/yvals_core.h", header)
+        .cuno(&["doctor", "--compiler", "clang-cl"]);
+    assert_eq!(windows.code, Some(1), "{}", windows.stderr);
+    assert!(
+        windows
+            .stderr
+            .contains("poisoned yvals_core.h reached the probe"),
+        "{}",
+        windows.stderr
+    );
+
+    let linux = Project::new()
+        .file(
+            "cuno.toml",
+            &manifest("[platform.linux.build]\ninclude-dirs = [\"poison\"]\n"),
+        )
+        .file("poison/yvals_core.h", header)
+        .cuno(&["doctor", "--compiler", "clang-cl"]);
+    assert!(!linux.stderr.contains("poisoned"), "{}", linux.stderr);
+    assert!(
+        linux
+            .stderr
+            .contains("    Accepted by the MSVC standard library\n"),
+        "{}",
+        linux.stderr
+    );
+}

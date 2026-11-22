@@ -185,4 +185,73 @@ mod tests {
             "{detected:?}"
         );
     }
+
+    /// Answers vswhere, cl.exe and clang from canned output.
+    struct Canned(Vec<(&'static str, Vec<u8>)>);
+    impl Runner for Canned {
+        fn run(&self, program: &Path, _a: &[&OsStr], _e: &Env) -> std::io::Result<crate::Output> {
+            let program = program.to_string_lossy().replace('\\', "/");
+            self.0
+                .iter()
+                .find(|(suffix, _)| program.ends_with(suffix))
+                .map(|(_, stdout)| crate::Output {
+                    success: true,
+                    stdout: stdout.clone(),
+                    stderr: Vec::new(),
+                })
+                .ok_or_else(|| std::io::Error::other("not answered"))
+        }
+    }
+
+    /// On Windows, the Visual Studio found is searched for its bundled LLVM:
+    /// with nothing on `PATH` and no `%ProgramFiles%\LLVM`, the clang
+    /// Visual Studio ships is found.
+    ///
+    /// Mutation: search LLVM without the installations found; this test
+    /// fails.
+    #[test]
+    fn the_llvm_visual_studio_bundles_is_found() {
+        let root = tempfile::tempdir().unwrap();
+        let installer = root.path().join("x86/Microsoft Visual Studio/Installer");
+        std::fs::create_dir_all(&installer).unwrap();
+        std::fs::write(installer.join("vswhere.exe"), "").unwrap();
+        let vs = root.path().join("VS");
+        let cl_dir = vs.join("VC/Tools/MSVC/14.52.1/bin/Hostx64/x64");
+        let llvm_dir = vs.join("VC/Tools/Llvm/x64/bin");
+        for dir in [&cl_dir, &llvm_dir] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(cl_dir.join("cl.exe"), "").unwrap();
+        std::fs::write(llvm_dir.join("clang.exe"), "").unwrap();
+        let vswhere = serde_json::to_vec(&serde_json::json!([{
+            "installationPath": vs,
+            "isPrerelease": false,
+            "isComplete": true,
+            "isLaunchable": true,
+        }]))
+        .unwrap();
+        let run = Canned(vec![
+            ("vswhere.exe", vswhere),
+            (
+                "cl.exe",
+                b"Microsoft (R) C/C++ Optimizing Compiler Version 19.52.1 for x64".to_vec(),
+            ),
+            (
+                "clang.exe",
+                b"clang version 22.1.3\nTarget: x86_64-pc-windows-msvc\n".to_vec(),
+            ),
+        ]);
+        let env = Env::from_pairs(
+            [(
+                "ProgramFiles(x86)".into(),
+                root.path().join("x86").into_os_string(),
+            )],
+            NameCase::Insensitive,
+        );
+        let detected = detect(&env, HostOs::Windows, &ExplicitPaths::default(), &run);
+        assert_eq!(detected.installs.unwrap().len(), 1);
+        let llvm = detected.llvm.unwrap();
+        assert_eq!(llvm.len(), 1, "{llvm:?}");
+        assert_eq!(llvm[0].path, llvm_dir.join("clang.exe"));
+    }
 }

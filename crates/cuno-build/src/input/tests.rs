@@ -87,10 +87,10 @@ fn each_language_gets_its_own_standard() {
 }
 
 /// Outside a project there is nothing to layer and no `src/`: the defaults,
-/// C++20.
+/// C++20. `test` and the mode reach the command line.
 ///
 /// Mutation: add an include directory, or another standard, outside a
-/// project; this test fails.
+/// project, or drop `test` or the mode in `input()`; this test fails.
 #[test]
 fn outside_a_project_the_defaults_apply() {
     let s = compile_settings(
@@ -106,10 +106,30 @@ fn outside_a_project_the_defaults_apply() {
     assert!(s.include_dirs.is_empty());
     assert!(s.build.defines.is_empty());
     assert_eq!((s.test, s.mode), (true, Mode::Check));
+    // ... and reach the command line through `input()`.
+    let args: Vec<_> = cuno_toolchain::flags::compile_args(&s.input(), Path::new("a.cpp"), None)
+        .into_iter()
+        .map(|a| a.into_string().unwrap())
+        .collect();
+    assert!(args.contains(&"-DCUNO_TEST".to_owned()), "{args:?}");
+    assert!(args.contains(&"-fsyntax-only".to_owned()), "{args:?}");
 }
 
-/// Mutation: map the Windows host to another OS; this test fails.
+/// Each host builds for its own OS, which picks its `[platform]` layer.
+///
+/// Mutation: map either host to another OS; this test fails.
 #[test]
-fn a_windows_host_builds_for_windows() {
+fn a_host_builds_for_its_own_os() {
     assert_eq!(target_os(HostOs::Windows), Os::Windows);
+    let m = manifest(LAYERED);
+    let other = compile_settings(
+        Some((Path::new("C:/p"), &m)),
+        CompilerKind::Clang,
+        Profile::Dev,
+        Lang::Cxx,
+        HostOs::Other,
+        false,
+        Mode::Compile,
+    );
+    assert_eq!(other.build.defines, ["SHARED", "ON_LINUX"]);
 }

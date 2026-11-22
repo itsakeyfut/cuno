@@ -247,8 +247,8 @@ fn cl_version(cl: &Path, run: &dyn Runner, cl_env: &Env) -> Option<Version> {
 mod tests {
     use super::*;
 
-    /// Mutation: take another ancestor of the toolset directory; this test
-    /// fails.
+    /// Mutation: take another ancestor of the toolset directory, or name a
+    /// directory too short to be one as nothing; this test fails.
     #[test]
     fn a_toolset_names_its_installation() {
         let toolset = MsvcToolset {
@@ -260,6 +260,13 @@ mod tests {
             },
         };
         assert_eq!(toolset.install_dir(), Path::new("C:/VS/2022"));
+        // Too short to be a toolset directory: named as itself rather than
+        // as nothing.
+        let short = MsvcToolset {
+            dir: Path::new("C:/x").to_owned(),
+            ..toolset
+        };
+        assert_eq!(short.install_dir(), Path::new("C:/x"));
     }
     use crate::Output;
     use cuno_core::NameCase;
