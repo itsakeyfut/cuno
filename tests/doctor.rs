@@ -1212,3 +1212,33 @@ fn the_check_takes_the_hosts_platform_layer() {
         linux.stderr
     );
 }
+
+/// Started below the project root, doctor probes the standard library
+/// where the build runs, the root, so a relative path in the project's
+/// flags means what it means to the build.
+///
+/// Mutation: probe in the directory doctor was started in; this test
+/// fails.
+#[test]
+fn the_probe_runs_in_the_project_root() {
+    if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &manifest("[build.clang-cl]\nflags = [\"/FIsrc/cfg.h\"]\n"),
+        )
+        .file("src/cfg.h", "#define CFG 1\n")
+        .file("src/main.cpp", "int main() {}\n");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["doctor", "--compiler", "clang-cl"])
+        .current_dir(project.path().join("src"));
+    let run = project.run_command(cmd);
+    assert!(
+        run.stderr
+            .contains("    Accepted by the MSVC standard library\n"),
+        "{}",
+        run.stderr
+    );
+}

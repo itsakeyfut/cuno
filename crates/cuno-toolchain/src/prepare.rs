@@ -3,6 +3,8 @@
 //! environment it runs in. `cuno doctor` and the build commands both call
 //! these, so they diagnose and build with the same answers.
 
+use std::ffi::OsStr;
+
 use cuno_core::Env;
 
 use crate::llvm::{ExplicitPaths, LlvmTool, find_llvm_tools};
@@ -59,6 +61,22 @@ pub struct Prepared {
     pub ignored: Vec<&'static str>,
 }
 
+impl Prepared {
+    /// What besides each compile's arguments identifies its command: the
+    /// compiler's `version`, and the variables of the environment that
+    /// decide which headers and libraries it reads (`build.md`, "Deciding
+    /// what changed").
+    pub fn identity<'a>(&'a self, version: &'a str) -> [&'a OsStr; 4] {
+        let var = |name| self.env.get(name).unwrap_or_default();
+        [
+            OsStr::new(version),
+            var("INCLUDE"),
+            var("LIB"),
+            var("LIBPATH"),
+        ]
+    }
+}
+
 /// Resolves the environment for `selected`: with an MSVC toolset (every
 /// compiler on Windows), the Windows SDK is found and both are applied to
 /// `env` (`docs/en/specs/toolchain.md`, "Environment resolution on Windows").
@@ -97,6 +115,38 @@ mod tests {
     use cuno_core::NameCase;
     use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
+
+    /// A step's command is identified by the compiler's version and the
+    /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler
+    /// or SDK rebuilds.
+    ///
+    /// Mutation: leave out the version or any of the variables; this test
+    /// fails.
+    #[test]
+    fn the_compiler_and_its_environment_identify_commands() {
+        let prepared = |env| Prepared {
+            env,
+            sdk: None,
+            ignored: Vec::new(),
+        };
+        let env = Env::from_pairs(
+            [
+                ("include".into(), "C:/inc".into()),
+                ("LIB".into(), "C:/lib".into()),
+                ("LIBPATH".into(), "C:/libpath".into()),
+                ("PATH".into(), "C:/bin".into()),
+            ],
+            NameCase::Insensitive,
+        );
+        assert_eq!(
+            prepared(env).identity("19.52.1"),
+            ["19.52.1", "C:/inc", "C:/lib", "C:/libpath"].map(OsStr::new)
+        );
+        assert_eq!(
+            prepared(Env::default()).identity("1"),
+            ["1", "", "", ""].map(OsStr::new)
+        );
+    }
 
     /// A registry that names `dir` as the Windows Kits root.
     struct Kits(PathBuf);

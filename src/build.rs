@@ -17,12 +17,10 @@ use cuno_build::sources::{self, Bin};
 use cuno_build::state::Records;
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Lang, OptLevel, Profile};
-use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
-use cuno_toolchain::msvc::SystemRegistry;
-use cuno_toolchain::select::{self, Found, ProbeInputs};
-use cuno_toolchain::{HostOs, SystemRunner, prepare};
+use cuno_toolchain::flags::Mode;
+use cuno_toolchain::{HostOs, SystemRunner};
 
-use crate::scratch;
+use crate::toolchain;
 
 /// The options of `cuno build` (`commands.md`, "Build commands").
 #[derive(Debug, Default)]
@@ -109,24 +107,15 @@ pub fn build(
     // The compiler, its environment, and its pairing with the standard
     // library, checked before anything is built (toolchain.md).
     let runner = SystemRunner::new();
-    let detected = prepare::detect(env, host, &settings.llvm_paths(), &runner);
-    let installs = detected.installs.map_err(boxed)?;
-    let llvm = detected.llvm.map_err(boxed)?;
-    let found = Found {
-        installs: &installs,
-        llvm: &llvm,
-        explicit_msvc: settings.msvc_path(),
-    };
-    let selected =
-        select::select(&settings.compiler, found, &settings.constraints, host).map_err(boxed)?;
-    check_edition(selected.kind, selected.version, manifest.package.edition).map_err(boxed)?;
-    let prepared = prepare::prepare(&selected, env, &SystemRegistry).map_err(boxed)?;
-    // Left out of the build's environment, since they add flags no command
-    // line shows (toolchain.md, "How it is resolved").
-    for name in &prepared.ignored {
-        shell.warning(format!("{name} is set in the environment and is not used"));
-        shell.help("write the flags in cuno.toml");
-    }
+    let toolchain::Ready { selected, prepared } = toolchain::ready(
+        &settings,
+        (root, manifest),
+        profile,
+        env,
+        host,
+        &runner,
+        shell,
+    )?;
     let compile = |lang: Lang, mode: Mode| {
         compile_settings(
             Some((root, manifest)),
@@ -138,21 +127,6 @@ pub fn build(
             mode,
         )
     };
-    if manifest.package.lang == Lang::Cxx {
-        let flags = compile_flags(&compile(Lang::Cxx, Mode::Check).input());
-        scratch::in_scratch("build", selected.kind.name(), |dir| {
-            select::check(
-                &selected,
-                &prepared.env,
-                ProbeInputs {
-                    scratch: dir,
-                    flags: &flags,
-                    cwd: root,
-                },
-                &runner,
-            )
-        })?;
-    }
 
     let sources = sources::classify(root, manifest, &settings.target_dir, host).map_err(boxed)?;
     for warning in &sources.warnings {
@@ -224,7 +198,7 @@ pub fn build(
     // So that `cuno clean` knows the output directory is cuno's; one it
     // cannot mark is only one `cuno clean` will refuse.
     let _ = layout::claim(&settings.target_dir);
-    let records = Records::new(identity(&version, &prepared.env));
+    let records = Records::new(prepared.identity(&version));
     // Printed when the first step starts, so a build with nothing to do
     // shows only its Finished line (commands.md, "Output").
     let mut first_status = Some(format!(
@@ -342,19 +316,6 @@ fn choose<'a>(bins: &'a [Bin], bin: Option<&str>) -> Result<&'a Bin, CommandErro
         // Classifying refuses a package with no executable before this.
         (None, []) => unreachable!("a package to run has an executable"),
     }
-}
-
-/// What besides each step's arguments identifies its command: the
-/// compiler's `version`, and the variables of `env` that decide which
-/// headers and libraries it reads (`build.md`, "Deciding what changed").
-fn identity<'a>(version: &'a str, env: &'a Env) -> [&'a OsStr; 4] {
-    let var = |name| env.get(name).unwrap_or_default();
-    [
-        OsStr::new(version),
-        var("INCLUDE"),
-        var("LIB"),
-        var("LIBPATH"),
-    ]
 }
 
 /// The profile `--release` or `--profile` names, `dev` by default; only the
@@ -541,31 +502,6 @@ mod tests {
             headers: None,
             reads: Vec::new(),
         })
-    }
-
-    /// A step's command is identified by the compiler's version and the
-    /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler
-    /// or SDK rebuilds.
-    ///
-    /// Mutation: leave out the version or any of the variables; this test
-    /// fails.
-    #[test]
-    fn the_compiler_and_its_environment_identify_commands() {
-        let env = Env::from_pairs(
-            [
-                ("include".into(), "C:/inc".into()),
-                ("LIB".into(), "C:/lib".into()),
-                ("LIBPATH".into(), "C:/libpath".into()),
-                ("PATH".into(), "C:/bin".into()),
-            ],
-            cuno_core::NameCase::Insensitive,
-        );
-        assert_eq!(
-            identity("19.52.1", &env),
-            ["19.52.1", "C:/inc", "C:/lib", "C:/libpath"].map(OsStr::new)
-        );
-        let bare = Env::default();
-        assert_eq!(identity("1", &bare), ["1", "", "", ""].map(OsStr::new));
     }
 
     /// `-v` shows each argument as the Windows command line would read it

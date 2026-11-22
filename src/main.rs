@@ -7,6 +7,7 @@ mod build;
 mod clean;
 mod doctor;
 mod scratch;
+mod toolchain;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
