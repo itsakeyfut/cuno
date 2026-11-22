@@ -5,7 +5,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use super::{BuildSettings, OptLevel, ProfileSettings, Subsystem};
+use super::{BuildSettings, OptLevel, ProfileSettings, Subsystem, TARGET_SWITCH};
 use crate::compiler::{CompilerKind, Family};
 
 /// What one link of the build is made from.
@@ -50,10 +50,7 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
         CompilerKind::Clang => {
             // `-fms-runtime-lib` is left out: the objects already say which C
             // runtime they use, and the linker follows them.
-            push(
-                &mut args,
-                &["--target=x86_64-pc-windows-msvc", "-fuse-ld=lld"],
-            );
+            push(&mut args, &[TARGET_SWITCH, "-fuse-ld=lld"]);
             if profile.debug_info {
                 push(&mut args, &["-g"]);
             }

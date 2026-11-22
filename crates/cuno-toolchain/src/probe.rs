@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
-use crate::compiler::{CompilerKind, Family, Syntax};
+use crate::compiler::{Family, Syntax};
+use crate::flags::{CompileInput, Mode, TARGET_SWITCH, compile_args};
 use crate::select::{LlvmChoice, Selected};
 use crate::{Runner, ToolchainError, Version};
 
@@ -20,15 +21,14 @@ use crate::{Runner, ToolchainError, Version};
 pub struct ProbeInputs<'a> {
     /// A directory outside the project to write the probe file in.
     pub scratch: &'a Path,
-    /// The build's compile flags in this compiler's syntax, except those
-    /// naming inputs and outputs: the language standard, RTTI and exceptions,
-    /// include directories, defines and the user's `flags`, as
-    /// [`crate::flags::compile_flags`] gives them for a C++ input: the probe
-    /// compiles C++, so a C package's are built with `Lang::Cxx` and a C++
-    /// edition, or a C standard switch would be rejected.
-    pub flags: &'a [OsString],
+    /// The build's compile input for a C++ source: the probe compiles C++,
+    /// so a C package's is made with `Lang::Cxx` and a C++ edition, or a C
+    /// standard switch would be rejected. Its command line is the build's
+    /// own ([`compile_args`]), in check mode whatever `input.mode` says.
+    pub input: &'a CompileInput<'a>,
     /// Where the compiler runs: the project root, as for the build, so a
-    /// relative path in `flags` means the same (`toolchain.md`, "Minimum
+    /// relative path in the project's flags or include directories means
+    /// the same (`toolchain.md`, "Minimum
     /// compiler versions").
     pub cwd: &'a Path,
 }
@@ -49,32 +49,34 @@ pub fn check(
         Family::Llvm if selected.msvc.is_some() => {}
         Family::Llvm | Family::Msvc => return Ok(()),
     }
-    let switches: &[&str] = match selected.kind.syntax() {
-        Syntax::Cl => &["/nologo", "/TP", "/Zs"],
-        Syntax::Gnu => &["-x", "c++", "-fsyntax-only"],
-    };
     stl_probe(
         selected.kind.name(),
         selected.version,
         inputs.scratch,
         |probe| {
-            let mut args: Vec<OsString> = switches.iter().map(OsString::from).collect();
-            args.push("--target=x86_64-pc-windows-msvc".into());
-            args.extend(inputs.flags.iter().cloned());
-            args.push(probe.into());
+            let args = check_command(&inputs, probe);
             run.run_in(&selected.executable, &as_args(&args), env, inputs.cwd)
         },
     )
 }
 
+/// The build's command for `probe` in check mode: the check switch, every
+/// flag the build gives, the language switch and the source.
+fn check_command(inputs: &ProbeInputs<'_>, probe: &Path) -> Vec<OsString> {
+    let input = CompileInput {
+        mode: Mode::Check,
+        ..*inputs.input
+    };
+    compile_args(&input, probe, None)
+}
+
 /// Whether `tidy` is accepted by the MSVC standard library: the same probe
 /// as [`check`], analysed by clang-tidy with one harmless check enabled
-/// (with none it stops without analysing) and, after `--`, the build's
-/// compile flags for `kind`, in `kind`'s syntax (`toolchain.md`, "Minimum
-/// compiler versions"). The project's `.clang-tidy` is not read.
+/// (with none it stops without analysing) and, after `--`, the same
+/// command without the source, which clang-tidy is given as its file (`toolchain.md`, "Minimum compiler versions"). The project's
+/// `.clang-tidy` is not read.
 pub fn check_tidy(
     tidy: &LlvmChoice,
-    kind: CompilerKind,
     env: &Env,
     inputs: ProbeInputs<'_>,
     run: &dyn Runner,
@@ -86,6 +88,7 @@ pub fn check_tidy(
             probe.into(),
             "--".into(),
         ];
+        let kind = inputs.input.kind;
         let cl_syntax = match kind.syntax() {
             Syntax::Cl => true,
             Syntax::Gnu => false,
@@ -94,8 +97,16 @@ pub fn check_tidy(
             // clang-tidy reads flags as the GNU-style driver unless told.
             args.push("--driver-mode=cl".into());
         }
-        args.push("--target=x86_64-pc-windows-msvc".into());
-        args.extend(inputs.flags.iter().cloned());
+        // An LLVM driver's flags name the target; cl's do not.
+        match kind.family() {
+            Family::Msvc => args.push(TARGET_SWITCH.into()),
+            Family::Llvm => {}
+        }
+        args.extend(
+            check_command(&inputs, probe)
+                .into_iter()
+                .filter(|arg| arg.as_os_str() != probe.as_os_str()),
+        );
         run.run_in(&tidy.path, &as_args(&args), env, inputs.cwd)
     })
 }
@@ -161,6 +172,10 @@ fn needed_clang(message: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::Output;
+    use crate::compiler::CompilerKind;
+    use crate::flags::{
+        BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings,
+    };
     use crate::msvc::MsvcToolset;
     use crate::select::Source;
     use std::cell::RefCell;
@@ -243,17 +258,65 @@ mod tests {
         }
     }
 
+    /// A C++ project's settings with RTTI off and `_HAS_STATIC_RTTI=0`
+    /// defined, as one built without RTTI writes them.
+    fn no_rtti() -> (BuildSettings, ProfileSettings) {
+        let build = BuildSettings {
+            warnings: Warnings::Default,
+            warnings_as_errors: false,
+            defines: vec!["_HAS_STATIC_RTTI=0".into()],
+            include_dirs: vec![],
+            links: vec![],
+            lib_dirs: vec![],
+            link_flags: vec![],
+            flags: vec![],
+            runtime: Runtime::Dynamic,
+            exceptions: true,
+            rtti: false,
+        };
+        let profile = ProfileSettings {
+            opt_level: OptLevel::O0,
+            debug_info: false,
+            debug_assertions: true,
+            lto: false,
+        };
+        (build, profile)
+    }
+
+    /// A C++20 input of `settings` for `kind`, in `mode`.
+    fn input(
+        kind: CompilerKind,
+        settings: &(BuildSettings, ProfileSettings),
+        mode: Mode,
+    ) -> CompileInput<'_> {
+        CompileInput {
+            kind,
+            lang: Lang::Cxx,
+            edition: Edition::Cxx20,
+            build: &settings.0,
+            profile: &settings.1,
+            include_dirs: &[],
+            test: false,
+            mode,
+        }
+    }
+
+    fn strings(args: Vec<OsString>) -> Vec<String> {
+        args.into_iter().map(|a| a.into_string().unwrap()).collect()
+    }
+
     /// Mutation: treat a failed or timed-out probe as passing, call any
-    /// failure STL1000,
-    /// read only stdout, lose the version the library asks for, the
-    /// compiler, its version or the library's message, keep the probe file,
-    /// or swallow why it could not run; this test fails.
+    /// failure STL1000, read only stdout, lose the version the library asks
+    /// for, the compiler, its version or the library's message, keep the
+    /// probe file, or swallow why it could not run; this test fails.
     #[test]
     fn the_probe_verdict_follows_the_standard_library() {
         let root = tempfile::tempdir().unwrap();
+        let settings = no_rtti();
+        let compile = input(CompilerKind::Clang, &settings, Mode::Check);
         let inputs = ProbeInputs {
             scratch: root.path(),
-            flags: &[],
+            input: &compile,
             cwd: root.path(),
         };
         let clang = selected(CompilerKind::Clang);
@@ -310,45 +373,65 @@ mod tests {
         assert_eq!(needed_clang("STL1000: Unexpected compiler version"), None);
     }
 
-    /// Mutation: probe as C, without the target, without the build's flags
-    /// or with the other driver's mode, probe MSVC or a Clang without an
-    /// MSVC toolset, or name every probe file alike; this test fails.
+    /// The probe runs the build's own command for the probe file in check
+    /// mode, whatever mode it is handed: the check switch, every flag the
+    /// build gives (the project's RTTI setting here), the C++ switch and the
+    /// file, with the target named once. MSVC, and a Clang with no MSVC
+    /// toolset, are not probed, and every probe file has its own name.
+    ///
+    /// Mutation: add a switch or the target of the probe's own, drop the
+    /// build's flags, probe in the mode it is handed, probe MSVC or a Clang
+    /// without an MSVC toolset, or name every probe file alike; this test
+    /// fails.
     #[test]
-    fn the_probe_compiles_as_cpp_under_the_builds_flags() {
+    fn the_probe_runs_the_builds_command_in_check_mode() {
         let root = tempfile::tempdir().unwrap();
-        let flags: Vec<OsString> = vec!["-fno-rtti".into(), "-D_HAS_STATIC_RTTI=0".into()];
-        let inputs = ProbeInputs {
-            scratch: root.path(),
-            flags: &flags,
-            cwd: root.path(),
-        };
+        let settings = no_rtti();
         let mut probes = Vec::new();
-        for (kind, mode) in [
-            (CompilerKind::Clang, ["-x", "c++", "-fsyntax-only"]),
-            (CompilerKind::ClangCl, ["/nologo", "/TP", "/Zs"]),
+        for (kind, switch, cxx, rtti) in [
+            (CompilerKind::Clang, "-fsyntax-only", "c++", "-fno-rtti"),
+            (CompilerKind::ClangCl, "/Zs", "/TP", "/GR-"),
         ] {
+            let handed = input(kind, &settings, Mode::Compile);
+            let inputs = ProbeInputs {
+                scratch: root.path(),
+                input: &handed,
+                cwd: root.path(),
+            };
             let run = answers(true, "", "");
             check(&selected(kind), &Env::default(), inputs, &run).unwrap();
             let args = run.args.borrow().clone();
-            let (probe, rest) = args.split_last().unwrap();
-            assert_eq!(
-                rest,
-                [
-                    &mode[..],
-                    &[
-                        "--target=x86_64-pc-windows-msvc",
-                        "-fno-rtti",
-                        "-D_HAS_STATIC_RTTI=0"
-                    ]
-                ]
-                .concat(),
-                "{kind:?}"
-            );
+            let probe = args.last().unwrap().clone();
             assert!(probe.ends_with(".cpp"), "{probe}");
-            probes.push(probe.clone());
+            let expected = strings(compile_args(
+                &input(kind, &settings, Mode::Check),
+                Path::new(&probe),
+                None,
+            ));
+            assert_eq!(args, expected, "{kind:?}");
+            assert_eq!(args[0], switch, "{kind:?}");
+            for needed in [cxx, rtti, "-D_HAS_STATIC_RTTI=0"] {
+                let needed = match kind {
+                    CompilerKind::ClangCl if needed.starts_with("-D") => "/D_HAS_STATIC_RTTI=0",
+                    _ => needed,
+                };
+                assert!(args.iter().any(|a| a == needed), "{kind:?}: {args:?}");
+            }
+            assert_eq!(
+                args.iter().filter(|a| a.starts_with("--target")).count(),
+                1,
+                "{kind:?}: {args:?}"
+            );
+            probes.push(probe);
         }
         assert_ne!(probes[0], probes[1]);
 
+        let compile = input(CompilerKind::Msvc, &settings, Mode::Check);
+        let inputs = ProbeInputs {
+            scratch: root.path(),
+            input: &compile,
+            cwd: root.path(),
+        };
         let never = answers(false, "STL1000:", "");
         check(
             &selected(CompilerKind::Msvc),
@@ -363,30 +446,35 @@ mod tests {
         assert_eq!(*never.calls.borrow(), 0);
     }
 
+    /// clang-tidy is asked about the probe file, with one check, no
+    /// configuration, and after `--` the same check-mode command (whatever
+    /// mode it is handed) without the file: in cl's mode for a cl-syntax compiler, with the target
+    /// named once (an MSVC compile's flags carry none).
+    ///
     /// Mutation: read only stderr (clang-tidy reports STL1000 on stdout),
     /// name the compiler instead of clang-tidy, leave out the one check or
-    /// `--`, give the build's flags before `--`, or put cl-style flags
-    /// through clang-tidy without `--driver-mode=cl` (or GNU-style ones
-    /// with it); this test fails.
+    /// `--`, give the command before `--` or with the file again, put
+    /// cl-style flags through clang-tidy without `--driver-mode=cl` (or
+    /// GNU-style ones with it), name the target twice or not at all for
+    /// MSVC, or run the command in the mode it is handed; this test fails.
     #[test]
     fn clang_tidy_is_asked_the_standard_librarys_verdict() {
         let root = tempfile::tempdir().unwrap();
-        let flags: Vec<OsString> = vec!["/GR-".into()];
-        let inputs = ProbeInputs {
-            scratch: root.path(),
-            flags: &flags,
-            cwd: root.path(),
-        };
+        let settings = no_rtti();
         let tidy = LlvmChoice {
             path: "clang-tidy".into(),
             version: v(20, 1, 8),
         };
         let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer. [clang-diagnostic-error]\n";
+        let msvc = input(CompilerKind::Msvc, &settings, Mode::Check);
         let err = check_tidy(
             &tidy,
-            CompilerKind::Msvc,
             &Env::default(),
-            inputs,
+            ProbeInputs {
+                scratch: root.path(),
+                input: &msvc,
+                cwd: root.path(),
+            },
             &answers(false, stl, ""),
         )
         .unwrap_err();
@@ -400,24 +488,38 @@ mod tests {
         );
 
         for (kind, mode) in [
-            (CompilerKind::Msvc, &["--driver-mode=cl"][..]),
+            (CompilerKind::Msvc, &["--driver-mode=cl", TARGET_SWITCH][..]),
             (CompilerKind::ClangCl, &["--driver-mode=cl"][..]),
             (CompilerKind::Clang, &[][..]),
         ] {
+            let handed = input(kind, &settings, Mode::Compile);
+            let inputs = ProbeInputs {
+                scratch: root.path(),
+                input: &handed,
+                cwd: root.path(),
+            };
             let run = answers(true, "", "");
-            check_tidy(&tidy, kind, &Env::default(), inputs, &run).unwrap();
+            check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+            let compile = input(kind, &settings, Mode::Check);
             let args = run.args.borrow().clone();
             assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
-            assert!(args[2].ends_with(".cpp"), "{args:?}");
+            let probe = &args[2];
+            assert!(probe.ends_with(".cpp"), "{args:?}");
+            let command: Vec<String> = strings(compile_args(&compile, Path::new(probe), None))
+                .into_iter()
+                .filter(|a| a != probe)
+                .collect();
+            let expected: Vec<String> = ["--"]
+                .iter()
+                .chain(mode)
+                .map(|s| (*s).to_owned())
+                .chain(command)
+                .collect();
+            assert_eq!(args[3..], expected, "{kind:?}");
             assert_eq!(
-                args[3..],
-                [
-                    &["--"][..],
-                    mode,
-                    &["--target=x86_64-pc-windows-msvc", "/GR-"]
-                ]
-                .concat(),
-                "{kind:?}"
+                args.iter().filter(|a| a.starts_with("--target")).count(),
+                1,
+                "{kind:?}: {args:?}"
             );
         }
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);

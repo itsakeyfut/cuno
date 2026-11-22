@@ -17,6 +17,17 @@ pub enum Mode {
     Check,
 }
 
+/// The target triple, spelled once: every compiler cuno uses on Windows
+/// builds for the MSVC ABI, so the objects link with MSVC-built libraries.
+macro_rules! target {
+    () => {
+        "x86_64-pc-windows-msvc"
+    };
+}
+
+/// The switch that names the target to an LLVM driver or tool.
+pub const TARGET_SWITCH: &str = concat!("--target=", target!());
+
 /// What one compile of the build is made from.
 #[derive(Clone, Copy, Debug)]
 pub struct CompileInput<'a> {
@@ -42,8 +53,7 @@ pub struct CompileInput<'a> {
 }
 
 /// The flags every source of the build gets, without the mode, the source
-/// and the output: what the standard library probe is given
-/// (`probe::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
+/// and the output. `[build.<compiler>] flags` come last.
 pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     let mut out = Flags::default();
     let msvc_style = match input.kind.syntax() {
@@ -59,8 +69,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&["/nologo", "/utf-8"]);
     }
     match input.kind.family() {
-        // The MSVC ABI, so the objects link with MSVC-built libraries.
-        Family::Llvm => out.push(&["--target=x86_64-pc-windows-msvc"]),
+        Family::Llvm => out.push(&[TARGET_SWITCH]),
         Family::Msvc => {}
     }
     if msvc_style && cxx {

@@ -7,6 +7,9 @@ mod support;
 use std::path::PathBuf;
 
 use cuno_core::Env;
+use cuno_toolchain::flags::{
+    BuildSettings, CompileInput, Edition, Lang, Mode, OptLevel, ProfileSettings, Runtime, Warnings,
+};
 use cuno_toolchain::llvm::{ExplicitPaths, find_llvm_tools};
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::probe::{self, ProbeInputs};
@@ -54,15 +57,50 @@ fn selected(kind: CompilerKind) -> Option<(Selected, Env)> {
     Some((selected, resolved.apply(&env)))
 }
 
-fn probe(selected: &Selected, env: &Env, flags: &[&str]) -> Result<(), ToolchainError> {
+/// Probes `selected` for a C++20 project with `defines` and, unless
+/// `rtti`, RTTI off, as the build would compile it.
+fn probe(
+    selected: &Selected,
+    env: &Env,
+    defines: &[&str],
+    rtti: bool,
+) -> Result<(), ToolchainError> {
     let scratch = tempfile::tempdir().unwrap();
-    let flags: Vec<std::ffi::OsString> = flags.iter().map(Into::into).collect();
+    let build = BuildSettings {
+        warnings: Warnings::Default,
+        warnings_as_errors: false,
+        defines: defines.iter().map(|d| (*d).to_owned()).collect(),
+        include_dirs: vec![],
+        links: vec![],
+        lib_dirs: vec![],
+        link_flags: vec![],
+        flags: vec![],
+        runtime: Runtime::Dynamic,
+        exceptions: true,
+        rtti,
+    };
+    let profile = ProfileSettings {
+        opt_level: OptLevel::O0,
+        debug_info: false,
+        debug_assertions: true,
+        lto: false,
+    };
+    let input = CompileInput {
+        kind: selected.kind,
+        lang: Lang::Cxx,
+        edition: Edition::Cxx20,
+        build: &build,
+        profile: &profile,
+        include_dirs: &[],
+        test: false,
+        mode: Mode::Check,
+    };
     probe::check(
         selected,
         env,
         ProbeInputs {
             scratch: scratch.path(),
-            flags: &flags,
+            input: &input,
             cwd: scratch.path(),
         },
         &SystemRunner::new(),
@@ -83,16 +121,11 @@ fn the_standard_library_decides_which_clang_it_accepts() {
         let Some((selected, env)) = selected(kind) else {
             continue;
         };
-        let (define, no_rtti) = match kind {
-            CompilerKind::ClangCl => ("/D", "/GR-"),
-            _ => ("-D", "-fno-rtti"),
-        };
-        let d = |macro_: &str| format!("{define}{macro_}");
-        probe(&selected, &env, &[]).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
-        probe(&selected, &env, &[no_rtti, &d("_HAS_STATIC_RTTI=0")])
+        probe(&selected, &env, &[], true).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+        probe(&selected, &env, &["_HAS_STATIC_RTTI=0"], false)
             .unwrap_or_else(|e| panic!("{kind:?} without RTTI: {e}"));
 
-        let err = probe(&selected, &env, &[&d("__clang_major__=1")]).unwrap_err();
+        let err = probe(&selected, &env, &["__clang_major__=1"], true).unwrap_err();
         assert!(
             matches!(
                 &err,
@@ -107,9 +140,10 @@ fn the_standard_library_decides_which_clang_it_accepts() {
             &selected,
             &env,
             &[
-                &d("__clang_major__=1"),
-                &d("_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"),
+                "__clang_major__=1",
+                "_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
             ],
+            true,
         )
         .unwrap_or_else(|e| panic!("{kind:?}: {e}"));
     }
