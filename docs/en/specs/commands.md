@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 3146e6fdc7efe9c5832537daa4aa5511adda0ec8 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 3404278fbe4f064de720d78983c1748edd3436b6 -->
 
 # Commands
 
@@ -159,6 +159,24 @@ Values of `--vcs`:
 ### `cuno build` / `cuno check`
 
 Common options only.
+
+- Run outside a project, it is an error (`error: could not find cuno.toml in <directory> or any parent directory`, exit code 3).
+- Before building, the compiler's selection and its pairing with the standard library are checked ([toolchain.md](toolchain.md#minimum-compiler-versions)); if they fail, nothing is built and it is an error (exit code 3).
+- Output (in the form of [Output](#output)):
+
+```
+   Compiling app v0.1.0 (msvc 19.52.37029)
+     Running `cl.exe /nologo /utf-8 ... /c src\main.cpp /Fo...`
+    Finished `dev` profile [unoptimized + debuginfo] in 1.24s
+```
+
+  - One `Compiling` line (the package's name and version, the compiler and its version) before compiling starts.
+  - With `-v`, a `Running` line with the command before each step (a compile, a link) starts.
+  - A `Finished` line at the end. Inside the brackets is `unoptimized` when `opt-level` is `0` and `optimized` otherwise, followed by `+ debuginfo` when `debug-info` is on.
+  - With `-q`, only errors, warnings and the compilers' output are shown.
+- When a compile or a link fails, the compiler's output is followed by an `error: could not compile` line (`could not link` for a link; both followed by the package's name), exit code 1. After the first failure no new step starts; the steps running are waited for and their output shown too.
+- The output of steps run in parallel is shown step by step, each when it finishes, so their lines do not mix.
+- `--target` is reserved for cross-compiling; giving it is an error (`error: --target is not supported yet`, exit code 3).
 
 ### `cuno doctor`
 

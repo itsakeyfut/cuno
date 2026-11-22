@@ -158,6 +158,24 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 共通オプションのみ。
 
+- プロジェクトの外で実行した場合はエラー（`error: could not find cuno.toml in <directory> or any parent directory`、終了コード 3）。
+- ビルドの前に、コンパイラの選択と標準ライブラリとの組み合わせを確かめる（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。満たさなければ何もビルドせずにエラー（終了コード 3）。
+- 表示（[出力](#出力) の形式）:
+
+```
+   Compiling app v0.1.0 (msvc 19.52.37029)
+     Running `cl.exe /nologo /utf-8 ... /c src\main.cpp /Fo...`
+    Finished `dev` profile [unoptimized + debuginfo] in 1.24s
+```
+
+  - コンパイルを始める前に、`Compiling` の行（パッケージ名とバージョン、コンパイラとバージョン）を 1 行。
+  - `-v` では、各手順（コンパイル、リンク）を始める前に、`Running` の行に実行するコマンドを示す。
+  - 終わりに `Finished` の行。角括弧の中は、`opt-level` が `0` なら `unoptimized`、それ以外は `optimized` で、`debug-info` が有効なら `+ debuginfo` を続ける。
+  - `-q` では、エラーと警告とコンパイラの出力だけを表示する。
+- コンパイルかリンクが失敗した場合、コンパイラの出力の後に `error: could not compile` の行（リンクなら `could not link`。どちらもパッケージ名を続ける）を出し、終了コード 1。最初の失敗の後は新しい手順を始めず、実行中の手順は終わるのを待ってその出力も表示する。
+- 並列に実行した手順の出力は、手順ごとにまとめて、その手順が終わったときに表示する（行が混ざらないように）。
+- `--target` はクロスコンパイルのための予約で、指定するとエラー（`error: --target is not supported yet`、終了コード 3）。
+
 ### `cuno doctor`
 
 環境を診断し、問題ごとに対処法を表示する。
