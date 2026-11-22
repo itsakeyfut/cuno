@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 403cd3e6233596583d3c6a2d8f68cdaf87f02c19 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob f9794f0d340c4ba8c4b69f46615413c24e6bd59a -->
 
 # Build
 
@@ -14,6 +14,23 @@
   - MSVC does not use `/showIncludes` because on the Japanese edition of Visual Studio the output is in Japanese (「メモ: インクルード ファイル:」), making it language-dependent.
 - Only what has changed is recompiled.
 - Compilation runs in parallel.
+
+### Deciding what changed
+
+- For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
+  - the command line (the arguments, and the compiler's location and version);
+  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files.
+- The next build runs only the steps for which one of these holds:
+  - there is no record, or the output is missing;
+  - the command line differs from the record (a setting, the compiler or the profile changed);
+  - an input's modification time or size differs from the record, and its content hash differs too.
+- An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
+- A step that fails is not recorded, so the next build always runs it.
+- Rationale:
+  - Judging only whether an input is newer than its output misses a file put back with an older modification time (restored from a backup, for example), and reports success with the old code. Comparing with the recorded values catches a time that went backwards too.
+  - Hashing everything on every build would read the standard and Windows headers (thousands of files) even when nothing changed. Inputs whose time and size match are not read.
+  - What it misses is only a file whose content changed while its modification time and size stayed the same, which ordinary editing does not produce.
+- The records are kept inside the output directory (`target/<profile name>/`). Their format is cuno's own and not meant for users to read. A record from another cuno version, or one that cannot be read, is treated as absent (the step runs).
 
 ## Default include paths
 
@@ -170,6 +187,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   6. Default value `target/`
 - If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it), it is an error (exit code 3), whichever layer sets it.
   - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
+- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3). To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
+  - Rationale: these files can be distributed with a repository. `cuno clean` deletes the output directory without running anything, so a cloned project must not be able to make it delete a directory outside the project. On builds trusting a project's settings, see [manifest.md](manifest.md#a-projects-settings-and-trust).
 - `cuno new` adds the output directory to `.gitignore`.
 
 ## Profiles
@@ -207,7 +226,6 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
 
 ## Open questions
 
-- Change-detection method (timestamp / hash) and the storage format of build state
 - [manifest.md](manifest.md) is the source of truth for the exact item names of each setting (the examples above are an overview)
 - All items of custom rules
 - Build script file name, Lua version (Lua 5.4 / LuaJIT / Luau, etc.), and API
