@@ -14,7 +14,8 @@ use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, check_edition, compile_flags};
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
-use cuno_toolchain::select::{self, Found, ProbeInputs, Selected};
+use cuno_toolchain::probe::{self as stl, ProbeInputs};
+use cuno_toolchain::select::{self, Found, Selected};
 use cuno_toolchain::{HostOs, Runner};
 
 use crate::build::boxed;
@@ -83,7 +84,7 @@ pub fn probe_compile(
 
 /// Runs the standard library probe of `selected`, in a scratch directory
 /// whose name carries `command` (`build`, `doctor`). Ok for a compiler it
-/// does not apply to (`select::check` decides), so a caller need not ask
+/// does not apply to (`cuno_toolchain::probe::check` decides), so a caller need not ask
 /// first; doctor still does, to print `Accepted` only for one it checked.
 pub fn probe(
     selected: &Selected,
@@ -92,7 +93,7 @@ pub fn probe(
     runner: &dyn Runner,
 ) -> Result<(), Box<dyn CunoError>> {
     scratch::in_scratch(command, selected.kind.name(), |dir| {
-        select::check(
+        stl::check(
             selected,
             &compile.env,
             ProbeInputs {

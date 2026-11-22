@@ -43,7 +43,7 @@ pub struct CompileInput<'a> {
 
 /// The flags every source of the build gets, without the mode, the source
 /// and the output: what the standard library probe is given
-/// (`select::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
+/// (`probe::ProbeInputs::flags`). `[build.<compiler>] flags` come last.
 pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     let mut out = Flags::default();
     let msvc_style = match input.kind.syntax() {
