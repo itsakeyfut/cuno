@@ -22,6 +22,13 @@ pub enum BuildError {
         /// The path, as shown.
         path: String,
     },
+    /// A `[[bin]]` path that is not a C or C++ source.
+    NotASource {
+        /// The executable's name.
+        name: String,
+        /// The path, as shown.
+        path: String,
+    },
     /// An entry file outside the project.
     OutsideProject {
         /// The executable's name.
@@ -49,6 +56,10 @@ impl fmt::Display for BuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BuildError::NoExecutable { .. } => f.write_str("no executable to build"),
+            BuildError::NotASource { name, path } => write!(
+                f,
+                "[[bin]] `{name}` is {path}, which is not a C or C++ source"
+            ),
             BuildError::BinPathMissing { name, path } => {
                 write!(f, "[[bin]] `{name}` is {path}, but there is no file there")
             }
@@ -79,7 +90,7 @@ impl CunoError for BuildError {
             BuildError::NoExecutable { default } => {
                 Some(format!("add {default}, or list one in [[bin]]"))
             }
-            BuildError::BinPathMissing { name, .. } => {
+            BuildError::BinPathMissing { name, .. } | BuildError::NotASource { name, .. } => {
                 Some(format!("correct the path of [[bin]] `{name}`"))
             }
             BuildError::OutsideProject { .. } => Some(

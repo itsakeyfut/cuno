@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use cuno_manifest::Profile;
 use cuno_toolchain::HostOs;
 
+use crate::sources::{Names, normalize};
+
 /// The paths of one profile's build under a target directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -29,7 +31,7 @@ impl Layout {
     /// `target_dir`, for executables run on `host`.
     pub fn new(target_dir: &Path, profile: Profile, root: &Path, host: HostOs) -> Layout {
         Layout {
-            root: root.to_owned(),
+            root: normalize(root),
             profile_dir: target_dir.join(profile_dir_name(profile)),
             host,
         }
@@ -46,10 +48,20 @@ impl Layout {
     /// of the same name in different directories, or `util.c` beside
     /// `util.cpp`, do not collide. Every compiler cuno uses targets the MSVC
     /// ABI, so the extension is `.obj` for all of them.
+    ///
+    /// `source` is one [`crate::sources::classify`] gave for the same root,
+    /// so it lies in the project; one that does not is a bug in cuno, and
+    /// panics rather than put an object outside the target directory.
     pub fn object(&self, package: &str, source: &Path) -> PathBuf {
-        let relative = source.strip_prefix(&self.root).unwrap_or(source);
+        let source = normalize(source);
+        assert!(
+            Names(self.host).within(&source, &self.root),
+            "an object was asked for {}, outside the project {}",
+            source.display(),
+            self.root.display()
+        );
         let mut object = self.profile_dir.join("obj").join(package);
-        for component in relative.components() {
+        for component in source.components().skip(self.root.components().count()) {
             object.push(component);
         }
         let mut name = object.file_name().map(OsString::from).unwrap_or_default();
@@ -107,6 +119,32 @@ mod tests {
         for path in objects.iter().chain([&dev.exe("app")]) {
             assert!(path.starts_with("C:/p/target"), "{}", path.display());
         }
+    }
+
+    /// A source spelled with another case than the root, or with `..`, gets
+    /// its object inside the target directory; one outside the project is
+    /// refused rather than placed beside itself.
+    ///
+    /// Mutation: keep the root as given, compare it with case on Windows,
+    /// or fall back to the source's own path; this test fails.
+    #[test]
+    fn objects_stay_in_the_target_directory() {
+        let dev = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p/x/.."),
+            HostOs::Windows,
+        );
+        assert_eq!(
+            dev.object("app", Path::new("c:/P/src/a.cpp")),
+            Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
+        );
+        assert_eq!(
+            dev.object("app", Path::new("C:/p/src/sub/../a.cpp")),
+            Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
+        );
+        let outside = std::panic::catch_unwind(|| dev.object("app", Path::new("D:/q/a.cpp")));
+        assert!(outside.is_err());
     }
 
     /// Mutation: give executables `.exe` on every host; this test fails.
