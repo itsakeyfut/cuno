@@ -94,6 +94,3 @@ $RECYCLE.BIN/
 .env
 .env.*
 *.log
-.claude/
-CLAUDE.md
-TODO.md
