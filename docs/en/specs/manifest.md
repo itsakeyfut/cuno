@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 0841eff297980416de198adeefdea99f14fc1326 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob b654a2b7a709fb7b4628467cc9619b0a4fc694d9 -->
 
 # Configuration Files
 
@@ -291,7 +291,7 @@ Layered in this order:
 
 | Item | Default | Description |
 |---|---|---|
-| `name` | `package.name` | Executable name |
+| `name` | `package.name` | Executable name. The same rule as `package.name` (ASCII letters, digits, `-` and `_`, starting with a letter); otherwise an error (exit code 3) |
 | `path` | `src/main.cpp` (`src/main.c` for C) | Entry point source |
 | `subsystem` | `"console"` | Launch mode (meaningful only on Windows) |
 

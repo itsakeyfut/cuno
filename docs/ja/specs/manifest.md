@@ -289,7 +289,7 @@ defines = ["GAME_DEBUG"]   # dev プロファイルのときだけ追加
 
 | 項目 | 既定値 | 説明 |
 |---|---|---|
-| `name` | `package.name` | 実行ファイル名 |
+| `name` | `package.name` | 実行ファイル名。`package.name` と同じ規則（英数字・`-`・`_`、英字で始まる）で、満たさなければエラー（終了コード 3） |
 | `path` | `src/main.cpp`（C は `src/main.c`） | エントリポイントのソース |
 | `subsystem` | `"console"` | 起動形態（Windows のみ意味を持つ） |
 

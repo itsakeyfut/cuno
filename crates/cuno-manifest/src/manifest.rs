@@ -756,8 +756,21 @@ impl Check<'_> {
             Lang::C => "src/main.c",
             Lang::Cxx => "src/main.cpp",
         };
+        let name = raw.name.unwrap_or_else(|| package.name.clone());
+        // The name becomes a file in the output directory, so it is held to
+        // the package name's rule: no separators, no `..`, no drive.
+        if !valid_name(&name) {
+            return Err(self.doc.error(
+                &format!("{prefix}.name"),
+                format!(
+                    "`bin.name` \"{name}\" in {} is not a valid executable name",
+                    self.doc.file.display()
+                ),
+                Some("use letters, digits, `-` and `_`, starting with a letter".to_owned()),
+            ));
+        }
         Ok(Bin {
-            name: raw.name.unwrap_or_else(|| package.name.clone()),
+            name,
             path: match raw.path {
                 Some(path) => self.path(&format!("{prefix}.path"), &path)?,
                 None => self.root.join(default_path),
@@ -1016,6 +1029,11 @@ indent-width = 2
                 "[package]\nname = \"a b\"\nversion = \"1.0.0\"\n",
                 2,
                 "not a valid package name",
+            ),
+            (
+                "[package]\nname = \"a\"\nversion = \"1.0.0\"\n[[bin]]\nname = \"../../x\"\n",
+                5,
+                "not a valid executable name",
             ),
             (
                 "[package]\nname = \"a\"\nversion = \"1.0\"\n",

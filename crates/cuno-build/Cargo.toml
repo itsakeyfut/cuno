@@ -15,3 +15,6 @@ workspace = true
 cuno-core.workspace = true
 cuno-manifest.workspace = true
 cuno-toolchain.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

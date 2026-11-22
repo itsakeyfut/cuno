@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob d051e0b99d6addf2becf751fb80fa7fa292b485a -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob af136d7f30910b37819eb403e058d25ffca96f9c -->
 
 # Project Kinds and Layout
 
@@ -66,6 +66,15 @@ sources = ["Private"]
 - `src/main.*` and everything under `src/bin/` are **always excluded from the package body**, regardless of whether `[[bin]]` is written.
   - Rationale: writing `[[bin]]` disables automatic detection, so without this exclusion `src/main.cpp` and the like would be linked as package body into every executable and test, duplicating `main`.
   - When `[[bin]]` is written, files under `src/main.*` / `src/bin/` that are not listed in `[[bin]]` are not built (cuno warns about this).
+- The following are errors (exit code 3):
+  - There is no executable (no default entry file, nothing in `src/bin/`, and no `[[bin]]` written).
+  - A `[[bin]]` `path` has no file, or is not a C/C++ source (`.c` / `.cpp` / `.cc` / `.cxx`).
+  - An entry file is outside the project, since where its object file goes is decided from the source's place in the project ([build.md](build.md#output-directory)).
+  - Two executables get the same name (a `[[bin]]` `name` written twice, or an auto-detected `src/bin/app.cpp` beside the default executable `app`, for example), since they would be the same file in the output directory. On Windows names are compared without regard to case (`Tool` and `tool` are the same file too).
+- On Windows, file and directory names are handled without regard to case: `src/Main.cpp` is the default entry file too, and a `[[bin]]` `path` written `SRC/Main.cpp` is the same file as `src/main.cpp`.
+  - Rationale: counting the same file twice under two spellings would put an entry file in the package body as well, compiling it twice and defining `main` twice.
+- A link to a directory inside `src/` (a symbolic link or a junction) is not read, and cuno warns about it.
+  - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
 
 ### Where the package's code lives
 
