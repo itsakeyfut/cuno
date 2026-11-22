@@ -17,6 +17,20 @@ pub enum Mode {
     Check,
 }
 
+/// The target triple, spelled once: every compiler cuno uses on Windows
+/// builds for the MSVC ABI, so the objects link with MSVC-built libraries.
+macro_rules! target {
+    () => {
+        "x86_64-pc-windows-msvc"
+    };
+}
+
+/// The target cuno builds for, as a triple.
+pub const TARGET: &str = target!();
+
+/// The switch that names [`TARGET`] to an LLVM driver or tool.
+pub const TARGET_SWITCH: &str = concat!("--target=", target!());
+
 /// What one compile of the build is made from.
 #[derive(Clone, Copy, Debug)]
 pub struct CompileInput<'a> {
@@ -59,8 +73,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&["/nologo", "/utf-8"]);
     }
     match input.kind.family() {
-        // The MSVC ABI, so the objects link with MSVC-built libraries.
-        Family::Llvm => out.push(&["--target=x86_64-pc-windows-msvc"]),
+        Family::Llvm => out.push(&[TARGET_SWITCH]),
         Family::Msvc => {}
     }
     if msvc_style && cxx {
