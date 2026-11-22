@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 1c5a3fbd7d045859fcf3f4b9375757201090e7c0 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob f0023002653f08044a324e41c59efb47a43cc95e -->
 
 # Commands
 
@@ -170,7 +170,7 @@ Common options only.
     Finished `dev` profile [unoptimized + debuginfo] in 1.24s
 ```
 
-  - One `Compiling` line (the package's name and version, the compiler and its version) before compiling starts.
+  - One `Compiling` line (the package's name and version, the compiler and its version) before compiling starts. When everything is up to date and nothing runs, it is not printed, and only the `Finished` line is.
   - With `-v`, a `Running` line with the command before each step (a compile, a link) starts.
   - A `Finished` line at the end. Inside the brackets is `unoptimized` when `opt-level` is `0` and `optimized` otherwise, followed by `+ debuginfo` when `debug-info` is on.
   - With `-q`, only errors, warnings and the compilers' output are shown.

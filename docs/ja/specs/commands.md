@@ -168,7 +168,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
     Finished `dev` profile [unoptimized + debuginfo] in 1.24s
 ```
 
-  - コンパイルを始める前に、`Compiling` の行（パッケージ名とバージョン、コンパイラとバージョン）を 1 行。
+  - コンパイルを始める前に、`Compiling` の行（パッケージ名とバージョン、コンパイラとバージョン）を 1 行。すべて最新で何も実行しないときは出さず、`Finished` の行だけになる。
   - `-v` では、各手順（コンパイル、リンク）を始める前に、`Running` の行に実行するコマンドを示す。
   - 終わりに `Finished` の行。角括弧の中は、`opt-level` が `0` なら `unoptimized`、それ以外は `optimized` で、`debug-info` が有効なら `+ debuginfo` を続ける。
   - `-q` では、エラーと警告とコンパイラの出力だけを表示する。

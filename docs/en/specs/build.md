@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob f9794f0d340c4ba8c4b69f46615413c24e6bd59a -->
+<!-- translated-from: docs/ja/specs/build.md @ blob bab56bfa9a1ae05a69d25902d27a1b7d6d382868 -->
 
 # Build
 
@@ -18,7 +18,7 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, and the compiler's location and version);
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change;
   - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files.
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
@@ -55,8 +55,9 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
 | Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
+| Header dependencies (when building) | `/sourceDependencies <file>` | `/showIncludes` | `-MD -MF <file>` |
 
-- The flags that find header dependencies (`/showIncludes` etc.) are decided with the build engine (M2) ([architecture.md](architecture.md)), and are not in this table.
+- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang). clang-cl prints the headers it read to standard output as `Note: including file:` lines, which cuno reads and removes from what is shown.
 
 ### Compiling
 
