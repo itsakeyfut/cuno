@@ -108,6 +108,13 @@ pub fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Version;
+    use crate::compiler::CompilerKind;
+    use crate::msvc::MsvcToolset;
+    use crate::select::Source;
+    use cuno_core::NameCase;
+    use std::ffi::{OsStr, OsString};
+    use std::path::{Path, PathBuf};
 
     /// A step's command is identified by the compiler's version and the
     /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler
@@ -140,13 +147,6 @@ mod tests {
             ["1", "", "", ""].map(OsStr::new)
         );
     }
-    use crate::Version;
-    use crate::compiler::CompilerKind;
-    use crate::msvc::MsvcToolset;
-    use crate::select::Source;
-    use cuno_core::NameCase;
-    use std::ffi::{OsStr, OsString};
-    use std::path::{Path, PathBuf};
 
     /// A registry that names `dir` as the Windows Kits root.
     struct Kits(PathBuf);

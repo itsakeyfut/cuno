@@ -17,6 +17,7 @@ use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::select::{self, Found, ProbeInputs, Selected};
 use cuno_toolchain::{HostOs, Runner};
 
+use crate::build::boxed;
 use crate::scratch;
 
 /// Detects Visual Studio and the LLVM tools, the copies `[toolchain.paths]`
@@ -33,8 +34,10 @@ pub fn detect(
 
 /// What the standard library probe compiles: the build's flags for a C++
 /// input in `profile`, the resolved environment, and where the build runs.
+/// Doctor's clang-tidy check reads the same compile.
 pub struct ProbeCompile {
-    /// The compiler.
+    /// The compiler, whose syntax the flags are in; clang-tidy's check
+    /// needs it, having no `Selected`.
     pub kind: CompilerKind,
     /// The resolved Windows environment.
     pub env: Env,
@@ -47,7 +50,9 @@ pub struct ProbeCompile {
 
 /// The probe's compile, or `None` for a C package, which uses no C++
 /// standard library (`toolchain.md`, "Minimum compiler versions"). The
-/// probe compiles C++, so the flags are a C++ input's.
+/// probe compiles C++, so the flags are a C++ input's, never the test
+/// build's. `cwd` is where it runs only outside a project; in one, it runs
+/// in the root, as the build does.
 pub fn probe_compile(
     selected: &Selected,
     prepared: &Prepared,
@@ -76,9 +81,10 @@ pub fn probe_compile(
     })
 }
 
-/// Runs the standard library probe of `selected` in a scratch directory
-/// named after `command`; Ok for a compiler it does not apply to
-/// (`select::check` decides).
+/// Runs the standard library probe of `selected`, in a scratch directory
+/// whose name carries `command` (`build`, `doctor`). Ok for a compiler it
+/// does not apply to (`select::check` decides), so a caller need not ask
+/// first; doctor still does, to print `Accepted` only for one it checked.
 pub fn probe(
     selected: &Selected,
     compile: &ProbeCompile,
@@ -108,8 +114,10 @@ pub struct Ready {
 }
 
 /// Every step a build takes before compiling: detect, select, check the
-/// edition, prepare the environment (warning about each variable left out
-/// of it), and probe the standard library. Stops at the first problem.
+/// edition, prepare the environment, and probe the standard library. Each
+/// variable left out of the environment is warned about here, as the build
+/// prepares it; the first problem is returned for the caller to report,
+/// and no later step runs.
 pub fn ready(
     settings: &Settings,
     project: (&Path, &Manifest),
@@ -148,8 +156,4 @@ pub fn ready(
         probe(&selected, &compile, "build", runner)?;
     }
     Ok(Ready { selected, prepared })
-}
-
-fn boxed<E: CunoError + 'static>(error: E) -> Box<dyn CunoError> {
-    Box::new(error)
 }

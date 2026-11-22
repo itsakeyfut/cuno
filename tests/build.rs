@@ -970,3 +970,69 @@ fn compile_commands_are_written_by_every_build_command() {
         run.stderr
     );
 }
+
+/// A header the standard library probe includes first that stops when the
+/// probe's flags are not the dev build's: release flags (`NDEBUG`) or the
+/// test build's (`CUNO_TEST`). The program itself includes nothing.
+const PROBE_FLAGS: &str = "#ifdef NDEBUG\n#error probed with release flags\n#endif\n#ifdef CUNO_TEST\n#error probed with test flags\n#endif\n#include_next <yvals_core.h>\n";
+
+/// The build probes the standard library with the flags of the profile
+/// it builds, and never with the test build's: a dev build passes the
+/// header above, a release build stops at its `NDEBUG` line, exit 3.
+///
+/// Mutation: probe with the dev profile whatever is built, or with
+/// `CUNO_TEST` defined; this test fails.
+#[test]
+fn the_probe_uses_the_built_profiles_flags() {
+    if !here(Compiler::ClangCl) {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/yvals_core.h", PROBE_FLAGS)
+        .file("src/main.cpp", "int main() {}\n");
+    let run = project.cuno(&["build", "--compiler", "clang-cl"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let run = project.cuno(&["build", "--release", "--compiler", "clang-cl"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("probed with release flags"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// The build selects the copies `[toolchain.paths]` names: one that is
+/// not there is an error naming the setting, exit 3, not another copy.
+///
+/// Mutation: detect without the settings' paths, or select without the
+/// configured Visual Studio; this test fails.
+#[test]
+fn the_build_uses_the_configured_toolchain_paths() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    for (setting, compiler, says) in [
+        (
+            "clang = \"C:/nope/clang.exe\"",
+            "clang",
+            "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n",
+        ),
+        (
+            "msvc = \"C:/nope/VS\"",
+            "msvc",
+            "error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n",
+        ),
+    ] {
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file(
+                ".cuno/config.toml",
+                &format!("[toolchain.paths]\n{setting}\n"),
+            )
+            .file("src/main.cpp", "int main() {}\n");
+        let run = project.cuno(&["build", "--compiler", compiler]);
+        assert_eq!(run.code, Some(3), "{compiler}: {}", run.stderr);
+        assert!(run.stderr.starts_with(says), "{compiler}: {}", run.stderr);
+    }
+}
