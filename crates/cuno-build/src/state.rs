@@ -7,6 +7,7 @@
 //! cuno-state <cuno version>
 //! command <hash of what identifies the command>
 //! <modified ns> <size> <content hash> <input path>
+//! end <number of inputs>
 //! ```
 //!
 //! The format is cuno's own. A record another cuno wrote, or one that
@@ -18,7 +19,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::graph::Step;
 
@@ -93,7 +94,7 @@ impl Records {
         }
         if moved {
             let inputs: Vec<PathBuf> = record.inputs.into_iter().map(|(p, _)| p).collect();
-            let _ = self.record(step, &inputs);
+            let _ = self.write(step, &inputs, None);
         }
         true
     }
@@ -104,10 +105,25 @@ impl Records {
         let _ = fs::remove_file(state_path(&step.output));
     }
 
-    /// Records that `step` succeeded having read `inputs`. A path that
-    /// cannot be written in the record leaves the step unrecorded, so it
-    /// runs again rather than being judged on part of what it read.
-    pub fn record(&self, step: &Step, inputs: &[PathBuf]) -> io::Result<()> {
+    /// Records that `step`, started at `started`, succeeded having read
+    /// `inputs`. The step is left unrecorded, and so runs again, when an
+    /// input was modified after it started (the compiler may have read
+    /// either version) or a path cannot be written in the record: it is
+    /// never judged on what it may not have read.
+    pub fn record(&self, step: &Step, inputs: &[PathBuf], started: SystemTime) -> io::Result<()> {
+        self.write(step, inputs, Some(started))
+    }
+
+    /// Writes `step`'s record, refusing an input modified at or after
+    /// `started` when it is given. The record is written beside and then
+    /// renamed over the old one, so it is never seen half written.
+    fn write(
+        &self,
+        step: &Step,
+        inputs: &[PathBuf],
+        started: Option<SystemTime>,
+    ) -> io::Result<()> {
+        let started = started.map(|t| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
         let mut text = format!("{HEADER}\ncommand {:016x}\n", self.command(step));
         let mut seen = std::collections::HashSet::new();
         for path in inputs {
@@ -115,6 +131,9 @@ impl Records {
                 continue;
             }
             let stamp = self.stamp(path)?;
+            if started.is_some_and(|started| stamp.modified >= started) {
+                return Err(io::Error::other("an input changed while the step ran"));
+            }
             let name = path.to_str().filter(|p| !p.contains(['\n', '\r']));
             let Some(name) = name else {
                 return Err(io::Error::other("an input's path cannot be recorded"));
@@ -124,7 +143,12 @@ impl Records {
                 stamp.modified, stamp.size, stamp.hash
             ));
         }
-        fs::write(state_path(&step.output), text)
+        text.push_str(&format!("end {}\n", seen.len()));
+        let path = state_path(&step.output);
+        let mut partial = path.clone().into_os_string();
+        partial.push(".partial");
+        fs::write(&partial, text)?;
+        fs::rename(&partial, &path)
     }
 
     /// The hash of everything that identifies `step`'s command: cuno's
@@ -179,7 +203,11 @@ fn state_path(output: &Path) -> PathBuf {
 /// it, or it cannot be read.
 fn read(path: &Path) -> Option<Record> {
     let text = fs::read_to_string(path).ok()?;
-    let mut lines = text.lines();
+    let mut lines: Vec<&str> = text.lines().collect();
+    // A record cut short (cuno stopped while writing it) has no end line
+    // giving its own length, and is not trusted on what it holds.
+    let count: usize = lines.pop()?.strip_prefix("end ")?.parse().ok()?;
+    let mut lines = lines.into_iter();
     if lines.next()? != HEADER {
         return None;
     }
@@ -201,7 +229,7 @@ fn read(path: &Path) -> Option<Record> {
             ))
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(Record { command, inputs })
+    (inputs.len() == count).then_some(Record { command, inputs })
 }
 
 /// Appends `part` with its length first, so no two lists of parts make the

@@ -197,15 +197,19 @@ pub fn compile_args(
     args
 }
 
-/// The arguments that make `kind` say which headers a compile read, into
-/// `file` where it writes them to one (`build.md`, "Settings and flags").
-/// They come after [`compile_args`], so the file is never taken for an
-/// input.
+/// The arguments that make `kind` write the headers a compile read into
+/// `file` (`build.md`, "Settings and flags"). They come after
+/// [`compile_args`], so they follow the user's `flags` and win over a
+/// user's `-MF`.
 pub fn dependency_args(kind: CompilerKind, file: &Path) -> Vec<OsString> {
-    match kind.dependencies() {
-        Dependencies::SourceDependencies => vec!["/sourceDependencies".into(), file.into()],
-        Dependencies::ShowIncludes => vec!["/showIncludes".into()],
-        Dependencies::DepFile => vec!["-MD".into(), "-MF".into(), file.into()],
+    match (kind.dependencies(), kind.syntax()) {
+        (Dependencies::SourceDependencies, _) => vec!["/sourceDependencies".into(), file.into()],
+        (Dependencies::DepFile, Syntax::Cl) => {
+            let mut to = OsString::from("/clang:-MF");
+            to.push(file);
+            vec!["/clang:-MD".into(), to]
+        }
+        (Dependencies::DepFile, Syntax::Gnu) => vec!["-MD".into(), "-MF".into(), file.into()],
     }
 }
 

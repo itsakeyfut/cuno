@@ -51,6 +51,10 @@ pub struct Step {
     /// Where a compile's headers are found once it has run; `None` for a
     /// link.
     pub headers: Option<Headers>,
+    /// The files it reads besides the outputs of the steps it waits for
+    /// and its headers: a compile's source, and the libraries of `links`
+    /// a link finds in `lib-dirs` (`build.md`, "Deciding what changed").
+    pub reads: Vec<PathBuf>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -96,15 +100,10 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         };
         let headers = match p.kind.dependencies() {
             Dependencies::SourceDependencies => Headers::Json(object.with_extension("json")),
-            Dependencies::ShowIncludes => Headers::Notes,
             Dependencies::DepFile => Headers::DepFile(object.with_extension("d")),
         };
-        let file = match &headers {
-            Headers::Json(file) | Headers::DepFile(file) => file.as_path(),
-            Headers::Notes => Path::new(""),
-        };
         let mut args = compile_args(&settings.input(), &source.path, Some(&object));
-        args.extend(dependency_args(p.kind, file));
+        args.extend(dependency_args(p.kind, headers.file()));
         steps.push(Step {
             kind: StepKind::Compile {
                 source: source.path.clone(),
@@ -115,6 +114,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             after: Vec::new(),
             echo,
             headers: Some(headers),
+            reads: vec![source.path.clone()],
         });
         steps.len() - 1
     };
@@ -141,9 +141,27 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             after,
             echo: None,
             headers: None,
+            reads: libraries(p.link.0),
         });
     }
     Graph { steps }
+}
+
+/// The libraries of `links` found in `lib-dirs`: for each, the first
+/// `<lib>.lib` searching `lib-dirs` in order, as the linker searches them.
+/// A library found nowhere there is a system one, found through `LIB`.
+fn libraries(build: &BuildSettings) -> Vec<PathBuf> {
+    build
+        .links
+        .iter()
+        .filter_map(|lib| {
+            build
+                .lib_dirs
+                .iter()
+                .map(|dir| dir.join(format!("{lib}.lib")))
+                .find(|path| path.is_file())
+        })
+        .collect()
 }
 
 #[cfg(test)]

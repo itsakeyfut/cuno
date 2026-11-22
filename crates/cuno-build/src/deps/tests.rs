@@ -1,9 +1,12 @@
 use super::*;
 
 /// cl's `/sourceDependencies` file, as cl 19.52 writes it: every header,
-/// absolute and in lower case, the source itself left out.
+/// absolute and in lower case, the source itself left out. An entry that
+/// is not a string makes the file unreadable rather than skipped, so no
+/// header goes unrecorded.
 ///
-/// Mutation: read only the first header, or the source; this test fails.
+/// Mutation: read only the first header, read the source, or skip an
+/// entry that is not a string; this test fails.
 #[test]
 fn every_header_in_the_json_is_read() {
     let json = r#"{
@@ -32,43 +35,7 @@ fn every_header_in_the_json_is_read() {
     );
     assert_eq!(from_json(b"{\"Version\": \"1.2\"}"), None);
     assert_eq!(from_json(b"not json"), None);
-}
-
-/// clang-cl's notes, indented by include depth and relative where the
-/// include was, are read and removed; the rest of its output stays as it
-/// was.
-///
-/// Mutation: keep the note lines, keep their indentation, or drop the
-/// other lines; this test fails.
-#[test]
-fn notes_are_read_and_removed() {
-    let mut stdout = "Note: including file: src\\inc dir/h1.h\r\n\
-                      Note: including file:  src\\inc dir\\日本.h\r\n\
-                      src\\a.cpp(3,1): warning: unused\r\n\
-                      Note: including file: C:\\Program Files\\LLVM\\lib\\clang\\22\\include\\yvals_core.h\n"
-        .as_bytes()
-        .to_vec();
-    let paths = take_notes(&mut stdout).unwrap();
-    assert_eq!(
-        paths,
-        [
-            PathBuf::from(r"src\inc dir/h1.h"),
-            PathBuf::from(r"src\inc dir\日本.h"),
-            PathBuf::from(r"C:\Program Files\LLVM\lib\clang\22\include\yvals_core.h"),
-        ]
-    );
-    assert_eq!(stdout, b"src\\a.cpp(3,1): warning: unused\r\n");
-}
-
-/// A note whose path is not UTF-8 leaves the headers unknown, so the step
-/// is not recorded, and is still removed.
-///
-/// Mutation: read it lossily; this test fails.
-#[test]
-fn a_note_that_is_not_utf8_leaves_the_headers_unknown() {
-    let mut stdout = b"Note: including file: \x93\xfa.h\r\nok\r\n".to_vec();
-    assert_eq!(take_notes(&mut stdout), None);
-    assert_eq!(stdout, b"ok\r\n");
+    assert_eq!(from_json(br#"{"Data":{"Includes":["c:\\a.h",1]}}"#), None);
 }
 
 /// clang's dependency file: the target is skipped, an escaped space stays
@@ -91,4 +58,47 @@ fn a_dependency_file_is_read_as_make_writes_it() {
         ]
     );
     assert_eq!(from_depfile("no target here"), None);
+}
+
+/// The rules a user's `-MP` adds after the first, one per header with no
+/// prerequisites, are not read as headers: their targets would be taken
+/// for files and the step never recorded.
+///
+/// Mutation: read every rule; this test fails.
+#[test]
+fn only_the_first_rule_is_read() {
+    let text = "a.obj: src\\a.cpp src\\a.h\r\n\r\nsrc\\a.h:\r\n";
+    assert_eq!(
+        from_depfile(text).unwrap(),
+        [PathBuf::from(r"src\a.cpp"), PathBuf::from(r"src\a.h")]
+    );
+}
+
+/// Each kind of file is read by its own parser.
+///
+/// Mutation: read a JSON file as a dependency file, or the reverse; this
+/// test fails.
+#[test]
+fn each_file_is_read_by_its_kind() {
+    let json = Headers::Json("a.json".into());
+    let dep = Headers::DepFile("a.d".into());
+    assert_eq!(
+        json.parse(br#"{"Data":{"Includes":["a.h"]}}"#),
+        Some(vec![PathBuf::from("a.h")])
+    );
+    assert_eq!(dep.parse(b"a.obj: a.h\n"), Some(vec![PathBuf::from("a.h")]));
+    assert_eq!(json.parse(b"a.obj: a.h\n"), None);
+    assert_eq!(dep.parse(br#"{"Data":{"Includes":["a.h"]}}"#), None);
+    assert_eq!(json.file(), Path::new("a.json"));
+}
+
+/// A relative path is the compiler's working directory's; an absolute
+/// one is kept.
+///
+/// Mutation: keep a relative path as it is; this test fails.
+#[test]
+fn a_relative_header_is_the_working_directorys() {
+    let cwd = Path::new(r"C:\p");
+    assert_eq!(resolve(cwd, r"src\a.h".into()), Path::new(r"C:\p\src\a.h"));
+    assert_eq!(resolve(cwd, r"D:\x.h".into()), Path::new(r"D:\x.h"));
 }

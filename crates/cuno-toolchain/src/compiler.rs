@@ -46,10 +46,9 @@ pub enum Dependencies {
     /// cl's `/sourceDependencies` JSON file, whose paths do not depend on
     /// the language Visual Studio is installed in.
     SourceDependencies,
-    /// clang-cl's `/showIncludes` lines on standard output, always in
-    /// English.
-    ShowIncludes,
-    /// A `-MD` dependency file in make's syntax.
+    /// A `-MD` dependency file in make's syntax, from clang and, through
+    /// `/clang:`, clang-cl, whose `/showIncludes` leaves out files read by
+    /// `#embed`.
     DepFile,
 }
 
@@ -91,8 +90,7 @@ impl CompilerKind {
     pub fn dependencies(self) -> Dependencies {
         match self {
             CompilerKind::Msvc => Dependencies::SourceDependencies,
-            CompilerKind::ClangCl => Dependencies::ShowIncludes,
-            CompilerKind::Clang => Dependencies::DepFile,
+            CompilerKind::Clang | CompilerKind::ClangCl => Dependencies::DepFile,
         }
     }
 

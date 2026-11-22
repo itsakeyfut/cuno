@@ -152,18 +152,8 @@ pub fn build(
         link: (&link.build, &link.profile),
     });
 
-    // What besides each step's arguments identifies its command: the
-    // compiler's version, and the variables that decide which headers and
-    // libraries it reads (build.md, "Deciding what changed").
     let version = selected.version.to_string();
-    let empty = OsStr::new("");
-    let records = Records::new(
-        std::iter::once(OsStr::new(&version)).chain(
-            ["INCLUDE", "LIB", "LIBPATH"]
-                .into_iter()
-                .map(|name| prepared.env.get(name).unwrap_or(empty)),
-        ),
-    );
+    let records = Records::new(identity(&version, &prepared.env));
     // Printed when the first step starts, so a build with nothing to do
     // shows only its Finished line (commands.md, "Output").
     let mut compiling = Some(format!(
@@ -232,6 +222,19 @@ pub fn build(
         );
     }
     Ok(())
+}
+
+/// What besides each step's arguments identifies its command: the
+/// compiler's `version`, and the variables of `env` that decide which
+/// headers and libraries it reads (`build.md`, "Deciding what changed").
+fn identity<'a>(version: &'a str, env: &'a Env) -> [&'a OsStr; 4] {
+    let var = |name| env.get(name).unwrap_or_default();
+    [
+        OsStr::new(version),
+        var("INCLUDE"),
+        var("LIB"),
+        var("LIBPATH"),
+    ]
 }
 
 /// The profile `--release` or `--profile` names, `dev` by default; only the
@@ -379,7 +382,33 @@ mod tests {
             after: Vec::new(),
             echo: None,
             headers: None,
+            reads: Vec::new(),
         })
+    }
+
+    /// A step's command is identified by the compiler's version and the
+    /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler
+    /// or SDK rebuilds.
+    ///
+    /// Mutation: leave out the version or any of the variables; this test
+    /// fails.
+    #[test]
+    fn the_compiler_and_its_environment_identify_commands() {
+        let env = Env::from_pairs(
+            [
+                ("include".into(), "C:/inc".into()),
+                ("LIB".into(), "C:/lib".into()),
+                ("LIBPATH".into(), "C:/libpath".into()),
+                ("PATH".into(), "C:/bin".into()),
+            ],
+            cuno_core::NameCase::Insensitive,
+        );
+        assert_eq!(
+            identity("19.52.1", &env),
+            ["19.52.1", "C:/inc", "C:/lib", "C:/libpath"].map(OsStr::new)
+        );
+        let bare = Env::default();
+        assert_eq!(identity("1", &bare), ["1", "", "", ""].map(OsStr::new));
     }
 
     /// `-v` shows each argument as the Windows command line would read it

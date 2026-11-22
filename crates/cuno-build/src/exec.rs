@@ -7,11 +7,12 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
+use std::time::SystemTime;
 
 use cuno_core::Env;
 
-use crate::deps::{self, Headers};
-use crate::graph::{Graph, Step, StepKind};
+use crate::deps;
+use crate::graph::{Graph, Step};
 use crate::state::Records;
 
 /// What a step's process did.
@@ -125,28 +126,28 @@ pub fn execute(
                         .collect();
                     let done = done.clone();
                     scope.spawn(move || {
-                        let fresh = records.is_some_and(|r| r.up_to_date(step));
-                        if fresh {
-                            let _ = done.send((i, Report::UpToDate));
-                            return;
-                        }
-                        let _ = done.send((i, Report::Starting));
                         // A panic is a failure that still reports back, so
                         // the wait below always ends.
-                        let output = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                            perform(step, &waited, env, cwd, spawner, records)
+                        let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            if records.is_some_and(|r| r.up_to_date(step)) {
+                                return Report::UpToDate;
+                            }
+                            let _ = done.send((i, Report::Starting));
+                            Report::Ran(perform(step, &waited, env, cwd, spawner, records))
                         }))
-                        .unwrap_or_else(|_| Output {
-                            success: false,
-                            stdout: Vec::new(),
-                            stderr: format!(
-                                "cuno failed while running {}\n",
-                                step.program.display()
-                            )
-                            .into_bytes(),
+                        .unwrap_or_else(|_| {
+                            Report::Ran(Output {
+                                success: false,
+                                stdout: Vec::new(),
+                                stderr: format!(
+                                    "cuno failed while running {}\n",
+                                    step.program.display()
+                                )
+                                .into_bytes(),
+                            })
                         });
                         // The receiver outlives every sender in this scope.
-                        let _ = done.send((i, Report::Ran(output)));
+                        let _ = done.send((i, report));
                     });
                 }
             }
@@ -182,10 +183,9 @@ pub fn execute(
     }
 }
 
-/// Runs `step` and, with `records`, records it when it succeeds: a
-/// compile as having read its source and every header its compiler named,
-/// a link as having read the outputs of the steps it `waited` for.
-/// clang-cl's include notes are removed from what is shown either way.
+/// Runs `step` and, with `records`, records it when it succeeds, as
+/// having read what it [`Step::reads`], the outputs of the steps it
+/// `waited` for, and every header its compiler named.
 fn perform(
     step: &Step,
     waited: &[&Path],
@@ -197,41 +197,31 @@ fn perform(
     if let Some(records) = records {
         records.forget(step);
     }
-    let mut output = run(step, env, cwd, spawner);
-    let notes = match step.headers {
-        Some(Headers::Notes) => Some(deps::take_notes(&mut output.stdout)),
-        _ => None,
-    };
+    let started = SystemTime::now();
+    let output = run(step, env, cwd, spawner);
     if !output.success {
         return output;
     }
     let Some(records) = records else {
         return output;
     };
-    let inputs: Option<Vec<PathBuf>> = match &step.kind {
-        StepKind::Compile { source } => {
-            let headers = match &step.headers {
-                Some(Headers::Json(file)) => {
-                    std::fs::read(file).ok().and_then(|b| deps::from_json(&b))
-                }
-                Some(Headers::DepFile(file)) => std::fs::read_to_string(file)
-                    .ok()
-                    .and_then(|t| deps::from_depfile(&t)),
-                Some(Headers::Notes) => notes.flatten(),
-                None => Some(Vec::new()),
-            };
-            headers.map(|headers| {
-                std::iter::once(source.clone())
-                    .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
-                    .collect()
-            })
-        }
-        StepKind::Link { .. } => Some(waited.iter().map(|p| p.to_path_buf()).collect()),
+    let headers = match &step.headers {
+        Some(headers) => std::fs::read(headers.file())
+            .ok()
+            .and_then(|bytes| headers.parse(&bytes)),
+        None => Some(Vec::new()),
     };
     // Headers that cannot be read leave the step unrecorded: it runs again
     // next time rather than being judged on part of what it read.
-    if let Some(inputs) = inputs {
-        let _ = records.record(step, &inputs);
+    if let Some(headers) = headers {
+        let inputs: Vec<PathBuf> = step
+            .reads
+            .iter()
+            .cloned()
+            .chain(waited.iter().map(|p| p.to_path_buf()))
+            .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
+            .collect();
+        let _ = records.record(step, &inputs, started);
     }
     output
 }

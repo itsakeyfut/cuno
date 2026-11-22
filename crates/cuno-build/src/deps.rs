@@ -3,46 +3,35 @@
 
 use std::path::{Path, PathBuf};
 
-/// Where a compile's headers are found once it has run.
+/// The file a compile's headers are written to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Headers {
     /// cl's `/sourceDependencies` JSON file.
     Json(PathBuf),
-    /// clang-cl's `Note: including file:` lines on standard output.
-    Notes,
-    /// clang's `-MD` dependency file.
+    /// A `-MD` dependency file, from clang or clang-cl.
     DepFile(PathBuf),
 }
 
-/// The prefix of the line clang-cl prints for each header it reads, in
-/// English whatever the system's language.
-const NOTE: &[u8] = b"Note: including file:";
-
-/// Removes clang-cl's `Note: including file:` lines from `stdout`, which
-/// are not shown (`build.md`, "Settings and flags"), and returns the paths
-/// they name, or `None` when one is not UTF-8.
-pub fn take_notes(stdout: &mut Vec<u8>) -> Option<Vec<PathBuf>> {
-    let mut kept = Vec::with_capacity(stdout.len());
-    let mut paths = Some(Vec::new());
-    for line in stdout.split_inclusive(|&b| b == b'\n') {
-        match line.strip_prefix(NOTE) {
-            Some(rest) => {
-                let path = std::str::from_utf8(rest)
-                    .ok()
-                    .map(|p| p.trim_start_matches(' ').trim_end_matches(['\r', '\n']));
-                match (path, &mut paths) {
-                    (Some(path), Some(paths)) => paths.push(PathBuf::from(path)),
-                    _ => paths = None,
-                }
-            }
-            None => kept.extend_from_slice(line),
+impl Headers {
+    /// The file the compiler writes.
+    pub fn file(&self) -> &Path {
+        match self {
+            Headers::Json(file) | Headers::DepFile(file) => file,
         }
     }
-    *stdout = kept;
-    paths
+
+    /// The headers named in `bytes`, the content of [`Headers::file`], or
+    /// `None` when it cannot be read as that kind of file.
+    pub fn parse(&self, bytes: &[u8]) -> Option<Vec<PathBuf>> {
+        match self {
+            Headers::Json(_) => from_json(bytes),
+            Headers::DepFile(_) => from_depfile(std::str::from_utf8(bytes).ok()?),
+        }
+    }
 }
 
-/// The headers in cl's `/sourceDependencies` file: `Data.Includes`.
+/// The headers in cl's `/sourceDependencies` file: `Data.Includes`, every
+/// entry a string.
 pub fn from_json(bytes: &[u8]) -> Option<Vec<PathBuf>> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     value
@@ -54,10 +43,12 @@ pub fn from_json(bytes: &[u8]) -> Option<Vec<PathBuf>> {
         .collect()
 }
 
-/// The prerequisites in a `-MD` dependency file, which is make's syntax:
-/// `<target>: <prerequisite> ...`, a space in a path written `\ `, `#`
-/// written `\#`, `$` written `$$`, and a line continued with `\` at its end.
-/// Any other backslash is a Windows path separator and is kept.
+/// The prerequisites of the first rule in a `-MD` dependency file, which
+/// is make's syntax: `<target>: <prerequisite> ...`, a space in a path
+/// written `\ `, `#` written `\#`, `$` written `$$`, and a line continued
+/// with `\` at its end. Any other backslash is a Windows path separator and
+/// is kept. Later rules (a user's `-MP` adds one per header, with no
+/// prerequisites) are not read (`build.md`, "Settings and flags").
 pub fn from_depfile(text: &str) -> Option<Vec<PathBuf>> {
     let mut tokens: Vec<String> = Vec::new();
     let mut token = String::new();
@@ -67,6 +58,7 @@ pub fn from_depfile(text: &str) -> Option<Vec<PathBuf>> {
             tokens.push(std::mem::take(token));
         }
     };
+    let has_target = |tokens: &[String]| tokens.iter().any(|t| t.ends_with(':'));
     while let Some(c) = chars.next() {
         match c {
             '\\' => match chars.peek() {
@@ -87,6 +79,13 @@ pub fn from_depfile(text: &str) -> Option<Vec<PathBuf>> {
             '$' if chars.peek() == Some(&'$') => {
                 chars.next();
                 token.push('$');
+            }
+            // A line that is not continued ends the rule.
+            '\n' => {
+                end(&mut token, &mut tokens);
+                if has_target(&tokens) {
+                    break;
+                }
             }
             c if c.is_whitespace() => end(&mut token, &mut tokens),
             c => token.push(c),

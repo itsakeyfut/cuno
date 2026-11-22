@@ -27,9 +27,12 @@ fn recorded() -> (Case, Records) {
         after: Vec::new(),
         echo: None,
         headers: None,
+        reads: Vec::new(),
     };
     let records = fresh();
-    records.record(&step, std::slice::from_ref(&input)).unwrap();
+    records
+        .record(&step, std::slice::from_ref(&input), later())
+        .unwrap();
     (
         Case {
             _root: root,
@@ -43,6 +46,11 @@ fn recorded() -> (Case, Records) {
 /// Another build's records, so nothing is known from this one.
 fn fresh() -> Records {
     Records::new([OsStr::new("19.52"), OsStr::new("C:/inc")])
+}
+
+/// A start time after every file a test writes.
+fn later() -> SystemTime {
+    SystemTime::now() + Duration::from_secs(60)
 }
 
 fn set_time(path: &Path, seconds: u64) {
@@ -161,10 +169,107 @@ fn paths_with_spaces_are_recorded_once() {
         .record(
             &case.step,
             &[case.input.clone(), spaced.clone(), spaced.clone()],
+            later(),
         )
         .unwrap();
     let record = read(&state_path(&case.step.output)).unwrap();
     let paths: Vec<&PathBuf> = record.inputs.iter().map(|(p, _)| p).collect();
     assert_eq!(paths, [&case.input, &spaced]);
+    assert!(fresh().up_to_date(&case.step));
+}
+
+/// An input modified after the step started may or may not be what the
+/// compiler read, so the step is left unrecorded and runs again.
+///
+/// Mutation: record whatever the inputs are when the step ends; this test
+/// fails.
+#[test]
+fn an_input_changed_while_the_step_ran_is_not_recorded() {
+    let (case, records) = recorded();
+    records.forget(&case.step);
+    let started = SystemTime::now() - Duration::from_secs(60);
+    fs::write(&case.input, "int edited;").unwrap();
+    assert!(
+        records
+            .record(&case.step, std::slice::from_ref(&case.input), started)
+            .is_err()
+    );
+    assert!(!state_path(&case.step.output).exists());
+    assert!(!fresh().up_to_date(&case.step));
+}
+
+/// A record cut short, as when cuno is stopped while writing it, is not
+/// trusted on the inputs it still holds.
+///
+/// Mutation: drop the end line, or accept a record whose count differs;
+/// this test fails.
+#[test]
+fn a_record_cut_short_is_none() {
+    let (case, records) = recorded();
+    let header = case.input.with_file_name("a.h");
+    fs::write(&header, "#define A 1").unwrap();
+    records
+        .record(&case.step, &[case.input.clone(), header.clone()], later())
+        .unwrap();
+    let path = state_path(&case.step.output);
+    let text = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.last(), Some(&"end 2"));
+    fs::write(&path, format!("{}\n", lines[..3].join("\n"))).unwrap();
+    assert!(!fresh().up_to_date(&case.step));
+    fs::write(&path, format!("{}\nend 2\n", lines[..3].join("\n"))).unwrap();
+    assert!(!fresh().up_to_date(&case.step));
+}
+
+/// Another program with the same arguments is another command, and the
+/// parts of a command are kept apart: `/Da` then `b` is not `/Dab`.
+///
+/// Mutation: leave the program out of the command, or join the parts
+/// without their lengths; this test fails.
+#[test]
+fn the_program_and_each_part_identify_the_command() {
+    let (case, _) = recorded();
+    let mut other = case.step.clone();
+    other.program = "C:/other/cl.exe".into();
+    assert!(!fresh().up_to_date(&other));
+
+    let split = Step {
+        args: vec!["/Da".into(), "b".into()],
+        ..case.step.clone()
+    };
+    let joined = Step {
+        args: vec!["/Dab".into()],
+        ..case.step.clone()
+    };
+    assert_ne!(fresh().command(&split), fresh().command(&joined));
+    let a = Records::new([OsStr::new("ab"), OsStr::new("c")]);
+    let b = Records::new([OsStr::new("a"), OsStr::new("bc")]);
+    assert_ne!(a.command(&case.step), b.command(&case.step));
+}
+
+/// A path that cannot be written on one line leaves the step unrecorded.
+///
+/// Mutation: write such a path into the record; this test fails.
+#[test]
+fn a_path_with_a_line_break_is_not_recorded() {
+    let (case, records) = recorded();
+    records.forget(&case.step);
+    let odd = case.input.with_file_name("a\nb.h");
+    let result = records.record(&case.step, &[case.input.clone(), odd], later());
+    assert!(result.is_err());
+    assert!(!state_path(&case.step.output).exists());
+}
+
+/// An input whose time and size match the record is not read again: a
+/// change that keeps both is the one miss the spec accepts, and it shows
+/// the bytes are not hashed on every build.
+///
+/// Mutation: hash every input every time, or forget what the record says
+/// of it; this test fails.
+#[test]
+fn a_matching_time_and_size_is_not_read_again() {
+    let (case, _) = recorded();
+    fs::write(&case.input, "int b;").unwrap();
+    set_time(&case.input, 1_000);
     assert!(fresh().up_to_date(&case.step));
 }
