@@ -13,6 +13,7 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+cuno-build.workspace = true
 cuno-core.workspace = true
 cuno-manifest.workspace = true
 cuno-toolchain.workspace = true
@@ -47,6 +48,7 @@ repository = "https://github.com/itsakeyfut/cuno"
 publish = false
 
 [workspace.dependencies]
+cuno-build = { path = "crates/cuno-build" }
 cuno-core = { path = "crates/cuno-core" }
 cuno-toolchain = { path = "crates/cuno-toolchain" }
 cuno-manifest = { path = "crates/cuno-manifest" }

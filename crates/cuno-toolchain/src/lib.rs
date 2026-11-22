@@ -9,6 +9,7 @@ pub mod flags;
 mod host;
 pub mod llvm;
 pub mod msvc;
+pub mod prepare;
 mod run;
 pub mod select;
 mod version;

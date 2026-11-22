@@ -10,3 +10,8 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+cuno-core.workspace = true
+cuno-manifest.workspace = true
+cuno-toolchain.workspace = true
