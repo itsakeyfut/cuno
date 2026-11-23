@@ -290,6 +290,7 @@ fn run(
                 env,
                 &cwd,
                 cuno_toolchain::HostOs::current(),
+                quiet,
                 shell,
             );
             return Ok(if problems == 0 { 0 } else { 1 });
