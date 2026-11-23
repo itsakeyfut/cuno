@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use cuno_core::Env;
 
 use crate::compiler::{Family, Syntax};
-use crate::flags::{CompileInput, Mode, TARGET_SWITCH, compile_args};
+use crate::flags::{CompileInput, Mode, TARGET_SWITCH, compile_args, for_clang_tools};
 use crate::select::{LlvmChoice, Selected};
 use crate::{Runner, ToolchainError, Version};
 
@@ -73,7 +73,10 @@ fn check_command(inputs: &ProbeInputs<'_>, probe: &Path) -> Vec<OsString> {
 /// Whether `tidy` is accepted by the MSVC standard library: the same probe
 /// as [`check`], analysed by clang-tidy with one harmless check enabled
 /// (with none it stops without analysing) and, after `--`, the same
-/// command without the source, which clang-tidy is given as its file (`toolchain.md`, "Minimum compiler versions"). The project's
+/// command without the source, which clang-tidy is given as its file, as
+/// clang-tidy reads it: a cl command is read as clang-cl's, so it is
+/// rewritten into what clang-cl takes to mean the same
+/// ([`for_clang_tools`]) (`toolchain.md`, "Minimum compiler versions"). The project's
 /// `.clang-tidy` is not read.
 pub fn check_tidy(
     tidy: &LlvmChoice,
@@ -103,7 +106,7 @@ pub fn check_tidy(
             Family::Llvm => {}
         }
         args.extend(
-            check_command(&inputs, probe)
+            for_clang_tools(kind, &check_command(&inputs, probe))
                 .into_iter()
                 .filter(|arg| arg.as_os_str() != probe.as_os_str()),
         );
@@ -505,10 +508,13 @@ mod tests {
             assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
             let probe = &args[2];
             assert!(probe.ends_with(".cpp"), "{args:?}");
-            let command: Vec<String> = strings(compile_args(&compile, Path::new(probe), None))
-                .into_iter()
-                .filter(|a| a != probe)
-                .collect();
+            let command: Vec<String> = strings(for_clang_tools(
+                kind,
+                &compile_args(&compile, Path::new(probe), None),
+            ))
+            .into_iter()
+            .filter(|a| a != probe)
+            .collect();
             let expected: Vec<String> = ["--"]
                 .iter()
                 .chain(mode)
@@ -523,5 +529,34 @@ mod tests {
             );
         }
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    /// With MSVC selected, clang-tidy reads the build's command as
+    /// clang-cl's, so a standard switch clang-cl does not know is given as
+    /// clang-cl's own: `edition = "c++23"` reaches clang-tidy as C++23
+    /// (`docs/en/specs/toolchain.md`, "Minimum compiler versions").
+    ///
+    /// Mutation: give clang-tidy the command without the clang-cl reading;
+    /// this test fails.
+    #[test]
+    fn clang_tidy_reads_an_msvc_standard_as_clang_cl_does() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = no_rtti();
+        let mut compile = input(CompilerKind::Msvc, &settings, Mode::Check);
+        compile.edition = Edition::Cxx23;
+        let run = answers(true, "", "");
+        let tidy = LlvmChoice {
+            path: "clang-tidy".into(),
+            version: v(22, 1, 8),
+        };
+        let inputs = ProbeInputs {
+            scratch: root.path(),
+            input: &compile,
+            cwd: root.path(),
+        };
+        check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+        let args = run.args.borrow().clone();
+        assert!(args.iter().any(|a| a == "/clang:-std=c++23"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "/std:c++23"), "{args:?}");
     }
 }
