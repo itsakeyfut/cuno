@@ -323,11 +323,13 @@ fn a_build_below_the_root_is_up_to_date_with_one_at_it() {
 
 /// A header created where the search finds it before the one a build read
 /// recompiles what read the old one, on every compiler, also when the new
-/// header sits in a directory that did not exist; once recorded, nothing
-/// runs again (docs/en/specs/build.md, "Deciding what changed").
+/// header sits in a directory that did not exist, and when its name is in
+/// another case; once recorded, nothing runs again
+/// (docs/en/specs/build.md, "Deciding what changed").
 ///
 /// Mutation: skip looking for same-named files in `Records::up_to_date`,
-/// or look for a header by its file name only; this test fails.
+/// look for a header by its file name only, or compare names with case on
+/// Windows; this test fails.
 #[test]
 fn a_header_created_ahead_in_the_search_is_compiled_in() {
     for (name, compiler) in COMPILERS {
@@ -354,7 +356,7 @@ fn a_header_created_ahead_in_the_search_is_compiled_in() {
             std::fs::write(&path, text).unwrap();
             set_time(&path, SystemTime::now() - Duration::from_secs(60));
         };
-        create("src/cfg.h", "#define CFG 2\n");
+        create("src/CFG.h", "#define CFG 2\n");
         assert_eq!(ran(&build(&project, name)), (vec!["main"], true), "{name}");
         assert_eq!(output(&project), "2 1\n", "{name}");
         create("src/sub/deep.h", "#define DEEP 3\n");
@@ -389,5 +391,36 @@ fn a_same_named_header_later_in_the_search_changes_nothing() {
         build(&project, name);
         assert_eq!(output(&project), "1\n", "{name}");
         assert_eq!(ran(&build(&project, name)), (vec![], false), "{name}");
+    }
+}
+
+/// A header created in `include-dirs` under the name a system header was
+/// found by (`sys/types.h`, from the compiler's `INCLUDE`) is compiled in:
+/// here it stops the build.
+///
+/// Mutation: give the records no `INCLUDE` directories, so a system header
+/// is looked for by its file name only; this test fails.
+#[test]
+fn a_header_created_to_shadow_a_system_one_is_compiled_in() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"inc\"]\n",
+            )
+            .file(
+                "src/main.cpp",
+                "#include <sys/types.h>\nint main() { return 0; }\n",
+            );
+        build(&project, name);
+        let shadow = project.path().join("inc/sys/types.h");
+        std::fs::create_dir_all(shadow.parent().unwrap()).unwrap();
+        std::fs::write(&shadow, "#error shadowed\n").unwrap();
+        set_time(&shadow, SystemTime::now() - Duration::from_secs(60));
+        let run = project.cuno(&["build", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
     }
 }
