@@ -501,6 +501,7 @@ mod tests {
             headers: None,
             reads: Vec::new(),
             searched: Vec::new(),
+            looked_for: Vec::new(),
         })
     }
 

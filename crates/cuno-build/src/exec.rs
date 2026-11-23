@@ -321,6 +321,7 @@ mod tests {
             headers: None,
             reads: Vec::new(),
             searched: Vec::new(),
+            looked_for: Vec::new(),
         }
     }
 
@@ -658,6 +659,7 @@ mod tests {
             headers: Some(Headers::DepFile(output.with_extension("d"))),
             reads: vec![source],
             searched: Vec::new(),
+            looked_for: Vec::new(),
             ..step("clang", &[])
         };
         let spawner = Compiles {

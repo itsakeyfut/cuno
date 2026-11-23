@@ -14,8 +14,8 @@
 //! The format is cuno's own. A record another cuno wrote, or one that
 //! cannot be read, counts as none.
 
-use std::collections::{BTreeSet, HashMap};
-use std::ffi::OsStr;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -67,8 +67,11 @@ pub struct Records {
     case: NameCase,
     /// Where each path leads, worked out once for the build.
     places: Mutex<HashMap<PathBuf, Place>>,
-    /// Whether each path looked for exists, looked up once for the build.
-    exists: Mutex<HashMap<PathBuf, bool>>,
+    /// The names in each directory looked in, folded as `case` compares
+    /// them, read once for the build.
+    listings: Mutex<HashMap<PathBuf, HashSet<OsString>>>,
+    /// For each folded name, the directories listed so far that hold it.
+    holders: Mutex<HashMap<OsString, Vec<PathBuf>>>,
 }
 
 impl Records {
@@ -92,7 +95,8 @@ impl Records {
             system: system.iter().map(|dir| Place::of(dir, case)).collect(),
             case,
             places: Mutex::new(HashMap::new()),
-            exists: Mutex::new(HashMap::new()),
+            listings: Mutex::new(HashMap::new()),
+            holders: Mutex::new(HashMap::new()),
         }
     }
 
@@ -208,6 +212,18 @@ impl Records {
         }
         let read: Vec<PathBuf> = inputs.iter().map(|(p, _)| p.clone()).collect();
         for path in self.found_elsewhere(step, &read) {
+            // One that appeared while the step ran, or just before, may lie
+            // ahead of what was read without the compiler having seen it.
+            let modified = fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .map_or(u128::MAX, |t| {
+                    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos())
+                });
+            if limit(SETTLE).is_some_and(|limit| modified >= limit) {
+                return Err(io::Error::other(
+                    "a same-named file appeared as the step ran",
+                ));
+            }
             let Some(name) = path.to_str() else {
                 return Err(io::Error::other("a path cannot be recorded"));
             };
@@ -239,56 +255,74 @@ impl Records {
     /// recorded lies later in it, so only one that appears since counts.
     ///
     /// A compile looks for what `read` holds (its source and headers) in
-    /// its include directories and beside each file read that is not the
-    /// compiler's own; a link looks for its libraries in `lib-dirs`.
+    /// its include directories and beside each file read, except in the
+    /// compiler's own directories; a link looks for every library it
+    /// links, found or not, in `lib-dirs`.
     fn found_elsewhere(&self, step: &Step, read: &[PathBuf]) -> BTreeSet<PathBuf> {
-        let (files, mut places): (&[PathBuf], Vec<PathBuf>) = match step.kind {
-            StepKind::Link { .. } => (&step.reads, step.searched.clone()),
-            StepKind::Compile { .. } | StepKind::Check { .. } => (read, step.searched.clone()),
-        };
-        if !matches!(step.kind, StepKind::Link { .. }) {
-            for file in files {
-                if let Some(dir) = file.parent() {
-                    let dir_place = self.place(dir);
-                    if !self.system.iter().any(|s| dir_place.within(s)) {
-                        places.push(dir.to_owned());
+        let mut found = BTreeSet::new();
+        if let StepKind::Link { .. } = step.kind {
+            for dir in &step.searched {
+                for name in &step.looked_for {
+                    let candidate = dir.join(name);
+                    if self.listed(dir, name) && !step.reads.contains(&candidate) {
+                        found.insert(candidate);
                     }
                 }
             }
+            return found;
         }
-        let places: Vec<(PathBuf, Place)> = places
-            .into_iter()
-            .map(|dir| {
-                let place = self.place(&dir);
-                (dir, place)
-            })
-            .fold(Vec::new(), |mut unique, (dir, place)| {
-                if !unique
-                    .iter()
-                    .any(|(_, p): &(PathBuf, Place)| p.same(&place))
-                {
-                    unique.push((dir, place));
-                }
-                unique
-            });
-        let mut found = BTreeSet::new();
-        for file in files {
+        // The compiler's own directories: `INCLUDE`, and where it is
+        // installed (Clang's own headers are under it).
+        let installed = step
+            .program
+            .parent()
+            .and_then(Path::parent)
+            .map(|dir| self.place(dir));
+        let own = |place: &Place| {
+            self.system.iter().any(|s| place.within(s))
+                || installed.as_ref().is_some_and(|i| place.within(i))
+        };
+        let mut places: Vec<(PathBuf, Place)> = Vec::new();
+        let beside = read.iter().filter_map(|file| file.parent());
+        for dir in step.searched.iter().map(PathBuf::as_path).chain(beside) {
+            let place = self.place(dir);
+            if !own(&place) && !places.iter().any(|(_, p)| p.same(&place)) {
+                places.push((dir.to_owned(), place));
+            }
+        }
+        let searched: Vec<Place> = step.searched.iter().map(|dir| self.place(dir)).collect();
+        let in_step: HashSet<PathBuf> = places.iter().map(|(dir, _)| dir.clone()).collect();
+        for dir in &in_step {
+            self.load(dir);
+        }
+        for file in read {
             let file_place = self.place(file);
-            let mut names: BTreeSet<PathBuf> = places
+            // Named from the directories searched by name: one found beside
+            // its includer was found in the first place searched, so nothing
+            // lies ahead of it there.
+            let mut names: BTreeSet<PathBuf> = searched
                 .iter()
-                .map(|(_, p)| p)
                 .chain(&self.system)
                 .filter_map(|base| file_place.relative(base))
                 .filter(|rel| rel.file_name().is_some())
                 .collect();
-            if names.is_empty() {
+            // One of the compiler's own outside `INCLUDE`, such as a header
+            // that ships with Clang, is searched for by its file name.
+            if names.is_empty() && own(&file_place) {
                 names.extend(file.file_name().map(PathBuf::from));
             }
-            for (dir, _) in &places {
-                for name in &names {
-                    let candidate = dir.join(name);
-                    if self.exists(&candidate) && !self.place(&candidate).same(&file_place) {
-                        found.insert(candidate);
+            for name in &names {
+                // Only the places whose listing holds the name's first
+                // part can hold it, so the rest are never asked.
+                let Some(first) = name.components().next() else {
+                    continue;
+                };
+                for dir in self.holding(first.as_os_str(), &in_step) {
+                    if self.listed(&dir, name) {
+                        let candidate = dir.join(name);
+                        if !self.place(&candidate).same(&file_place) {
+                            found.insert(candidate);
+                        }
                     }
                 }
             }
@@ -305,12 +339,66 @@ impl Records {
             .clone()
     }
 
-    /// Whether `path` exists, looked up once for the build.
-    fn exists(&self, path: &Path) -> bool {
-        let mut exists = self.exists.lock().unwrap_or_else(|e| e.into_inner());
-        *exists
-            .entry(path.to_owned())
-            .or_insert_with(|| path.exists())
+    /// Whether `dir` holds `name`, which may name a file in a directory
+    /// under it, judged from each directory's listing, read once for the
+    /// build: one listing answers every name looked for there, where a
+    /// lookup per name made a no-op build of a project with many header
+    /// directories more than ten times slower.
+    fn listed(&self, dir: &Path, name: &Path) -> bool {
+        let mut here = dir.to_owned();
+        for part in name.components() {
+            let part = self.case.fold(part.as_os_str());
+            self.load(&here);
+            let listings = self.listings.lock().unwrap_or_else(|e| e.into_inner());
+            if !listings
+                .get(&here)
+                .is_some_and(|names| names.contains(&part))
+            {
+                return false;
+            }
+            here.push(&part);
+        }
+        true
+    }
+
+    /// Reads the names in `dir`, folded as the host compares them, once
+    /// for the build, and notes `dir` under each name it holds.
+    fn load(&self, dir: &Path) {
+        let mut listings = self.listings.lock().unwrap_or_else(|e| e.into_inner());
+        if listings.contains_key(dir) {
+            return;
+        }
+        let listing: HashSet<OsString> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| self.case.fold(&entry.file_name()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut holders = self.holders.lock().unwrap_or_else(|e| e.into_inner());
+        for name in &listing {
+            holders
+                .entry(name.clone())
+                .or_default()
+                .push(dir.to_owned());
+        }
+        listings.insert(dir.to_owned(), listing);
+    }
+
+    /// The directories among `among`, all already listed, whose listing
+    /// holds `name`.
+    fn holding(&self, name: &OsStr, among: &HashSet<PathBuf>) -> Vec<PathBuf> {
+        let holders = self.holders.lock().unwrap_or_else(|e| e.into_inner());
+        holders
+            .get(&self.case.fold(name))
+            .map(|dirs| {
+                dirs.iter()
+                    .filter(|d| among.contains(*d))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// `path` as it is now. Its content is hashed only when its time or
@@ -446,6 +534,7 @@ mod tests {
             headers: None,
             reads: Vec::new(),
             searched: Vec::new(),
+            looked_for: Vec::new(),
         };
         let records = fresh();
         records
@@ -791,27 +880,142 @@ mod tests {
             headers: None,
             reads: Vec::new(),
             searched: searched.iter().map(|dir| root.join(dir)).collect(),
+            looked_for: Vec::new(),
         }
     }
 
     /// A library created in an earlier `lib-dirs` directory than the one
-    /// the link read makes the link run again.
+    /// the link read makes the link run again, and so does one created in
+    /// `lib-dirs` for a library the link took from the system; an object
+    /// it waited for is not looked for there.
     ///
-    /// Mutation: leave links out of the search for same-named files; this
-    /// test fails.
+    /// Mutation: leave links out of the search for same-named files, look
+    /// only for the libraries found in `lib-dirs`, or look for what the
+    /// link read rather than for its libraries; this test fails.
     #[test]
     fn a_library_created_ahead_in_lib_dirs_relinks() {
         let root = tempfile::tempdir().unwrap();
         let root = root.path();
         let link = StepKind::Link { bin: "app".into() };
-        let mut step = searching(link, root, &["second/x.lib"], &["first", "second"]);
+        let mut step = searching(
+            link,
+            root,
+            &["second/x.lib", "obj/a.obj"],
+            &["first", "second"],
+        );
         step.reads = vec![root.join("second/x.lib")];
-        fresh()
-            .record(&step, &step.reads.clone(), &[], later())
-            .unwrap();
+        step.looked_for = vec!["x.lib".into(), "version.lib".into()];
+        let read = [root.join("second/x.lib"), root.join("obj/a.obj")];
+        fresh().record(&step, &read, &[], later()).unwrap();
+        fs::write(root.join("first/a.obj"), "unrelated").unwrap();
         assert!(fresh().up_to_date(&step));
         fs::write(root.join("first/x.lib"), "new").unwrap();
         assert!(!fresh().up_to_date(&step));
+        fs::remove_file(root.join("first/x.lib")).unwrap();
+        assert!(fresh().up_to_date(&step));
+        fs::write(root.join("second/version.lib"), "shadow").unwrap();
+        assert!(!fresh().up_to_date(&step));
+    }
+
+    /// A header created beside a file the compile read, in a directory it
+    /// does not search by name, can be found first by an `#include "..."`
+    /// there, so the step runs again; nothing is looked for in the
+    /// compiler's own directories, and a header that ships with the
+    /// compiler is looked for by its file name. A check is judged the same
+    /// way as a compile.
+    ///
+    /// Mutation: leave the directories of the files read out of the places
+    /// looked in, look in the compiler's own directories, drop the file
+    /// name for a header of the compiler's own, or judge a check without
+    /// looking; this test fails.
+    #[test]
+    fn a_header_is_looked_for_beside_what_read_it_but_not_in_the_compiler() {
+        for kind in ["compile", "check"] {
+            let root = tempfile::tempdir().unwrap();
+            let root = root.path();
+            let source = root.join("src/a.cpp");
+            let step_kind = match kind {
+                "compile" => StepKind::Compile { source },
+                _ => StepKind::Check { source },
+            };
+            let mut step = searching(
+                step_kind,
+                root,
+                &["src/a.cpp", "inc/x.h", "lib/y.h", "llvm/lib/clang/stddef.h"],
+                &["inc"],
+            );
+            step.program = root.join("llvm/bin/clang.exe");
+            let read = [
+                root.join("src/a.cpp"),
+                root.join("inc/x.h"),
+                root.join("lib/y.h"),
+                root.join("llvm/lib/clang/stddef.h"),
+            ];
+            fresh().record(&step, &read, &[], later()).unwrap();
+            assert!(fresh().up_to_date(&step), "{kind}");
+            fs::write(root.join("llvm/lib/clang/x.h"), "own").unwrap();
+            assert!(fresh().up_to_date(&step), "{kind}");
+            fs::write(root.join("lib/x.h"), "beside").unwrap();
+            assert!(!fresh().up_to_date(&step), "{kind}");
+            fs::remove_file(root.join("lib/x.h")).unwrap();
+            fs::write(root.join("inc/stddef.h"), "shadow").unwrap();
+            assert!(!fresh().up_to_date(&step), "{kind}");
+        }
+    }
+
+    /// What was present when a step was recorded is kept in its record as
+    /// `present` lines before the end line, which counts only the inputs,
+    /// and read back as present.
+    ///
+    /// Mutation: write no `present` line, read none back, or count them in
+    /// the end line; this test fails.
+    #[test]
+    fn a_record_keeps_what_was_present() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let source = root.join("src/a.cpp");
+        let step = searching(
+            StepKind::Compile { source },
+            root,
+            &["src/a.cpp", "a/cfg.h", "b/cfg.h"],
+            &["a", "b"],
+        );
+        let read = [root.join("src/a.cpp"), root.join("a/cfg.h")];
+        fresh().record(&step, &read, &[], later()).unwrap();
+        let text = fs::read_to_string(state_path(&step.output)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines[lines.len() - 2],
+            format!("present {}", root.join("b").join("cfg.h").display())
+        );
+        assert_eq!(lines[lines.len() - 1], "end 2");
+        let record = super::read(&state_path(&step.output)).unwrap();
+        assert_eq!(
+            record.present,
+            BTreeSet::from([root.join("b").join("cfg.h")])
+        );
+    }
+
+    /// A same-named file saved after the step started is not taken as one
+    /// that was there before: the step is left unrecorded, as for an input.
+    ///
+    /// Mutation: record whatever is found when the step ends; this test
+    /// fails.
+    #[test]
+    fn a_header_created_while_the_step_ran_is_not_taken_as_there_before() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let source = root.join("src/a.cpp");
+        let step = searching(
+            StepKind::Compile { source },
+            root,
+            &["src/a.cpp", "second/x.h"],
+            &["first", "second"],
+        );
+        let read = [root.join("src/a.cpp"), root.join("second/x.h")];
+        let started = SystemTime::now();
+        fs::write(root.join("first/x.h"), "new").unwrap();
+        assert!(fresh().record(&step, &read, &[], started).is_err());
     }
 
     /// A header found in the compiler's own directory is looked for by its
