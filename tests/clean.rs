@@ -160,7 +160,7 @@ fn an_unmarked_output_directory_is_not_removed() {
 /// would be refused.
 ///
 /// Mutation: clean the current directory's `target` outside a project, or
-/// judge the settings before looking for the project; this test fails.
+/// report the settings' error before the missing project; this test fails.
 #[test]
 fn clean_outside_a_project_exits_3() {
     let outside = Project::new()
@@ -238,6 +238,28 @@ fn a_file_in_use_fails_the_removal_with_exit_3() {
     assert_eq!(run.code, Some(3), "{}", run.stderr);
     assert!(
         run.stderr.starts_with("error: could not remove "),
+        "{}",
+        run.stderr
+    );
+}
+
+/// Outside a project, the user's `[term] color` colors the error as it does
+/// `cuno build`'s (docs/en/specs/commands.md, "Available for all commands").
+///
+/// Mutation: look for the project before reading the settings; this test
+/// fails.
+#[test]
+fn clean_outside_a_project_colors_as_configured() {
+    let outside = Project::new();
+    std::fs::write(
+        outside.home().join("config.toml"),
+        "[term]\ncolor = \"always\"\n",
+    )
+    .unwrap();
+    let run = outside.cuno(&["clean"]);
+    assert!(
+        run.stderr
+            .starts_with("\x1b[1;31merror\x1b[0m: could not find cuno.toml"),
         "{}",
         run.stderr
     );
