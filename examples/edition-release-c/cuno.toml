@@ -2,6 +2,7 @@
 name = "edition-release-c"
 version = "0.1.0"
 lang = "c"
+edition = "c23"
 
 [profile.release.build]
 defines = ["EXAMPLE_RELEASE"]

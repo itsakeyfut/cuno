@@ -7,7 +7,8 @@
 #endif
 
 int main(void) {
-    static_assert(sizeof(int) >= 2, "C23 static_assert needs no header");
-    printf("C23, %s profile\n", PROFILE);
+    /* typeof is C23: under C17 none of the three compilers accepts it. */
+    typeof(sizeof(int)) size = sizeof(int);
+    printf("C23, %s profile, int is %zu bytes\n", PROFILE, size);
     return 0;
 }
