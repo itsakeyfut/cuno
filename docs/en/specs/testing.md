@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 18e38a37f6f93c1dafc157c5969cca85e0990216 -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob 51b634fec7087c4034bc4214bcaba015a5069fb2 -->
 
 # Testing
 
@@ -195,7 +195,7 @@ test result: FAILED. 1 passed; 1 failed; 1 skipped; finished in 0.02s
 - Everything goes to standard error (like `Compiling` and the other status lines). Standard output is kept free for future output meant to be read by programs.
 - For each test executable, the output is, in order: the `Running` line, `running <n> tests`, each test's line, the failure details, and the `test result:` line.
 - Each test's line is printed in the order the tests finish (tests run in parallel, so this is not necessarily name order). A skipped test with a reason is shown as `test slow path ... skipped (reason)`.
-- The failure details go under `failures:`, per test: `---- name ----`, then the failed checks (`file:line: message`, with the file as a path relative to the project root), then the `info` notes, then the captured standard output and standard error. A test that ended without writing the result file shows its exit code, as in `the test ended without reporting a result (exit code 3)`.
+- The failure details go under `failures:`, per test: `---- name ----`, then the failed checks (`file:line: message`, with the file as a path relative to the project root), then the `info` notes, then the captured standard output and standard error. A test that ended without writing the result file shows its exit code, as in `the test ended without reporting a result (exit code 3)`. On Windows, exit codes that mean a crash (such as `0xC0000005`, the ones that come out negative) are shown in hexadecimal.
 - With `--nocapture`, each test's output is printed all together right after that test's line. Even when tests run in parallel, the output of two tests is never mixed.
 - A test executable whose list cannot be taken (it cannot be started, `--list` exits with a non-zero code, a test with the same name exists at a different location, or a macro-API test is in a header) is reported with `error:`, and none of that test executable's tests are run.
 
