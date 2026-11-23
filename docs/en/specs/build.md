@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 73bc2e949db1cffc669fc1e65ace6b19acee5aba -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 4ead99d3aaad0965a4a982834755f535e1890371 -->
 
 # Build
 
@@ -24,7 +24,13 @@
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
   - the command line differs from the record (a setting, the compiler or the profile changed);
-  - an input's modification time or size differs from the record, and its content hash differs too.
+  - an input's modification time or size differs from the record, and its content hash differs too;
+  - a file with the same name as a header or library it read has newly appeared in another place that is searched (below).
+- Same-named files appearing: when a file with the same name appears in a place the search reaches earlier, the next compile reads that one instead. Recording only the files read would miss this and report success with the old code. So for each step, cuno checks the following.
+  - Where it looks: for a compile, `include-dirs`, the default include paths (below), and the directories holding the source and the headers it read (because `#include "..."` searches from the directory of the including file). For a link, `lib-dirs`.
+  - Which names: for each file read, its path relative to the search directory it was found in (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. For a file under no search directory (such as a header that ships with Clang), its file name.
+  - If any combination of these places and names that did not exist when the record was made now exists, the step runs. One that already existed then (one later in the search order, which was not read) does not count as a change.
+  - Rationale: the search order differs between compilers. Checking every place that may be searched, without reproducing the order, and looking only at what differs from the time of the record misses nothing on any compiler, and does not rerun a step every time because of an unrelated file of the same name. The only extra runs come when a file with the same name as a header or library read newly appears in a place later in the search order.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
 - Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it. An input modified 2 seconds or less before the step starts, or later, is also treated as modified while it ran, except an input cuno itself finished writing earlier in the same build, before the step started (such as the objects a link reads), which gets no such margin.
@@ -35,7 +41,8 @@
   - Hashing everything on every build would read the standard and Windows headers (thousands of files) even when nothing changed. Inputs whose time and size match are not read.
   - What it misses is the following, and then it reports success with the old code:
     - a file whose content changed while its modification time and size stayed the same. The modification time stays the same only when, after the record, the file is rewritten to the same size within one tick of the modification time (see the rationale for the 2-second margin above), which never happens through a person's editing. It can happen when a tool or a test rewrites a file quickly;
-    - a header of the same name newly created where the include search finds it before the recorded one (and likewise a library), since the record holds the files read and not the places that were not.
+    - a header that `__has_include` did not find, created later. No file was read, so there is no name to check;
+    - a file added later to the compiler's own directories (`INCLUDE`, or the directory of the headers that ship with Clang). These are not among the places checked. An update of the toolset or the SDK changes the value of `INCLUDE`, and an update of Clang changes the compiler's version, so either shows up as a different command line.
 - The records are kept inside the output directory (`target/<profile name>/`). Their format is cuno's own and not meant for users to read. A record from another cuno version, or one that cannot be read, is treated as absent (the step runs).
 
 ## Default include paths
