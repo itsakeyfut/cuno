@@ -8,14 +8,15 @@ use std::path::{Path, PathBuf};
 
 use cuno_toolchain::compiler::{CompilerKind, Dependencies, Family};
 use cuno_toolchain::flags::{
-    BuildSettings, Lang, LinkInput, Mode, ProfileSettings, compile_args, dependency_args, link_args,
+    BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, compile_args,
+    dependency_args, link_args,
 };
 
 use crate::deps::Headers;
 
 use crate::input::CompileSettings;
 use crate::layout::Layout;
-use crate::sources::{Source, Sources};
+use crate::sources::{Source, Sources, TestExe};
 
 /// What a step does.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,12 +85,45 @@ pub struct Graph {
     pub steps: Vec<Step>,
 }
 
+/// The settings sources compile with in one layout.
+pub type Settings<'a> = &'a dyn Fn(Lang) -> CompileSettings;
+
+/// What a plan builds.
+#[derive(Clone, Copy)]
+pub enum Targets<'a> {
+    /// The package's executables: each entry file and the body, one link
+    /// per executable (`project-layout.md`, "Link rules").
+    Programs,
+    /// The test executables (`testing.md`, "Running"): the body, the
+    /// sources under `tests/` and cuno's bundled runtime, entry files left
+    /// out, one link per executable. Only with a test layout and
+    /// [`Mode::Compile`].
+    Tests {
+        /// The executables, as [`crate::sources::test_executables`] gives.
+        executables: &'a [TestExe],
+        /// The runtime's source, `cuno/test_main.c` in the cuno home.
+        runtime: &'a Path,
+        /// The program's layout and settings. The executables made from
+        /// `tests/` link the body compiled without `CUNO_TEST`, the objects
+        /// `cuno build` makes, so the in-source tests are in the in-source
+        /// tests' executable alone (`project-layout.md`, "Link rules").
+        plain: (&'a Layout, Settings<'a>),
+    },
+    /// What `compile_commands.json` describes: the test build's sources
+    /// but for the runtime, and the entry files, compiled and never linked
+    /// (`build.md`, "Output"). Only with a test layout and
+    /// [`Mode::Compile`].
+    Editors,
+}
+
 /// What a build is planned from.
 pub struct Plan<'a> {
     /// The package's name, which names its object directory.
     pub package: &'a str,
     /// Its classified sources.
     pub sources: &'a Sources,
+    /// What is built from them.
+    pub targets: Targets<'a>,
     /// Where outputs go.
     pub layout: &'a Layout,
     /// The compiler.
@@ -100,7 +134,7 @@ pub struct Plan<'a> {
     /// settings `compile` gives must be for the same mode.
     pub mode: Mode,
     /// The settings a source of each language compiles with.
-    pub compile: &'a dyn Fn(Lang) -> CompileSettings,
+    pub compile: Settings<'a>,
     /// The settings every link uses.
     pub link: (&'a BuildSettings, &'a ProfileSettings),
     /// Whether cuno colors its output, and so asks Clang to color its
@@ -108,16 +142,32 @@ pub struct Plan<'a> {
     pub color: bool,
 }
 
-/// Plans a build: one compile per source of the package body and per entry
-/// file, each once, and one link per executable of its entry file's object
-/// and every body object (`project-layout.md`, "Link rules"). In
-/// [`Mode::Check`], one check per source instead, each with its stamp
-/// where the object would be, and no links (`commands.md`, "`cuno build`
-/// / `cuno check`").
+/// Plans a build of `p.targets`. For the programs: one compile per source
+/// of the package body and per entry file, each once, and one link per
+/// executable of its entry file's object and every body object
+/// (`project-layout.md`, "Link rules"); in [`Mode::Check`], one check per
+/// source instead, each with its stamp where the object would be, and no
+/// links (`commands.md`, "`cuno build` / `cuno check`"). For the tests and
+/// the editors, as [`Targets`] says.
 pub fn plan(p: &Plan<'_>) -> Graph {
+    let tests = match p.targets {
+        Targets::Programs => false,
+        Targets::Tests { .. } | Targets::Editors => true,
+    };
+    // A test plan on a program's layout, or a check of one, is a bug in
+    // cuno: its objects would mix with the program's, or nothing would link.
+    assert_eq!(tests, p.layout.is_test(), "targets for another layout");
+    assert!(
+        !tests || p.mode == Mode::Compile,
+        "a test plan in another mode than compile"
+    );
     let mut steps = Vec::new();
-    let mut compile = |source: &Source| -> usize {
-        let settings = (p.compile)(source.lang);
+    let own = (p.layout, p.compile);
+    let mut compile = |source: &Source,
+                       (layout, settings_for): (&Layout, Settings<'_>),
+                       object: Option<PathBuf>|
+     -> usize {
+        let settings = settings_for(source.lang);
         // A disagreement is a bug in cuno: a check planned with compile
         // flags would write objects and stamp nothing it checked.
         assert_eq!(settings.mode, p.mode, "compile settings for another mode");
@@ -125,7 +175,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         // objects would hold no tests, and a test run would find none.
         assert_eq!(
             settings.test,
-            p.layout.is_test(),
+            layout.is_test(),
             "compile settings for another build than the layout's"
         );
         let (kind, output) = match p.mode {
@@ -133,13 +183,13 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 StepKind::Compile {
                     source: source.path.clone(),
                 },
-                p.layout.object(p.package, &source.path),
+                object.unwrap_or_else(|| layout.object(p.package, &source.path)),
             ),
             Mode::Check => (
                 StepKind::Check {
                     source: source.path.clone(),
                 },
-                p.layout.check_stamp(p.package, &source.path),
+                layout.check_stamp(p.package, &source.path),
             ),
         };
         let echo = match p.kind.family() {
@@ -182,28 +232,132 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         });
         steps.len() - 1
     };
-    let body: Vec<usize> = p.sources.body.iter().map(&mut compile).collect();
-    let entries: Vec<usize> = p.sources.bins.iter().map(|b| compile(&b.entry)).collect();
-    // A match rather than an `if`, so a new mode has to say whether it links.
-    match p.mode {
-        Mode::Compile => {}
-        Mode::Check => return Graph { steps },
+    let body: Vec<usize> = p
+        .sources
+        .body
+        .iter()
+        .map(|s| compile(s, own, None))
+        .collect();
+    // What is linked: the executable's name, its subsystem, its path and
+    // the steps whose objects it takes, in link order.
+    let mut links: Vec<(String, Subsystem, PathBuf, Vec<usize>)> = Vec::new();
+    match p.targets {
+        Targets::Programs => {
+            let entries: Vec<usize> = p
+                .sources
+                .bins
+                .iter()
+                .map(|b| compile(&b.entry, own, None))
+                .collect();
+            // A match rather than an `if`, so a new mode has to say whether
+            // it links.
+            match p.mode {
+                Mode::Compile => {}
+                Mode::Check => return Graph { steps },
+            }
+            for (bin, entry) in p.sources.bins.iter().zip(entries) {
+                let after = std::iter::once(entry).chain(body.iter().copied()).collect();
+                links.push((
+                    bin.name.clone(),
+                    bin.subsystem,
+                    p.layout.exe(&bin.name),
+                    after,
+                ));
+            }
+        }
+        Targets::Editors => {
+            for bin in &p.sources.bins {
+                compile(&bin.entry, own, None);
+            }
+            for source in p.sources.tests.iter().chain(&p.sources.test_helpers) {
+                compile(source, own, None);
+            }
+            return Graph { steps };
+        }
+        Targets::Tests {
+            executables,
+            runtime,
+            plain,
+        } => {
+            let files: Vec<usize> = p
+                .sources
+                .tests
+                .iter()
+                .map(|s| compile(s, own, None))
+                .collect();
+            let helpers: Vec<usize> = p
+                .sources
+                .test_helpers
+                .iter()
+                .map(|s| compile(s, own, None))
+                .collect();
+            // Only when there is a `tests/` executable to link it.
+            let plain_body: Vec<usize> = if files.is_empty() {
+                Vec::new()
+            } else {
+                p.sources
+                    .body
+                    .iter()
+                    .map(|s| compile(s, plain, None))
+                    .collect()
+            };
+            let name = runtime
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let runtime = compile(
+                &Source {
+                    path: runtime.to_owned(),
+                    lang: Lang::C,
+                },
+                own,
+                Some(p.layout.runtime_object(p.package, &name)),
+            );
+            for exe in executables {
+                // In-source tests: the body and the runtime. A file under
+                // `tests/`: that file, the helpers, the plain body and the
+                // runtime (`project-layout.md`, "Link rules").
+                let (mine, linked_body): (Vec<usize>, &[usize]) =
+                    match &exe.file {
+                        None => (Vec::new(), &body),
+                        Some(file) => {
+                            let at =
+                                p.sources.tests.iter().position(|t| t == file).expect(
+                                    "a test executable's file is one of the sources' tests",
+                                );
+                            (
+                                std::iter::once(files[at])
+                                    .chain(helpers.iter().copied())
+                                    .collect(),
+                                &plain_body,
+                            )
+                        }
+                    };
+                let after = mine
+                    .into_iter()
+                    .chain(linked_body.iter().copied())
+                    .chain([runtime])
+                    .collect();
+                links.push((
+                    exe.name.clone(),
+                    Subsystem::Console,
+                    p.layout.test_exe(p.package, &exe.name),
+                    after,
+                ));
+            }
+        }
     }
 
-    for (bin, entry) in p.sources.bins.iter().zip(entries) {
-        let after: Vec<usize> = std::iter::once(entry).chain(body.iter().copied()).collect();
+    for (name, subsystem, exe, after) in links {
         let objects: Vec<PathBuf> = after.iter().map(|&i| steps[i].output.clone()).collect();
-        let exe = p.layout.exe(&bin.name);
         let input = LinkInput {
             kind: p.kind,
             build: p.link.0,
             profile: p.link.1,
-            subsystem: bin.subsystem,
+            subsystem,
         };
         steps.push(Step {
-            kind: StepKind::Link {
-                bin: bin.name.clone(),
-            },
+            kind: StepKind::Link { bin: name },
             program: p.program.to_owned(),
             args: link_args(&input, &objects, &exe),
             output: exe,
@@ -278,6 +432,8 @@ mod tests {
                 source("C:/p/src/a.cpp", Lang::Cxx),
                 source("C:/p/src/b.c", Lang::C),
             ],
+            tests: Vec::new(),
+            test_helpers: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -310,6 +466,7 @@ mod tests {
         plan(&Plan {
             package: "app",
             sources: &sources,
+            targets: Targets::Programs,
             layout: &layout,
             kind,
             program: Path::new("C:/cl.exe"),
@@ -517,6 +674,7 @@ mod tests {
         let g = plan(&Plan {
             package: "app",
             sources: &sources,
+            targets: Targets::Programs,
             layout: &layout,
             kind,
             program: Path::new("C:/cl.exe"),
@@ -567,6 +725,7 @@ mod tests {
             plan(&Plan {
                 package: "app",
                 sources: &sources,
+                targets: Targets::Programs,
                 layout: &layout,
                 kind,
                 program: Path::new("C:/clang.exe"),
@@ -659,6 +818,7 @@ mod tests {
         plan(&Plan {
             package: "app",
             sources: &sources,
+            targets: Targets::Editors,
             layout: &layout,
             kind,
             program: Path::new("C:/clang.exe"),
@@ -667,5 +827,197 @@ mod tests {
             link: (&link.build, &link.profile),
             color: false,
         });
+    }
+
+    /// A package with an executable, a body source, a test file and a
+    /// helper under `tests/`.
+    fn test_sources() -> Sources {
+        Sources {
+            bins: vec![Bin {
+                name: "app".into(),
+                entry: source("C:/p/src/main.cpp", Lang::Cxx),
+                subsystem: Subsystem::Console,
+            }],
+            body: vec![source("C:/p/src/a.cpp", Lang::Cxx)],
+            tests: vec![source("C:/p/tests/t.cpp", Lang::Cxx)],
+            test_helpers: vec![source("C:/p/tests/common/h.c", Lang::C)],
+            warnings: Vec::new(),
+        }
+    }
+
+    const RUNTIME: &str = "C:/home/include/0.0.0/cuno/test_main.c";
+
+    fn test_plan(targets: Targets<'_>, sources: &Sources) -> Graph {
+        let layout = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        )
+        .for_tests();
+        let kind = CompilerKind::Clang;
+        let compile = |lang| {
+            compile_settings(
+                None,
+                kind,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                Path::new(BUNDLED),
+                true,
+                Mode::Compile,
+            )
+        };
+        let link = compile(Lang::Cxx);
+        plan(&Plan {
+            package: "app",
+            sources,
+            targets,
+            layout: &layout,
+            kind,
+            program: Path::new("C:/clang.exe"),
+            mode: Mode::Compile,
+            compile: &compile,
+            link: (&link.build, &link.profile),
+            color: false,
+        })
+    }
+
+    fn compiled(g: &Graph) -> Vec<PathBuf> {
+        g.steps
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StepKind::Compile { source } => Some(source.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The test build compiles the body, the sources under `tests/` and the
+    /// runtime with `CUNO_TEST`, and the body once more without it into the
+    /// program's objects, never an entry file. It links the in-source tests
+    /// from the test body and the runtime, and each test file with the
+    /// helpers, the plain body and the runtime, each into its own place
+    /// (`project-layout.md`, "Link rules"; `build.md`, "Output directory").
+    ///
+    /// Mutation: compile an entry file, leave out the helpers, the body or
+    /// the runtime from a link, link the test body into a `tests/`
+    /// executable (its in-source tests would run there too), give a helper
+    /// an executable of its own, link a test file into the in-source tests,
+    /// or put an executable anywhere but `test/<package>/bin/`; this test
+    /// fails.
+    #[test]
+    fn a_test_build_links_each_test_executable_as_the_spec_says() {
+        let sources = test_sources();
+        let executables =
+            crate::sources::test_executables(Path::new("C:/p"), "app", &sources, HostOs::Windows)
+                .unwrap();
+        let program = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        );
+        let plain = |lang| {
+            compile_settings(
+                None,
+                CompilerKind::Clang,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                Path::new(BUNDLED),
+                false,
+                Mode::Compile,
+            )
+        };
+        let g = test_plan(
+            Targets::Tests {
+                executables: &executables,
+                runtime: Path::new(RUNTIME),
+                plain: (&program, &plain),
+            },
+            &sources,
+        );
+        assert_eq!(
+            compiled(&g),
+            [
+                PathBuf::from("C:/p/src/a.cpp"),
+                PathBuf::from("C:/p/tests/t.cpp"),
+                PathBuf::from("C:/p/tests/common/h.c"),
+                PathBuf::from("C:/p/src/a.cpp"),
+                PathBuf::from(RUNTIME),
+            ]
+        );
+        let defines_test: Vec<bool> = g
+            .steps
+            .iter()
+            .filter(|s| matches!(s.kind, StepKind::Compile { .. }))
+            .map(|s| args(s).contains(&"-DCUNO_TEST".to_owned()))
+            .collect();
+        assert_eq!(defines_test, [true, true, true, false, true]);
+        let object = |i: usize| g.steps[i].output.clone();
+        assert_eq!(
+            object(3),
+            PathBuf::from("C:/p/target/debug/obj/app/src/a.cpp.obj")
+        );
+        assert_eq!(
+            object(4),
+            PathBuf::from("C:/p/target/debug/test/app/cuno/test_main.c.obj")
+        );
+        let links: Vec<(&str, &Path, Vec<PathBuf>)> = g
+            .steps
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StepKind::Link { bin } => Some((
+                    bin.as_str(),
+                    s.output.as_path(),
+                    s.after.iter().map(|&i| object(i)).collect(),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (
+                    "app",
+                    Path::new("C:/p/target/debug/test/app/bin/app.exe"),
+                    vec![object(0), object(4)]
+                ),
+                (
+                    "tests-t",
+                    Path::new("C:/p/target/debug/test/app/bin/tests-t.exe"),
+                    vec![object(1), object(2), object(3), object(4)]
+                ),
+            ]
+        );
+    }
+
+    /// What compile_commands.json describes: every source of the test
+    /// build but the runtime, and the entry files, with no link (`build.md`,
+    /// "Output").
+    ///
+    /// Mutation: leave out the entry files or the sources under `tests/`,
+    /// add the runtime, or link; this test fails.
+    #[test]
+    fn editors_see_every_source_but_the_runtime() {
+        let g = test_plan(Targets::Editors, &test_sources());
+        assert_eq!(
+            compiled(&g),
+            [
+                PathBuf::from("C:/p/src/a.cpp"),
+                PathBuf::from("C:/p/src/main.cpp"),
+                PathBuf::from("C:/p/tests/t.cpp"),
+                PathBuf::from("C:/p/tests/common/h.c"),
+            ]
+        );
+        assert_eq!(g.steps.len(), 4, "no links");
+    }
+
+    /// Mutation: plan a test build on a program's layout; this test fails.
+    #[test]
+    #[should_panic(expected = "targets for another layout")]
+    fn programs_need_a_program_layout() {
+        test_plan(Targets::Programs, &test_sources());
     }
 }

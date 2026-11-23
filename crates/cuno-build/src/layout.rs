@@ -162,15 +162,47 @@ impl Layout {
             .join(name)
     }
 
-    /// The executable `bin`. Where a test build's executables go is not
-    /// decided yet (`cuno test`, M3), so a test layout gives the program's
-    /// path here and nothing should link through one.
+    /// The program's executable `bin`. A test build makes none: its
+    /// executables are [`Layout::test_exe`]'s, and asking a test layout for
+    /// this is a bug in cuno.
     pub fn exe(&self, bin: &str) -> PathBuf {
+        assert!(!self.is_test(), "a program's executable from a test layout");
+        self.profile_dir.join(self.executable(bin))
+    }
+
+    /// The test executable `name` of `package`:
+    /// `test/<package>/bin/<name>`, apart from both the objects and the
+    /// program (`docs/en/specs/build.md`, "Output directory"). Only a test
+    /// layout has one; asking another is a bug in cuno.
+    pub fn test_exe(&self, package: &str, name: &str) -> PathBuf {
+        assert!(self.is_test(), "a test executable from a program's layout");
+        self.profile_dir
+            .join("test")
+            .join(package)
+            .join("bin")
+            .join(self.executable(name))
+    }
+
+    /// The object of `file`, a source of cuno's bundled test runtime, for
+    /// `package`: `test/<package>/cuno/<file>.obj`. The runtime lies outside
+    /// the project, so it has a directory of its own rather than a place
+    /// beside the project's sources. Only a test layout has one.
+    pub fn runtime_object(&self, package: &str, file: &str) -> PathBuf {
+        assert!(self.is_test(), "a runtime object from a program's layout");
+        self.profile_dir
+            .join("test")
+            .join(package)
+            .join("cuno")
+            .join(format!("{file}.obj"))
+    }
+
+    /// `name` with the host's executable suffix.
+    fn executable(&self, name: &str) -> String {
         let suffix = match self.host {
             HostOs::Windows => ".exe",
             HostOs::Other => "",
         };
-        self.profile_dir.join(format!("{bin}{suffix}"))
+        format!("{name}{suffix}")
     }
 }
 
@@ -365,5 +397,57 @@ mod tests {
             dev.object("app", Path::new("C:/p/src/a.cpp")),
             Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
         );
+    }
+
+    /// A test build's executables go in `test/<package>/bin/`, and the
+    /// runtime's objects in `test/<package>/cuno/`: apart from the
+    /// program, from each other and from the objects of `src/` and
+    /// `tests/` (`build.md`, "Output directory").
+    ///
+    /// Mutation: put test executables beside the program or the objects,
+    /// drop the package from either path, or the executable's suffix; this
+    /// test fails.
+    #[test]
+    fn a_test_build_has_its_own_executables_and_runtime_objects() {
+        let test = layout(Profile::Dev).for_tests();
+        assert_eq!(
+            test.test_exe("app", "tests-foo"),
+            Path::new("C:/p/target/debug/test/app/bin/tests-foo.exe")
+        );
+        assert_eq!(
+            test.runtime_object("app", "test_main.c"),
+            Path::new("C:/p/target/debug/test/app/cuno/test_main.c.obj")
+        );
+        assert_eq!(
+            test.object("app", Path::new("C:/p/tests/foo.cpp")),
+            Path::new("C:/p/target/debug/test/app/tests/foo.cpp.obj")
+        );
+        let other = Layout::new(
+            Path::new("/p/target"),
+            Profile::Dev,
+            Path::new("/p"),
+            HostOs::Other,
+        )
+        .for_tests();
+        assert_eq!(
+            other.test_exe("app", "app"),
+            Path::new("/p/target/debug/test/app/bin/app")
+        );
+    }
+
+    /// Mutation: let a test layout give a program's executable; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a program's executable from a test layout")]
+    fn a_test_layout_has_no_program() {
+        layout(Profile::Dev).for_tests().exe("app");
+    }
+
+    /// Mutation: let a program's layout give a test executable; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a test executable from a program's layout")]
+    fn a_program_layout_has_no_test_executable() {
+        layout(Profile::Dev).test_exe("app", "app");
     }
 }

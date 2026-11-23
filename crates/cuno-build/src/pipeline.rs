@@ -17,7 +17,7 @@ use cuno_toolchain::{HostOs, Version};
 use crate::BuildError;
 use crate::compdb;
 use crate::exec::{self, Event, Spawner};
-use crate::graph::{self, Plan, Step, StepKind};
+use crate::graph::{self, Plan, Step, StepKind, Targets};
 use crate::input::compile_settings;
 use crate::layout::{self, Layout};
 use crate::sources::{self, Bin};
@@ -53,6 +53,9 @@ pub enum Goal<'a> {
         /// `--bin`.
         bin: Option<&'a str>,
     },
+    /// `cuno test`'s build: the test executables, compiled with
+    /// `CUNO_TEST` (`docs/en/specs/testing.md`, "Running").
+    Test,
 }
 
 /// One build.
@@ -90,6 +93,21 @@ pub struct Request<'a> {
 pub struct Built {
     /// For [`Goal::Run`], the executable chosen.
     pub exe: Option<PathBuf>,
+    /// For [`Goal::Test`], every test executable, the in-source tests'
+    /// first and then one per source under `tests/` in path order.
+    pub tests: Vec<TestExecutable>,
+}
+
+/// A test executable a build made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestExecutable {
+    /// Its name (`docs/en/specs/build.md`, "Output directory").
+    pub name: String,
+    /// Where it is.
+    pub path: PathBuf,
+    /// The source under `tests/` it is made from; `None` for the in-source
+    /// tests.
+    pub file: Option<PathBuf>,
 }
 
 /// Builds `request`, printing what a build prints to `shell`
@@ -107,7 +125,11 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         ..
     } = *request;
     let tool = &request.toolchain;
-    let compile = |lang: Lang, mode: Mode| {
+    let test = match goal {
+        Goal::Build | Goal::Check | Goal::Run { .. } => false,
+        Goal::Test => true,
+    };
+    let settings = |lang: Lang, test: bool, mode: Mode| {
         compile_settings(
             Some((root, manifest)),
             tool.kind,
@@ -115,24 +137,49 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             lang,
             host,
             bundled,
-            false,
+            test,
             mode,
         )
     };
+    let compile = |lang: Lang, mode: Mode| settings(lang, test, mode);
+    // The program's settings, for the body the `tests/` executables link.
+    let plain = |lang: Lang| settings(lang, false, Mode::Compile);
 
     let sources = sources::classify(root, manifest, target_dir, host)?;
     for warning in &sources.warnings {
         shell.warning(warning);
     }
-    let layout = Layout::new(target_dir, profile, root, host);
-    // Chosen before anything is built, so a wrong `--bin` costs nothing.
+    let package = &manifest.package.name;
+    let program_layout = Layout::new(target_dir, profile, root, host);
+    let layout = if test {
+        program_layout.for_tests()
+    } else {
+        program_layout.clone()
+    };
+    // Chosen, and named, before anything is built, so a wrong `--bin` or
+    // two test executables of one name cost nothing.
     let (mode, exe) = match goal {
-        Goal::Build => (Mode::Compile, None),
+        Goal::Build | Goal::Test => (Mode::Compile, None),
         Goal::Check => (Mode::Check, None),
         Goal::Run { bin } => {
             let exe = layout.exe(&choose(&sources.bins, bin)?.name);
             (Mode::Compile, Some(exe))
         }
+    };
+    let executables = if test {
+        sources::test_executables(root, package, &sources, host)?
+    } else {
+        Vec::new()
+    };
+    let runtime = bundled.join("cuno").join("test_main.c");
+    let targets = if test {
+        Targets::Tests {
+            executables: &executables,
+            runtime: &runtime,
+            plain: (&program_layout, &plain),
+        }
+    } else {
+        Targets::Programs
     };
     let verb = match mode {
         Mode::Compile => "Compiling",
@@ -140,10 +187,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     };
     let link = compile(manifest.package.lang, Mode::Compile);
     let compile_for = |lang| compile(lang, mode);
-    let package = &manifest.package.name;
     let graph = graph::plan(&Plan {
         package,
         sources: &sources,
+        targets,
         layout: &layout,
         kind: tool.kind,
         program: tool.executable,
@@ -171,6 +218,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let editors = graph::plan(&Plan {
         package,
         sources: &sources,
+        targets: Targets::Editors,
         // The test build's objects: what compile_commands.json describes is
         // compiled with `CUNO_TEST` (build.md, "Output").
         layout: &Layout::new(target_dir, Profile::Dev, root, host).for_tests(),
@@ -263,7 +311,15 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             ),
         );
     }
-    Ok(Built { exe })
+    let tests = executables
+        .into_iter()
+        .map(|exe| TestExecutable {
+            path: layout.test_exe(package, &exe.name),
+            name: exe.name,
+            file: exe.file.map(|f| f.path),
+        })
+        .collect();
+    Ok(Built { exe, tests })
 }
 
 /// The executable `cuno run` runs: the one `bin` names, or the only one.
@@ -383,6 +439,7 @@ mod tests {
     use std::time::Duration;
 
     use cuno_core::NameCase;
+    use cuno_core::paths;
 
     use crate::exec::Output;
     use crate::input::tests::BUNDLED;
@@ -727,5 +784,115 @@ mod tests {
                 "opt-level {level}: {out}"
             );
         }
+    }
+
+    /// Writes `file` under the project at `root`, dated an hour back.
+    fn write_old(root: &Path, file: &str) {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "int y;\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
+
+    /// `cuno test`'s build makes the in-source tests' executable and one per
+    /// source under `tests/`, in their own place, and says where; it
+    /// compiles everything with `CUNO_TEST`, the entry file not at all, and
+    /// nothing of the program's (`build.md`, "Output directory").
+    ///
+    /// Mutation: plan the program's targets for `Goal::Test`, compile the
+    /// test sources without `CUNO_TEST` or the `tests/` executables' body
+    /// with it, report no executables or another path, or drop the
+    /// `tests/` file from what one is made from; this test fails.
+    #[test]
+    fn a_test_build_makes_and_names_the_test_executables() {
+        let (root, manifest) = package_with("", &["a.cpp"]);
+        write_old(root.path(), "tests/t.cpp");
+        let fake = Fake::default();
+        let built = run(root.path(), &manifest, Goal::Test, &fake).unwrap();
+        let bin = paths::lexical(root.path()).join("target/debug/test/app/bin");
+        assert_eq!(
+            built.tests,
+            [
+                TestExecutable {
+                    name: "app".into(),
+                    path: bin.join("app.exe"),
+                    file: None,
+                },
+                TestExecutable {
+                    name: "tests-t".into(),
+                    path: bin.join("tests-t.exe"),
+                    file: Some(root.path().join("tests").join("t.cpp")),
+                },
+            ]
+        );
+        for test in &built.tests {
+            assert!(test.path.is_file(), "{}", test.path.display());
+        }
+        let target = root.path().join("target").join("debug");
+        assert!(!target.join("app.exe").exists());
+        // The program's body object, which the `tests/` executable links,
+        // and nothing else of the program's.
+        assert!(target.join("obj/app/src/a.cpp.obj").is_file());
+        assert!(!target.join("obj/app/src/main.cpp.obj").exists());
+        let compiles = fake.compiles.lock().unwrap();
+        // The body with and without `CUNO_TEST`, the test file and the
+        // runtime.
+        assert_eq!(compiles.len(), 4);
+        let defining = compiles
+            .iter()
+            .filter(|args| args.contains(&OsString::from("-DCUNO_TEST")))
+            .count();
+        assert_eq!(defining, 3);
+        for args in compiles.iter() {
+            assert!(
+                !args
+                    .iter()
+                    .any(|a| a.to_string_lossy().ends_with("main.cpp")),
+                "{args:?}"
+            );
+        }
+    }
+
+    /// compile_commands.json lists the sources under `tests/` and leaves
+    /// out cuno's runtime, whatever is built (`build.md`, "Output").
+    ///
+    /// Mutation: plan the editors' file as the test build, or leave the
+    /// sources under `tests/` out of it; this test fails.
+    #[test]
+    fn compile_commands_list_the_tests_and_not_the_runtime() {
+        let (root, manifest) = package();
+        write_old(root.path(), "tests/t.cpp");
+        for goal in [Goal::Build, Goal::Test] {
+            run(root.path(), &manifest, goal, &Fake::default()).unwrap();
+            let compdb = std::fs::read_to_string(root.path().join(compdb::FILE)).unwrap();
+            assert!(compdb.contains("t.cpp"), "{goal:?}: {compdb}");
+            assert!(compdb.contains("main.cpp"), "{goal:?}: {compdb}");
+            assert!(!compdb.contains("test_main"), "{goal:?}: {compdb}");
+        }
+    }
+
+    /// Two test executables of one name stop the build before anything
+    /// runs or is written (`build.md`, "Output directory").
+    ///
+    /// Mutation: name the test executables after the build has run, or not
+    /// at all; this test fails.
+    #[test]
+    fn two_test_executables_of_one_name_stop_the_build_first() {
+        let (root, manifest) = package();
+        write_old(root.path(), "tests/foo.c");
+        write_old(root.path(), "tests/foo.cpp");
+        let fake = Fake::default();
+        let result = run(root.path(), &manifest, Goal::Test, &fake);
+        assert!(
+            matches!(result, Err(BuildError::DuplicateTestName { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fake.runs.load(Ordering::SeqCst), 0);
+        assert!(!root.path().join(compdb::FILE).exists());
     }
 }
