@@ -339,6 +339,17 @@ fn compile_case(during: Box<dyn Fn() + Sync>) -> (tempfile::TempDir, Graph, Comp
     let header = root.path().join("a h.h");
     std::fs::write(&source, "int a;").unwrap();
     std::fs::write(&header, "#define A").unwrap();
+    // An hour back, as a project's files are when a build starts: one
+    // written just now is within the margin and leaves the step unrecorded
+    // (`docs/en/specs/build.md`, "Deciding what changed").
+    for file in [&source, &header] {
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
     let output = root.path().join("obj").join("a.obj");
     let step = Step {
         output: output.clone(),
@@ -403,10 +414,12 @@ fn records_skip_what_succeeded_and_rerun_what_changed_or_failed() {
 }
 
 /// A source saved while its compile runs leaves the step unrecorded, so
-/// the next build compiles what is now there.
+/// the next build compiles what is now there. The compile goes on for
+/// longer than the margin after the save, so the test holds when the start
+/// is read, not only the margin.
 ///
-/// Mutation: take the inputs' stamps without the step's start time; this
-/// test fails.
+/// Mutation: take the inputs' stamps without the step's start time, or
+/// read the start after the compile; this test fails.
 #[test]
 fn a_source_saved_during_its_compile_is_compiled_again() {
     let saved = std::sync::Arc::new(Mutex::new(None::<PathBuf>));
@@ -416,6 +429,7 @@ fn a_source_saved_during_its_compile_is_compiled_again() {
             if let Some(source) = saved.lock().unwrap().take() {
                 std::thread::sleep(Duration::from_millis(20));
                 std::fs::write(source, "int saved;").unwrap();
+                std::thread::sleep(Duration::from_millis(2_200));
             }
         })
     };

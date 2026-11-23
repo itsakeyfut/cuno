@@ -218,10 +218,10 @@ fn perform(
             .reads
             .iter()
             .cloned()
-            .chain(waited.iter().map(|p| p.to_path_buf()))
             .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
             .collect();
-        let _ = records.record(step, &inputs, started);
+        let built: Vec<PathBuf> = waited.iter().map(|p| p.to_path_buf()).collect();
+        let _ = records.record(step, &inputs, &built, started);
     }
     output
 }
