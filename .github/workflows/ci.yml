@@ -29,7 +29,7 @@ jobs:
   fmt:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install toolchain
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt
@@ -39,7 +39,7 @@ jobs:
   clippy:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install toolchain
         run: |
           rustup toolchain install stable --profile minimal --component clippy
@@ -49,7 +49,7 @@ jobs:
       - name: Compiler version
         id: rustc
         run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -64,7 +64,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install toolchain
         run: |
           rustup toolchain install stable --profile minimal
@@ -74,7 +74,7 @@ jobs:
       - name: Compiler version
         id: rustc
         run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -87,7 +87,7 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install toolchain
         run: |
           rustup toolchain install stable --profile minimal
@@ -97,7 +97,7 @@ jobs:
       - name: Compiler version
         id: rustc
         run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -112,7 +112,7 @@ jobs:
   msrv:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The MSRV is read from Cargo.toml rather than repeated here, so raising
       # `rust-version` cannot leave CI testing the old one.
       # See docs/en/specs/architecture.md, "Rust".
@@ -127,7 +127,7 @@ jobs:
       - name: Compiler version
         id: rustc
         run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
