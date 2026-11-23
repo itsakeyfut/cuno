@@ -1281,3 +1281,43 @@ fn clang_tidy_reads_an_msvc_projects_flags_as_clang_cl() {
         run.stderr
     );
 }
+
+/// With `-q`, doctor prints only configuration warnings and problems, and
+/// nothing when there is no problem (docs/en/specs/commands.md, "What
+/// `cuno doctor` prints").
+///
+/// Mutation: print the findings under `-q`, or drop warnings or problems
+/// under it; this test fails.
+#[test]
+fn quiet_shows_only_warnings_and_problems() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    Project::new()
+        .file("cuno.toml", &manifest(""))
+        .cuno(&["-q", "doctor", "--compiler", "msvc"])
+        .assert(0, "", "");
+    let run = Project::new()
+        .file("cuno.toml", &manifest("foo = 1\n"))
+        .cuno(&["-q", "doctor", "--compiler", "gcc"]);
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+    let lines: Vec<&str> = run.stderr.lines().collect();
+    assert!(
+        lines[0].starts_with("warning: unknown key `package.foo`"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("error: ")),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        lines.iter().all(|l| l.starts_with("warning: ")
+            || l.starts_with("error: ")
+            || l.starts_with("help: ")
+            || l.starts_with(" --> ")),
+        "{}",
+        run.stderr
+    );
+}
