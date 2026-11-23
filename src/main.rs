@@ -15,7 +15,8 @@ use std::io::IsTerminal;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::error::ErrorKind;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell};
 
 /// The top-level command line. Subcommands are added with the milestones that
@@ -127,6 +128,47 @@ impl From<BuildOpts> for build::BuildArgs {
     }
 }
 
+/// The `--color` the command line gives, read before clap parses it so
+/// that what clap prints follows it too: the last one before a bare `--`
+/// (what follows belongs to the program `cuno run` runs), as
+/// `--color <when>` or `--color=<when>`. A value that is not one of
+/// `--color`'s counts as none, so the usage error it causes is colored as if
+/// `--color` were not given.
+fn color_before_parsing(args: &[OsString]) -> Option<ColorChoice> {
+    let mut found = None;
+    let mut args = args.iter().skip(1);
+    while let Some(arg) = args.next() {
+        let value = match arg.to_str() {
+            Some("--") => break,
+            Some("--color") => args.next().and_then(|v| v.to_str()),
+            Some(arg) => arg.strip_prefix("--color="),
+            None => continue,
+        };
+        if let Some(value) = value {
+            found = Some(Color::from_str(value, false).ok().map(ColorChoice::from));
+        }
+    }
+    found.flatten()
+}
+
+/// The color clap uses for what it prints itself: the choice given, or with
+/// none, no color under `NO_COLOR` (set to anything, even empty), and
+/// otherwise whether the output is a terminal. Never clap's own `Auto`,
+/// which reads `CLICOLOR_FORCE`, a variable cuno does not read.
+fn parser_color(given: Option<ColorChoice>, no_color: bool, terminal: bool) -> clap::ColorChoice {
+    let on = match given {
+        Some(ColorChoice::Always) => true,
+        Some(ColorChoice::Never) => false,
+        Some(ColorChoice::Auto) => terminal,
+        None => terminal && !no_color,
+    };
+    if on {
+        clap::ColorChoice::Always
+    } else {
+        clap::ColorChoice::Never
+    }
+}
+
 /// The values of `--color`. A separate type because `cuno-core` does not
 /// depend on clap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -147,18 +189,36 @@ impl From<Color> for ColorChoice {
 }
 
 fn main() {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    let env = Env::from_process();
+    // What clap prints itself is colored by cuno's rule, not clap's
+    // (docs/en/specs/commands.md, "Available for all commands"): `--color`
+    // as written, then NO_COLOR, then whether the output is a terminal.
+    let given = color_before_parsing(&args);
+    let no_color = env.get("NO_COLOR").is_some();
+    let to_stdout = parser_color(given, no_color, std::io::stdout().is_terminal());
+    let to_stderr = parser_color(given, no_color, std::io::stderr().is_terminal());
     // On `--version`, `--help` and usage errors, clap prints and exits by
     // itself: 0 for the first two and 2 for a usage error, as the spec's exit
-    // codes require.
-    let cli = Cli::parse();
-    let env = Env::from_process();
+    // codes require. Help and the version go to stdout, so they are parsed
+    // again with stdout's color.
+    let parse = |color| Cli::command().color(color).try_get_matches_from(&args);
+    let cli = match parse(to_stderr) {
+        Ok(matches) => Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+        Err(error) => match error.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                parse(to_stdout).err().unwrap_or(error).exit()
+            }
+            _ => error.exit(),
+        },
+    };
     let mut shell = Shell::new(
         Box::new(std::io::stderr()),
         cli.color.map(ColorChoice::from),
         &env,
         std::io::stderr().is_terminal(),
     );
-    match run(cli, &env, &mut shell) {
+    match run(cli, &env, &mut shell, to_stdout) {
         Ok(0) => {}
         Ok(code) => std::process::exit(code),
         Err(error) => std::process::exit(report(&mut shell, &*error)),
@@ -171,7 +231,13 @@ fn main() {
 /// Carries out the command line and returns the exit code. Every error a
 /// command can meet comes back here rather than being printed where it
 /// happens; `doctor` prints its problems itself and only says how many.
-fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>> {
+/// `help_color` is how the usage printed with no command is colored.
+fn run(
+    cli: Cli,
+    env: &Env,
+    shell: &mut Shell,
+    help_color: clap::ColorChoice,
+) -> Result<i32, Box<dyn CunoError>> {
     // Destructured rather than ignored, so that adding a field to `Cli`
     // fails to compile here until it is handled.
     let Cli {
@@ -222,7 +288,7 @@ fn run(cli: Cli, env: &Env, shell: &mut Shell) -> Result<i32, Box<dyn CunoError>
             // command". A failed write (a closed stdout) is ignored,
             // matching what clap does for `--help` and what Cargo does in
             // both cases: the exit code stays 0.
-            let _ = Cli::command().print_help();
+            let _ = Cli::command().color(help_color).print_help();
             return Ok(0);
         }
     };
@@ -314,5 +380,62 @@ mod tests {
         assert_eq!(ColorChoice::from(Color::Auto), ColorChoice::Auto);
         assert_eq!(ColorChoice::from(Color::Always), ColorChoice::Always);
         assert_eq!(ColorChoice::from(Color::Never), ColorChoice::Never);
+    }
+
+    fn given(args: &[&str]) -> Option<ColorChoice> {
+        let args: Vec<OsString> = std::iter::once("cuno")
+            .chain(args.iter().copied())
+            .map(OsString::from)
+            .collect();
+        color_before_parsing(&args)
+    }
+
+    /// Mutation: read only one of the two spellings, take the first
+    /// `--color` instead of the last, read past `--`, or keep an invalid
+    /// value; this test fails.
+    #[test]
+    fn the_color_is_read_before_parsing() {
+        assert_eq!(
+            given(&["--color", "never", "build"]),
+            Some(ColorChoice::Never)
+        );
+        assert_eq!(
+            given(&["build", "--color=always"]),
+            Some(ColorChoice::Always)
+        );
+        assert_eq!(
+            given(&["--color", "never", "build", "--color", "always"]),
+            Some(ColorChoice::Always)
+        );
+        assert_eq!(given(&["run", "--", "--color", "never"]), None);
+        assert_eq!(given(&["--color", "bogus"]), None);
+        assert_eq!(given(&["--color=never", "--color=bogus"]), None);
+        assert_eq!(given(&["build"]), None);
+    }
+
+    /// Mutation: hand clap its own `Auto`, let NO_COLOR beat a choice given,
+    /// or ignore it with none; this test fails.
+    #[test]
+    fn what_clap_prints_follows_cunos_order() {
+        use clap::ColorChoice as Clap;
+        assert_eq!(
+            parser_color(Some(ColorChoice::Always), true, false),
+            Clap::Always
+        );
+        assert_eq!(
+            parser_color(Some(ColorChoice::Never), false, true),
+            Clap::Never
+        );
+        assert_eq!(
+            parser_color(Some(ColorChoice::Auto), true, true),
+            Clap::Always
+        );
+        assert_eq!(
+            parser_color(Some(ColorChoice::Auto), false, false),
+            Clap::Never
+        );
+        assert_eq!(parser_color(None, true, true), Clap::Never);
+        assert_eq!(parser_color(None, false, true), Clap::Always);
+        assert_eq!(parser_color(None, false, false), Clap::Never);
     }
 }

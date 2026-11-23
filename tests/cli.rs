@@ -222,3 +222,37 @@ fn the_configured_color_colors_every_command() {
         assert!(!plain.contains('\x1b'), "{command}: {plain}");
     }
 }
+
+/// What clap prints itself (usage errors, `--help`, `cuno` with no command)
+/// follows `--color`, then NO_COLOR, and never `CLICOLOR_FORCE`
+/// (docs/en/specs/commands.md, "Available for all commands").
+///
+/// Mutation: leave clap's own color rule in place for its parsing, or for
+/// the usage `cuno` prints with no command; this test fails.
+#[test]
+fn what_clap_prints_follows_the_color_order() {
+    let p = Project::new();
+    let run = |args: &[&str], vars: &[(&str, &str)]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(args);
+        let run = p.run_command_with(cmd, vars);
+        run.stdout + &run.stderr
+    };
+    let force: &[(&str, &str)] = &[("CLICOLOR_FORCE", "1")];
+    for (args, vars, colored) in [
+        (&["--color", "never", "--bogus"][..], force, false),
+        (&["--color", "always", "--bogus"][..], &[][..], true),
+        (
+            &["--bogus"][..],
+            &[("NO_COLOR", ""), ("CLICOLOR_FORCE", "1")][..],
+            false,
+        ),
+        (&["--bogus"][..], force, false),
+        (&["--color", "always"][..], &[][..], true),
+        (&["--color", "always", "build", "--help"][..], &[][..], true),
+        (&["build", "--help"][..], force, false),
+    ] {
+        let out = run(args, vars);
+        assert_eq!(out.contains('\x1b'), colored, "{args:?} {vars:?}: {out}");
+    }
+}
