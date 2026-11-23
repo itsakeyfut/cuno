@@ -424,3 +424,22 @@ fn a_header_created_to_shadow_a_system_one_is_compiled_in() {
         assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
     }
 }
+
+/// Changing `--color` rebuilds nothing: the color flags are not part of
+/// the command a step is judged by (docs/en/specs/commands.md, "Format").
+///
+/// Mutation: put the color flags among a step's arguments; this test fails.
+#[test]
+fn changing_the_color_rebuilds_nothing() {
+    for (name, compiler) in [("clang", Compiler::Clang), ("clang-cl", Compiler::ClangCl)] {
+        if !here(compiler) {
+            continue;
+        }
+        let project = package("");
+        let run =
+            |color: &str| project.cuno(&["-v", "--color", color, "build", "--compiler", name]);
+        // Colored first, read plain second: `ran` reads plain lines.
+        assert_eq!(run("always").code, Some(0), "{name}");
+        assert_eq!(ran(&run("never")), (vec![], false), "{name}");
+    }
+}

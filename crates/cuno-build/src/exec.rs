@@ -39,6 +39,8 @@ pub struct SystemSpawner;
 impl Spawner for SystemSpawner {
     fn run(&self, step: &Step, env: &Env, cwd: &Path) -> io::Result<Output> {
         let output = Command::new(&step.program)
+            // First, so a color flag of the user's own, later, wins.
+            .args(&step.color)
             .args(&step.args)
             .env_clear()
             .envs(env.vars())
@@ -322,6 +324,7 @@ mod tests {
             reads: Vec::new(),
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
         }
     }
 
@@ -660,6 +663,7 @@ mod tests {
             reads: vec![source],
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
             ..step("clang", &[])
         };
         let spawner = Compiles {

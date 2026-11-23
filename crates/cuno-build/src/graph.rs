@@ -70,6 +70,10 @@ pub struct Step {
     /// entry of `links`, found there or not. Empty for a compile, which
     /// looks for the files it read.
     pub looked_for: Vec<PathBuf>,
+    /// Arguments put before `args` only when the step runs, to make the
+    /// compiler color its diagnostics: part of neither the command a step
+    /// is judged by nor `compile_commands.json` (`commands.md`, "Format").
+    pub color: Vec<OsString>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -99,6 +103,9 @@ pub struct Plan<'a> {
     pub compile: &'a dyn Fn(Lang) -> CompileSettings,
     /// The settings every link uses.
     pub link: (&'a BuildSettings, &'a ProfileSettings),
+    /// Whether cuno colors its output, and so asks Clang to color its
+    /// diagnostics.
+    pub color: bool,
 }
 
 /// Plans a build: one compile per source of the package body and per entry
@@ -157,6 +164,14 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .cloned()
                 .collect(),
             looked_for: Vec::new(),
+            // Through a pipe Clang colors only when asked, and on Windows
+            // writes color as escape codes only with the second flag.
+            color: match (p.color, p.kind.family()) {
+                (true, Family::Llvm) => ["-fcolor-diagnostics", "-fansi-escape-codes"]
+                    .map(OsString::from)
+                    .to_vec(),
+                (false, _) | (true, Family::Msvc) => Vec::new(),
+            },
         });
         steps.len() - 1
     };
@@ -197,6 +212,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .iter()
                 .map(|lib| PathBuf::from(format!("{lib}.lib")))
                 .collect(),
+            color: Vec::new(),
         });
     }
     Graph { steps }
@@ -282,6 +298,7 @@ mod tests {
             mode,
             compile: &compile,
             link: (&link.build, &link.profile),
+            color: false,
         })
     }
 
@@ -486,6 +503,7 @@ mod tests {
             mode: Mode::Compile,
             compile: &compile,
             link: (&link.build, &link.profile),
+            color: false,
         });
         let (first, last) = (&g.steps[0], g.steps.last().unwrap());
         assert_eq!(
@@ -495,6 +513,57 @@ mod tests {
         assert!(first.looked_for.is_empty());
         assert_eq!(last.searched, [PathBuf::from("C:/p/lib")]);
         assert_eq!(last.looked_for, [PathBuf::from("kernel32.lib")]);
+    }
+
+    /// With color, a compile by clang or clang-cl gets the color flags apart
+    /// from its arguments, which stay as without color; MSVC and links get
+    /// none (`commands.md`, "Format").
+    ///
+    /// Mutation: give MSVC or a link the flags, put them among the
+    /// arguments, or give them without color; this test fails.
+    #[test]
+    fn only_clangs_compiles_are_asked_for_color() {
+        let colored = |kind, color| {
+            let sources = sources();
+            let layout = Layout::new(
+                Path::new("C:/p/target"),
+                Profile::Dev,
+                Path::new("C:/p"),
+                HostOs::Windows,
+            );
+            let compile = |lang| {
+                compile_settings(
+                    None,
+                    kind,
+                    Profile::Dev,
+                    lang,
+                    HostOs::Windows,
+                    false,
+                    Mode::Compile,
+                )
+            };
+            let link = compile(Lang::Cxx);
+            plan(&Plan {
+                package: "app",
+                sources: &sources,
+                layout: &layout,
+                kind,
+                program: Path::new("C:/clang.exe"),
+                mode: Mode::Compile,
+                compile: &compile,
+                link: (&link.build, &link.profile),
+                color,
+            })
+        };
+        let flags = ["-fcolor-diagnostics", "-fansi-escape-codes"].map(OsString::from);
+        for kind in [CompilerKind::Clang, CompilerKind::ClangCl] {
+            let (on, off) = (colored(kind, true), colored(kind, false));
+            assert_eq!(on.steps[0].color, flags, "{kind:?}");
+            assert_eq!(on.steps[0].args, off.steps[0].args, "{kind:?}");
+            assert!(off.steps[0].color.is_empty(), "{kind:?}");
+            assert!(on.steps.last().unwrap().color.is_empty(), "{kind:?}");
+        }
+        assert!(colored(CompilerKind::Msvc, true).steps[0].color.is_empty());
     }
 
     /// In check mode every source is checked, with the check switch and no

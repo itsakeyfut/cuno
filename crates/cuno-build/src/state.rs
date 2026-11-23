@@ -535,6 +535,7 @@ mod tests {
             reads: Vec::new(),
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
         };
         let records = fresh();
         records
@@ -881,6 +882,7 @@ mod tests {
             reads: Vec::new(),
             searched: searched.iter().map(|dir| root.join(dir)).collect(),
             looked_for: Vec::new(),
+            color: Vec::new(),
         }
     }
 

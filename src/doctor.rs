@@ -18,13 +18,24 @@ use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 use crate::scratch;
 use crate::toolchain::{self, ProbeCompile};
 
-/// Prints `error:` and `help:` and counts problems.
+/// Prints `error:` and `help:` and counts problems, and prints the
+/// findings that are not problems unless `-q` was given.
 struct Problems<'a> {
     shell: &'a mut Shell,
     count: usize,
+    /// `-q`: only warnings and problems are shown (`commands.md`, "What
+    /// `cuno doctor` prints").
+    quiet: bool,
 }
 
 impl Problems<'_> {
+    /// A finding that is not a problem, such as `Selected` or `Info`.
+    fn status(&mut self, verb: &str, message: impl std::fmt::Display) {
+        if !self.quiet {
+            self.shell.status(verb, message);
+        }
+    }
+
     fn report(&mut self, error: &dyn CunoError) {
         self.shell.error(error);
         if let Some(help) = error.help() {
@@ -41,9 +52,14 @@ pub fn doctor(
     env: &Env,
     cwd: &Path,
     host: HostOs,
+    quiet: bool,
     shell: &mut Shell,
 ) -> usize {
-    let mut problems = Problems { shell, count: 0 };
+    let mut problems = Problems {
+        shell,
+        count: 0,
+        quiet,
+    };
     let runner = SystemRunner::new();
 
     let cli = CliSettings {
@@ -103,7 +119,7 @@ pub fn doctor(
     others(&diagnosed, found, !no_llvm, host, &mut problems);
 
     let count = problems.count;
-    problems.shell.status("Finished", finished(count));
+    problems.status("Finished", finished(count));
     count
 }
 
@@ -206,11 +222,11 @@ fn diagnose(
         }
         (source, _) => source.to_string(),
     };
-    problems.shell.status(
+    problems.status(
         "Selected",
         format!("{} {} ({source})", selected.kind.name(), selected.version),
     );
-    problems.shell.status("", selected.executable.display());
+    problems.status("", selected.executable.display());
 
     let project = settings.and_then(|s| s.project.as_ref());
     if let Some((_, manifest)) = project
@@ -229,7 +245,7 @@ fn diagnose(
         Family::Msvc => false,
     };
     if borrows_msvc {
-        problems.shell.status(
+        problems.status(
             "Using",
             format!(
                 "MSVC {} ({})",
@@ -246,9 +262,7 @@ fn diagnose(
         }
     };
     if let Some(sdk) = &prepared.sdk {
-        problems
-            .shell
-            .status("Using", format!("Windows SDK {}", sdk.version));
+        problems.status("Using", format!("Windows SDK {}", sdk.version));
     }
 
     // The standard library probe, in C++ projects and outside a project,
@@ -266,9 +280,7 @@ fn diagnose(
     };
     if borrows_msvc {
         match toolchain::probe(&selected, &stl, "doctor", runner) {
-            Ok(()) => problems
-                .shell
-                .status("Accepted", "by the MSVC standard library"),
+            Ok(()) => problems.status("Accepted", "by the MSVC standard library"),
             Err(error) => problems.report(&*error),
         }
     }
@@ -293,9 +305,7 @@ fn tools(
                 continue;
             }
         };
-        problems
-            .shell
-            .status("Found", format!("{} {}", tool.name(), chosen.version));
+        problems.status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
             && let Some(stl) = stl
             && let Err(error) = scratch::in_scratch("doctor", "clang-tidy", |scratch| {
@@ -353,7 +363,7 @@ fn others(
             }
             Err(error) => format!("{} not usable: {error}", kind.name()),
         };
-        problems.shell.status("Info", line);
+        problems.status("Info", line);
     }
 }
 

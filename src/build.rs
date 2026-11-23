@@ -157,6 +157,7 @@ pub fn build(
         mode,
         compile: &compile_for,
         link: (&link.build, &link.profile),
+        color: shell.uses_color(),
     });
 
     // Written before anything runs, so it is current even when a compile
@@ -182,6 +183,8 @@ pub fn build(
         mode: Mode::Compile,
         compile: &for_editors,
         link: (&link.build, &link.profile),
+        // compile_commands.json never carries the color flags.
+        color: false,
     });
     let include = compdb::include_dirs(prepared.env.get("INCLUDE"));
     let compiler = compdb::Compiler {
@@ -376,8 +379,9 @@ fn command_line(step: &Step) -> String {
         quoted.push('"');
         quoted
     };
+    // As it runs: the color flags first (`commands.md`, "Format").
     std::iter::once(quote(step.program.as_os_str()))
-        .chain(step.args.iter().map(|a| quote(a)))
+        .chain(step.color.iter().chain(&step.args).map(|a| quote(a)))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -502,6 +506,7 @@ mod tests {
             reads: Vec::new(),
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
         })
     }
 
