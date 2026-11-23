@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob ff2718cc6415d5f1a745239760b5893ead96a7a1 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 6d4de055d1c12eb24590d7ddfd3685f622502c44 -->
 
 # Build
 
@@ -27,13 +27,14 @@
   - an input's modification time or size differs from the record, and its content hash differs too.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
-- Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it.
+- Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it. An input modified later than 2 seconds before the step starts is also treated as modified while it ran.
+  - Rationale: file modification times are stamped by a coarser clock than the one that measures when a step starts, so a file saved just after the start can get a modification time before it (from a few to a dozen or so milliseconds on Windows; in 2-second units on FAT file systems). Without the margin, cuno would record a step whose compiler may have read the old content. The only cost of the margin is that a file saved just before a build is compiled once more by the next build.
 - `cuno check` steps (checking one source) are judged the same way. A check produces no output, so when it succeeds cuno puts an empty file in place of the output. Like the records, this file is internal to cuno.
 - Rationale:
   - Judging only whether an input is newer than its output misses a file put back with an older modification time (restored from a backup, for example), and reports success with the old code. Comparing with the recorded values catches a time that went backwards too.
   - Hashing everything on every build would read the standard and Windows headers (thousands of files) even when nothing changed. Inputs whose time and size match are not read.
   - What it misses is the following, and then it reports success with the old code:
-    - a file whose content changed while its modification time and size stayed the same, which ordinary editing does not produce;
+    - a file whose content changed while its modification time and size stayed the same. The modification time stays the same only when, after the record, the file is rewritten to the same size within one tick of the modification time (see the rationale for the 2-second margin above), which never happens through a person's editing. It can happen when a tool or a test rewrites a file quickly;
     - a header of the same name newly created where the include search finds it before the recorded one (and likewise a library), since the record holds the files read and not the places that were not.
 - The records are kept inside the output directory (`target/<profile name>/`). Their format is cuno's own and not meant for users to read. A record from another cuno version, or one that cannot be read, is treated as absent (the step runs).
 
