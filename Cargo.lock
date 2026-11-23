@@ -118,6 +118,7 @@ dependencies = [
  "cuno-build",
  "cuno-core",
  "cuno-manifest",
+ "cuno-test",
  "cuno-toolchain",
  "serde_json",
  "tempfile",
@@ -154,6 +155,10 @@ dependencies = [
 [[package]]
 name = "cuno-test"
 version = "0.0.0"
+dependencies = [
+ "cuno-core",
+ "tempfile",
+]
 
 [[package]]
 name = "cuno-toolchain"

@@ -47,7 +47,7 @@ pub struct Sources {
     pub body: Vec<Source>,
     /// The integration tests: the sources directly under `tests/`, each a
     /// test executable of its own, in path order
-    /// (`docs/en/specs/testing.md`, "Running").
+    /// (`docs/en/specs/testing.md`, "Execution").
     pub integration_tests: Vec<Source>,
     /// The sources in `tests/`'s subdirectories: helpers linked into every
     /// executable made from `tests/`, in path order.
@@ -306,7 +306,7 @@ pub fn classify(
 }
 
 /// A test executable: the package's in-source tests, or one source
-/// directly under `tests/` (`docs/en/specs/testing.md`, "Running").
+/// directly under `tests/` (`docs/en/specs/testing.md`, "Execution").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TestExecutable {
     /// Its name, without an extension: the package's for its in-source
@@ -885,7 +885,7 @@ path = \"src/main.cpp\"
 
     /// Sources directly under `tests/` are tests, each its own executable;
     /// those in its subdirectories are helpers; anything else there is not
-    /// a source (`testing.md`, "Running").
+    /// a source (`testing.md`, "Execution").
     ///
     /// Mutation: take `tests/` recursively as tests, drop the helpers, or
     /// read files that are not sources; this test fails.

@@ -139,7 +139,7 @@ impl std::io::Write for Captured {
 /// The names `exe --list` reports whose place is under `tests/`, the ones
 /// cuno runs from an executable made from `tests/`, or (with `in_tests`
 /// false) the others, the ones it runs from the in-source tests'
-/// (`testing.md`, "Running").
+/// (`testing.md`, "Execution").
 fn listed_where(p: &Project, exe: &Path, in_tests: bool) -> Vec<String> {
     let tests = p.path().join("tests");
     listed_with_files(p, exe)
@@ -325,6 +325,90 @@ fn a_main_under_tests_does_not_replace_the_runner() {
         assert!(
             matches!(result, Err((BuildError::Failed { link: true, .. }, _))),
             "{name}: {result:?}"
+        );
+    }
+}
+
+/// The runner over what the build made, on every compiler: each test runs
+/// alone and is judged by what it reported, a crash fails that test only,
+/// an in-source test runs once though every executable holds it, and the
+/// counts add up (`testing.md`, "Execution").
+///
+/// Mutations, each failing this test: run every listed test from a
+/// `tests/` executable (the in-source test counts three times); trust the
+/// exit code over the result file (the crash passes).
+#[test]
+fn the_runner_judges_what_the_build_made() {
+    for (name, compiler) in COMPILERS {
+        if require(compiler, Language::C, "x.c", "x.exe").is_none() {
+            continue;
+        }
+        let p = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", MAIN)
+            .file("src/calc.cpp", CALC)
+            .file("src/sub.c", SUB)
+            .file("tests/adds.cpp", ADDS)
+            .file(
+                "tests/fails.c",
+                "#include <cuno/test.h>\n#include <stdio.h>\n#include <stdlib.h>\n\
+                 int sub(int a, int b);\n\
+                 cuno_test(sub_is_wrong) { puts(\"said by the test\"); cuno_check_eq(sub(3, 1), 1); }\n\
+                 cuno_test(crashes) { abort(); }\n\
+                 cuno_test(skipped_one) { cuno_skip(\"later\"); }\n",
+            )
+            .file("tests/common/helper.cpp", HELPER);
+        let tests = build_tests(&p, name);
+        let executables: Vec<cuno_test::TestExecutable> = tests
+            .iter()
+            .map(|t| cuno_test::TestExecutable {
+                path: t.path.clone(),
+                integration: t.file.is_some(),
+            })
+            .collect();
+        let scratch = tempfile::tempdir().unwrap();
+        let env = environment(&p);
+        let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut shell = Shell::new(Box::new(Captured(output.clone())), None, &env, false);
+        let summary = cuno_test::run(
+            &cuno_test::TestRun {
+                executables: &executables,
+                filter: None,
+                nocapture: false,
+                jobs: 4,
+                root: p.path(),
+                env: &env,
+                scratch: scratch.path(),
+                case: NameCase::host(),
+                launcher: &cuno_test::SystemLauncher,
+            },
+            &mut shell,
+        );
+        let text = String::from_utf8_lossy(&output.lock().unwrap()).replace("\r\n", "\n");
+        assert_eq!(
+            (
+                summary.passed,
+                summary.failed,
+                summary.skipped,
+                summary.unlisted
+            ),
+            (2, 2, 1, 0),
+            "{name}:\n{text}"
+        );
+        assert!(
+            text.contains("---- sub_is_wrong ----\ntests/fails.c:5: eq(sub(3, 1), 1) failed\n  left:  2\n  right: 1\nsaid by the test\n"),
+            "{name}:\n{text}"
+        );
+        assert!(
+            text.contains(
+                "---- crashes ----\nthe test ended without reporting a result (exit code "
+            ),
+            "{name}:\n{text}"
+        );
+        assert_eq!(
+            text.matches("test add in source ... ok").count(),
+            1,
+            "{name}:\n{text}"
         );
     }
 }

@@ -94,7 +94,7 @@ pub enum Products<'a> {
     /// The package's executables: each entry file and the body, one link
     /// per executable (`project-layout.md`, "Link rules").
     Programs,
-    /// The test executables (`testing.md`, "Running"): the body, the
+    /// The test executables (`testing.md`, "Execution"): the body, the
     /// sources under `tests/` and cuno's bundled runtime, all compiled with
     /// `CUNO_TEST` and once each, entry files left out, one link per
     /// executable (`project-layout.md`, "Link rules"). Only with a test
