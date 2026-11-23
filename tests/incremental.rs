@@ -320,3 +320,74 @@ fn a_build_below_the_root_is_up_to_date_with_one_at_it() {
         assert_eq!(ran(&again), (vec![], false), "{name}");
     }
 }
+
+/// A header created where the search finds it before the one a build read
+/// recompiles what read the old one, on every compiler, also when the new
+/// header sits in a directory that did not exist; once recorded, nothing
+/// runs again (docs/en/specs/build.md, "Deciding what changed").
+///
+/// Mutation: skip looking for same-named files in `Records::up_to_date`,
+/// or look for a header by its file name only; this test fails.
+#[test]
+fn a_header_created_ahead_in_the_search_is_compiled_in() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"hdr\"]\n",
+            )
+            .file("hdr/cfg.h", "#define CFG 1\n")
+            .file("hdr/sub/deep.h", "#define DEEP 1\n")
+            .file(
+                "src/main.cpp",
+                "#include <cstdio>\n#include \"cfg.h\"\n#include \"sub/deep.h\"\n\
+                 int main() { std::printf(\"%d %d\\n\", CFG, DEEP); }\n",
+            );
+        build(&project, name);
+        assert_eq!(output(&project), "1 1\n", "{name}");
+        let create = |path: &str, text: &str| {
+            let path = project.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+            set_time(&path, SystemTime::now() - Duration::from_secs(60));
+        };
+        create("src/cfg.h", "#define CFG 2\n");
+        assert_eq!(ran(&build(&project, name)), (vec!["main"], true), "{name}");
+        assert_eq!(output(&project), "2 1\n", "{name}");
+        create("src/sub/deep.h", "#define DEEP 3\n");
+        assert_eq!(ran(&build(&project, name)), (vec!["main"], true), "{name}");
+        assert_eq!(output(&project), "2 3\n", "{name}");
+        assert_eq!(ran(&build(&project, name)), (vec![], false), "{name}");
+    }
+}
+
+/// A same-named header already later in the search, which the build did
+/// not read, does not make every build run again.
+///
+/// Mutation: count every same-named file found, not only those that
+/// appeared since the step was recorded; this test fails.
+#[test]
+fn a_same_named_header_later_in_the_search_changes_nothing() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file(
+                "cuno.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"a\", \"b\"]\n",
+            )
+            .file("a/cfg.h", "#define CFG 1\n")
+            .file("b/cfg.h", "#define CFG 2\n")
+            .file(
+                "src/main.cpp",
+                "#include <cstdio>\n#include \"cfg.h\"\nint main() { std::printf(\"%d\\n\", CFG); }\n",
+            );
+        build(&project, name);
+        assert_eq!(output(&project), "1\n", "{name}");
+        assert_eq!(ran(&build(&project, name)), (vec![], false), "{name}");
+    }
+}
