@@ -370,24 +370,40 @@ mod tests {
         assert_eq!(shown("x", &["a\tb", ""]), "x \"a\tb\" \"\"");
     }
 
-    use std::io;
+    use std::io::{self, Write};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use cuno_core::NameCase;
 
     use crate::exec::Output;
 
     /// Stands in for clang: writes each step's output, and a compile's
-    /// dependency file naming its source, and fails when told to.
+    /// dependency file naming its source, and fails when told to. It notes
+    /// whether compile_commands.json was there when the first step ran, and
+    /// how many steps ran at once.
     #[derive(Default)]
     struct Fake {
         runs: AtomicUsize,
         fail: AtomicBool,
+        compdb_first: Mutex<Option<bool>>,
+        running: AtomicUsize,
+        most: AtomicUsize,
+        hold: Duration,
     }
 
     impl Spawner for Fake {
-        fn run(&self, step: &Step, _env: &Env, _cwd: &Path) -> io::Result<Output> {
+        fn run(&self, step: &Step, _env: &Env, cwd: &Path) -> io::Result<Output> {
             self.runs.fetch_add(1, Ordering::SeqCst);
+            self.compdb_first
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| cwd.join(compdb::FILE).is_file());
+            let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+            self.most.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(self.hold);
+            self.running.fetch_sub(1, Ordering::SeqCst);
             std::fs::create_dir_all(step.output.parent().unwrap())?;
             std::fs::write(&step.output, "out")?;
             if let (Some(headers), StepKind::Compile { source }) = (&step.headers, &step.kind) {
@@ -401,34 +417,85 @@ mod tests {
         }
     }
 
-    /// A package of one `src/main.cpp`, dated an hour back so a build may
-    /// record it (`build.md`, "Deciding what changed").
-    fn package() -> (tempfile::TempDir, Manifest) {
+    /// What a shell wrote, for reading back.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Captured {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    /// A package of `src/main.cpp` and the `sources` named besides it, with
+    /// `extra` appended to its `cuno.toml`, dated an hour back so a build
+    /// may record it (`build.md`, "Deciding what changed").
+    fn package_with(extra: &str, sources: &[&str]) -> (tempfile::TempDir, Manifest) {
         let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("src").join("main.cpp");
-        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        std::fs::write(&source, "int main() {}\n").unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&source)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
-            .unwrap();
-        let toml = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
+        for name in std::iter::once("main.cpp").chain(sources.iter().copied()) {
+            let source = root.path().join("src").join(name);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(&source, "int x;\n").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&source)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+                .unwrap();
+        }
+        let toml = format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n{extra}");
         let manifest =
-            cuno_manifest::parse_manifest(toml, &root.path().join("cuno.toml"), root.path())
+            cuno_manifest::parse_manifest(&toml, &root.path().join("cuno.toml"), root.path())
                 .unwrap()
                 .value;
         (root, manifest)
     }
 
-    /// Builds the package at `root` with `fake` for `goal`.
-    fn run(
+    fn package() -> (tempfile::TempDir, Manifest) {
+        package_with("", &[])
+    }
+
+    /// How a test runs a build.
+    struct Options<'a> {
+        goal: Goal<'a>,
+        jobs: usize,
+        verbose: bool,
+        quiet: bool,
+        /// How long ago the command started.
+        ago: Duration,
+    }
+
+    impl Default for Options<'_> {
+        fn default() -> Self {
+            Options {
+                goal: Goal::Build,
+                jobs: 1,
+                verbose: false,
+                quiet: true,
+                ago: Duration::ZERO,
+            }
+        }
+    }
+
+    /// Builds the package at `root` with `fake`, returning the result and
+    /// what the shell printed, uncolored.
+    fn build_with(
         root: &Path,
         manifest: &Manifest,
-        goal: Goal<'_>,
         fake: &Fake,
-    ) -> Result<Built, BuildError> {
+        options: Options<'_>,
+    ) -> (Result<Built, BuildError>, String) {
         let env = Env::from_pairs([], NameCase::Insensitive);
         let version = Version::find_in("22.1.8").unwrap();
         let target = root.join("target");
@@ -437,12 +504,12 @@ mod tests {
             manifest,
             target_dir: &target,
             profile: Profile::Dev,
-            goal,
+            goal: options.goal,
             host: HostOs::Windows,
-            jobs: 1,
-            verbose: false,
-            quiet: true,
-            started: Instant::now(),
+            jobs: options.jobs,
+            verbose: options.verbose,
+            quiet: options.quiet,
+            started: Instant::now() - options.ago,
             toolchain: Toolchain {
                 kind: CompilerKind::Clang,
                 executable: Path::new("clang.exe"),
@@ -453,17 +520,32 @@ mod tests {
             },
             spawner: fake,
         };
-        let mut shell = Shell::new(Box::new(io::sink()), None, &env, false);
-        build(&request, &mut shell)
+        let out = Captured::default();
+        let mut shell = Shell::new(Box::new(out.clone()), None, &env, false);
+        let result = build(&request, &mut shell);
+        (result, out.text())
+    }
+
+    fn run(
+        root: &Path,
+        manifest: &Manifest,
+        goal: Goal<'_>,
+        fake: &Fake,
+    ) -> Result<Built, BuildError> {
+        let options = Options {
+            goal,
+            ..Options::default()
+        };
+        build_with(root, manifest, fake, options).0
     }
 
     /// compile_commands.json is written before anything runs, so a failed
     /// compile still leaves it current (`build.md`, "Output").
     ///
-    /// Mutation: write compile_commands.json after executing the graph; this
-    /// test fails.
+    /// Mutation: write compile_commands.json after the graph has run,
+    /// whether before or after the failure returns; this test fails.
     #[test]
-    fn compile_commands_are_written_even_when_a_compile_fails() {
+    fn compile_commands_are_written_before_anything_runs() {
         let (root, manifest) = package();
         let fake = Fake::default();
         fake.fail.store(true, Ordering::SeqCst);
@@ -472,7 +554,7 @@ mod tests {
             matches!(result, Err(BuildError::Failed { link: false, .. })),
             "{result:?}"
         );
-        assert!(root.path().join(compdb::FILE).is_file());
+        assert_eq!(*fake.compdb_first.lock().unwrap(), Some(true));
     }
 
     /// A build runs against the records: what the last one did is not done
@@ -522,5 +604,95 @@ mod tests {
                     .as_path()
             )
         );
+    }
+
+    /// Steps run as many at once as `jobs` says, and no more.
+    ///
+    /// Mutation: run the graph with one job whatever was asked, or ignore
+    /// the limit; this test fails.
+    #[test]
+    fn as_many_steps_run_at_once_as_jobs_says() {
+        for jobs in [1, 2] {
+            let (root, manifest) = package_with("", &["a.cpp"]);
+            let fake = Fake {
+                hold: Duration::from_millis(300),
+                ..Fake::default()
+            };
+            let options = Options {
+                jobs,
+                ..Options::default()
+            };
+            build_with(root.path(), &manifest, &fake, options)
+                .0
+                .unwrap();
+            assert_eq!(fake.most.load(Ordering::SeqCst), jobs, "jobs {jobs}");
+        }
+    }
+
+    /// Without `-q`, a build says what it builds with, each command under
+    /// `-v`, and how long the whole command took; with `-q` it says none of
+    /// it, `-v` or not (`commands.md`, "Output").
+    ///
+    /// Mutation: drop or change the first status line, show `Running` under
+    /// `-q`, or time the Finished line from anything but the command's
+    /// start; this test fails.
+    #[test]
+    fn what_a_build_prints_and_what_quiet_leaves_out() {
+        let (root, manifest) = package();
+        let options = Options {
+            verbose: true,
+            quiet: false,
+            ago: Duration::from_secs(90),
+            ..Options::default()
+        };
+        let (result, out) = build_with(root.path(), &manifest, &Fake::default(), options);
+        result.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "   Compiling app v0.1.0 (clang 22.1.8)", "{out}");
+        assert!(lines[1].starts_with("     Running `clang.exe "), "{out}");
+        let finished = lines.last().unwrap();
+        assert!(
+            finished.starts_with("    Finished `dev` profile [unoptimized + debuginfo] in 90."),
+            "{out}"
+        );
+
+        let (root, manifest) = package();
+        let options = Options {
+            verbose: true,
+            quiet: true,
+            ..Options::default()
+        };
+        let (result, out) = build_with(root.path(), &manifest, &Fake::default(), options);
+        result.unwrap();
+        assert_eq!(out, "");
+    }
+
+    /// The Finished line calls every optimization level but 0 optimized
+    /// (`commands.md`, "Output").
+    ///
+    /// Mutation: call any of levels 1, 2, 3 or "s" unoptimized, or 0
+    /// optimized; this test fails.
+    #[test]
+    fn the_finished_line_names_each_optimization_level() {
+        for (level, label) in [
+            ("0", "unoptimized"),
+            ("1", "optimized"),
+            ("2", "optimized"),
+            ("3", "optimized"),
+            ("\"s\"", "optimized"),
+        ] {
+            let (root, manifest) =
+                package_with(&format!("\n[profile.dev]\nopt-level = {level}\n"), &[]);
+            let options = Options {
+                quiet: false,
+                ..Options::default()
+            };
+            let (result, out) = build_with(root.path(), &manifest, &Fake::default(), options);
+            result.unwrap();
+            assert!(
+                out.contains(&format!("profile [{label} + debuginfo] in ")),
+                "opt-level {level}: {out}"
+            );
+        }
     }
 }

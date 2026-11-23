@@ -143,3 +143,64 @@ impl CunoError for BuildError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What a user reads, and the exit code, for the errors a build
+    /// command meets once the package is laid out (`commands.md`, "`cuno
+    /// run`" and "Exit codes").
+    ///
+    /// Mutation: change a message, a help line or an exit class of
+    /// `SeveralBins`, `NoSuchBin` or `Failed`; this test fails.
+    #[test]
+    fn the_run_and_failure_errors_read_as_the_spec_says() {
+        let cases = [
+            (
+                BuildError::SeveralBins {
+                    available: "app, tool".into(),
+                },
+                "several executables can be run; choose one with --bin",
+                Some("available: app, tool"),
+                ExitClass::Usage,
+            ),
+            (
+                BuildError::NoSuchBin {
+                    name: "x".into(),
+                    available: "app, tool".into(),
+                },
+                "no executable named `x`",
+                Some("available: app, tool"),
+                ExitClass::Usage,
+            ),
+            (
+                BuildError::Failed {
+                    package: "app".into(),
+                    link: false,
+                },
+                "could not compile `app`",
+                None,
+                ExitClass::Failure,
+            ),
+            (
+                BuildError::Failed {
+                    package: "app".into(),
+                    link: true,
+                },
+                "could not link `app`",
+                None,
+                ExitClass::Failure,
+            ),
+        ];
+        for (error, message, help, class) in cases {
+            assert_eq!(error.to_string(), message);
+            assert_eq!(error.help().as_deref(), help, "{message}");
+            assert_eq!(error.exit_class(), class, "{message}");
+        }
+        let layout = BuildError::NoExecutable {
+            default: "src/main.cpp".into(),
+        };
+        assert_eq!(layout.exit_class(), ExitClass::Setup);
+    }
+}
