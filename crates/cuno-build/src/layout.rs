@@ -89,6 +89,15 @@ impl Layout {
         }
     }
 
+    /// Whether this lays out a test build, whose sources must be compiled
+    /// with `CUNO_TEST` defined.
+    pub fn is_test(&self) -> bool {
+        match self.variant {
+            Variant::Normal => false,
+            Variant::Test => true,
+        }
+    }
+
     /// `<target>/<profile dir>`, which holds this profile's executables and
     /// everything else of its build.
     pub fn profile_dir(&self) -> &Path {
@@ -153,7 +162,9 @@ impl Layout {
             .join(name)
     }
 
-    /// The executable `bin`.
+    /// The executable `bin`. Where a test build's executables go is not
+    /// decided yet (`cuno test`, M3), so a test layout gives the program's
+    /// path here and nothing should link through one.
     pub fn exe(&self, bin: &str) -> PathBuf {
         let suffix = match self.host {
             HostOs::Windows => ".exe",
@@ -354,6 +365,5 @@ mod tests {
             dev.object("app", Path::new("C:/p/src/a.cpp")),
             Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
         );
-        assert_eq!(dev.for_tests().exe("app"), dev.exe("app"));
     }
 }
