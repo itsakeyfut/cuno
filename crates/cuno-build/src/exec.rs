@@ -40,6 +40,7 @@ impl Spawner for SystemSpawner {
     fn run(&self, step: &Step, env: &Env, cwd: &Path) -> io::Result<Output> {
         let output = Command::new(&step.program)
             .args(&step.args)
+            .args(&step.color)
             .env_clear()
             .envs(env.vars())
             .current_dir(cwd)
@@ -322,6 +323,7 @@ mod tests {
             reads: Vec::new(),
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
         }
     }
 
@@ -660,6 +662,7 @@ mod tests {
             reads: vec![source],
             searched: Vec::new(),
             looked_for: Vec::new(),
+            color: Vec::new(),
             ..step("clang", &[])
         };
         let spawner = Compiles {
