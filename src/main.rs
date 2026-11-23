@@ -4,6 +4,7 @@
 //! codes, and `docs/en/specs/architecture.md` for how the crates are split.
 
 mod build;
+mod bundled;
 mod clean;
 mod doctor;
 mod scratch;

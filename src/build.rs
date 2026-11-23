@@ -15,7 +15,7 @@ use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Profile};
 use cuno_toolchain::{HostOs, SystemRunner};
 
-use crate::toolchain;
+use crate::{bundled, toolchain};
 
 /// The options of `cuno build` (`commands.md`, "Build commands").
 #[derive(Debug, Default)]
@@ -130,6 +130,7 @@ pub fn build(
             Some(args),
         ),
     };
+    let bundled = bundled::expand(&settings.home).map_err(boxed)?;
     let request = Request {
         root,
         manifest,
@@ -137,6 +138,7 @@ pub fn build(
         profile,
         goal,
         host,
+        bundled: &bundled,
         jobs,
         verbose,
         quiet: verbosity.quiet,

@@ -54,14 +54,17 @@ impl CompileSettings {
 /// for a host `host` building for itself: `[build]`, `[platform.<os>.build]`,
 /// `[build.<compiler>]` and the profile, layered as `manifest.md` says; the
 /// package's edition for its own language and the other language's default
-/// otherwise (`project-layout.md`, "Target files"); `src/` on the include
-/// path.
+/// otherwise (`project-layout.md`, "Target files"); `src/` and then
+/// `bundled`, the directory of cuno's bundled headers, on the include path.
+// Each argument answers its own question; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn compile_settings(
     project: Option<(&Path, &Manifest)>,
     kind: CompilerKind,
     profile: Profile,
     lang: Lang,
     host: HostOs,
+    bundled: &Path,
     test: bool,
     mode: Mode,
 ) -> CompileSettings {
@@ -84,7 +87,11 @@ pub fn compile_settings(
         edition,
         build: manifest.build_settings(target_os(host), CompilerName::from(kind), profile),
         profile: manifest.profile_settings(profile),
-        include_dirs: root.map(|r| r.join("src")).into_iter().collect(),
+        include_dirs: root
+            .map(|r| r.join("src"))
+            .into_iter()
+            .chain([bundled.to_owned()])
+            .collect(),
         test,
         mode,
     }
@@ -114,9 +121,13 @@ fn default_manifest() -> Manifest {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use cuno_toolchain::flags::compile_flags;
+
+    /// A bundled include directory for the tests' settings. Only compared,
+    /// never looked at on disk.
+    pub(crate) const BUNDLED: &str = "C:/home/include/0.0.0";
 
     fn manifest(toml: &str) -> Manifest {
         cuno_manifest::parse_manifest(toml, Path::new("cuno.toml"), Path::new("C:/p"))
@@ -156,6 +167,7 @@ defines = ["RELEASE_ONLY"]
             profile,
             lang,
             HostOs::Windows,
+            Path::new(BUNDLED),
             false,
             Mode::Compile,
         )
@@ -163,14 +175,18 @@ defines = ["RELEASE_ONLY"]
 
     /// Mutation: drop any layer (`[build]`, the host's `[platform]`, the
     /// compiler's own table, the profile's), take another OS's or another
-    /// compiler's table, or leave `src/` off the include path; this test fails.
+    /// compiler's table, or leave `src/` or the bundled headers off the
+    /// include path, or put them in the other order; this test fails.
     #[test]
     fn every_layer_for_this_host_compiler_and_profile_applies() {
         let m = manifest(LAYERED);
         let dev = settings(&m, CompilerKind::ClangCl, Profile::Dev, Lang::Cxx);
         assert_eq!(dev.build.defines, ["SHARED", "ON_WINDOWS"]);
         assert_eq!(dev.build.flags, ["/DCLANG_CL_ONLY"]);
-        assert_eq!(dev.include_dirs, [PathBuf::from("C:/p/src")]);
+        assert_eq!(
+            dev.include_dirs,
+            [PathBuf::from("C:/p/src"), PathBuf::from(BUNDLED)]
+        );
         assert_eq!(dev.profile, m.profile_settings(Profile::Dev));
 
         let release = settings(&m, CompilerKind::Msvc, Profile::Release, Lang::Cxx);
@@ -204,9 +220,10 @@ defines = ["RELEASE_ONLY"]
     }
 
     /// Outside a project there is nothing to layer and no `src/`: the defaults,
-    /// C++20. `test` and the mode reach the command line.
+    /// C++20, and only the bundled headers on the include path. `test` and the
+    /// mode reach the command line.
     ///
-    /// Mutation: add an include directory, or another standard, outside a
+    /// Mutation: add another include directory, or another standard, outside a
     /// project, or drop `test` or the mode in `input()`; this test fails.
     #[test]
     fn outside_a_project_the_defaults_apply() {
@@ -216,11 +233,12 @@ defines = ["RELEASE_ONLY"]
             Profile::Dev,
             Lang::Cxx,
             HostOs::Windows,
+            Path::new(BUNDLED),
             true,
             Mode::Check,
         );
         assert_eq!((s.lang, s.edition), (Lang::Cxx, Edition::Cxx20));
-        assert!(s.include_dirs.is_empty());
+        assert_eq!(s.include_dirs, [PathBuf::from(BUNDLED)]);
         assert!(s.build.defines.is_empty());
         assert_eq!((s.test, s.mode), (true, Mode::Check));
         // ... and reach the command line through `input()`.
@@ -246,6 +264,7 @@ defines = ["RELEASE_ONLY"]
             Profile::Dev,
             Lang::Cxx,
             HostOs::Other,
+            Path::new(BUNDLED),
             false,
             Mode::Compile,
         );

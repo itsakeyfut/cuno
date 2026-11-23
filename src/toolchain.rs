@@ -17,6 +17,7 @@ use cuno_toolchain::select::{self, Found, Selected};
 use cuno_toolchain::{HostOs, Runner};
 
 use crate::build::boxed;
+use crate::bundled;
 use crate::scratch;
 
 /// Detects Visual Studio and the LLVM tools, the copies `[toolchain.paths]`
@@ -57,6 +58,7 @@ pub fn probe_compile(
     profile: Profile,
     cwd: &Path,
     host: HostOs,
+    bundled: &Path,
 ) -> Option<ProbeCompile> {
     if project.is_some_and(|(_, manifest)| manifest.package.lang == Lang::C) {
         return None;
@@ -67,6 +69,7 @@ pub fn probe_compile(
         profile,
         Lang::Cxx,
         host,
+        bundled,
         false,
         Mode::Check,
     );
@@ -148,6 +151,11 @@ pub fn ready(
         profile,
         project.0,
         host,
+        // The build's include path, so the probe's command line is the
+        // build's. The headers are written there only later, by the build,
+        // and need not exist yet: the probe includes none of them, and a
+        // missing include directory is no error to any compiler.
+        &bundled::include_dir(&settings.home),
     ) {
         probe(&selected, &compile, "build", runner)?;
     }
