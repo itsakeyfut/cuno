@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob a456a2eca9bf07daefd952b4e1007dee4d99f914 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 98dd1679630d95807cfe3e428fd22724884651a4 -->
 
 # Commands
 
@@ -262,6 +262,7 @@ One line per item, in the same form as the status lines of the other commands ([
 - `Found`: clang-format and clang-tidy.
 - `Info`: the compilers other than the one asked for: the version of the copy selecting it would use, `not found` when there is none, or `not usable` with the reason when one is found but cannot be used (below cuno's minimum, for example). It is judged as selection judges, except that `[toolchain.version]` is not applied (it applies only to the compiler actually used). They do not affect the exit code. But when the one written in `[toolchain.paths]` cannot be used, it is printed as a problem instead of `Info` (so that it is not first found when switching to that compiler).
 - A problem is printed where it is found, as an `error:` and a `help:` line, and diagnosis continues. Warnings about configuration files come first, as `warning:`.
+- With `-q`, only the configuration file warnings and the problems (`error:` and `help:`) are printed. When there is no problem, nothing is printed (the exit code tells).
 - The last line is `Finished no problems found`, or `Finished <n> problems found` (`problem` for one).
 
 ## Output
@@ -294,6 +295,8 @@ Follows cargo.
     - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.
   - They are not translated (cl.exe from a Japanese-language Visual Studio stays in Japanese). Only cuno's own messages are unified in English.
   - Compilers that can produce colored output, such as Clang, are displayed in color. MSVC does not produce color, so its output is shown as is, without color.
+    - Only when cuno colors its output (by the order in "Available for all commands" above) does it pass `-fcolor-diagnostics -fansi-escape-codes` to clang and clang-cl. cuno receives the compiler's output through a pipe, so without them Clang does not color it. On Windows, `-fansi-escape-codes` is also needed so that the colors are written as escape sequences.
+    - These two are kept out of both the command line used to decide what changed ([build.md](build.md#deciding-what-changed)) and `compile_commands.json`. Rationale: changing only the color setting should not recompile everything, and they change only how the compiler's output looks, not what is built.
 
 ## Exit codes
 

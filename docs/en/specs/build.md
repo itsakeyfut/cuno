@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob c6530fd01511b02a41f2f79d5bb3101b7214b275 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob a620c3bc3b81fedca106cd83d7ddc5206bef1360 -->
 
 # Build
 
@@ -19,7 +19,7 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change;
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang color its output ([commands.md](commands.md#format)) are not part of it;
   - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first `<lib>.lib` found, searching `lib-dirs` in order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above.
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
