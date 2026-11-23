@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 62af3db9424db4cc3450e87cb4e7ee776a6b5bfc -->
+<!-- translated-from: docs/ja/specs/build.md @ blob dfe3d7bb511e6ba0c445428e2b9132ab2b7017e4 -->
 
 # Build
 
@@ -191,7 +191,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
     - MSVC standard switches that clang-cl does not know (`/std:c++23`, `/std:clatest`) are rewritten to clang-cl's switch for the same standard (the clang-cl column of the [Compiling](#compiling) table). Left as they are, clang-cl would ignore them and analyze with an older standard.
     - MSVC's `/GL` (from `lto`) is not written. It is a link-time optimization switch with no bearing on analysis, and when only analyzing, clang-cl warns that it is an unused argument, which under `warnings-as-errors` becomes an error.
   - When the content is the same as last time, the file is not rewritten, so that an editor watching it does not reanalyze after every build.
-  - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built. Each compile's output (`output`) names where that test build's object is (see [Output directory](#output-directory)). The normal build's object is compiled without `CUNO_TEST`, so naming it would point at something else.
+  - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built. Each compile's output (`output`) names where that test build's object is (see [Output directory](#output-directory)). The normal build's object is compiled without `CUNO_TEST`, so naming it would point at something else. Entry files are not part of a test build ([project-layout.md](project-layout.md)), but they are listed so that editors and clang-tidy can analyse them; their `output` is where the test build's layout would put them (no build makes anything there).
     - Reason: editor completion and clang-tidy can analyze in-source test code as well (just as rust-analyzer analyzes test code). If the content changed with every build, the editor's analysis results would fluctuate.
   - The header dependency arguments ([Always-on flags](#always-on-flags)) are left out of each compile's command. They make the compiler write a file that cuno uses to decide what changed, and have no bearing on what the source means.
   - If the file cannot be written, cuno prints a warning (`warning: could not write compile_commands.json: <reason>`) and the build continues.
@@ -201,7 +201,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
 - The default is `target/`. Its contents are organized by target.
   - Normal: `target/<profile name>/`. However, the `dev` profile uses `debug/`, as in Cargo (`target/debug/`, `target/release/`; custom profiles keep their name, e.g. `target/profiling/`).
   - When cross-compiling: `target/<target>/<profile name>/`
-  - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files. As with intermediate files, objects are placed by the source's position in the project (`target/debug/test/<package name>/src/main.cpp.obj`).
+  - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files. As with intermediate files, objects are placed by the source's position in the project (`target/debug/test/<package name>/src/calc.cpp.obj`).
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
 - A build (`build` / `run` / `check`) puts a marker file `.cuno-target` directly in the output directory when it creates the directory, or when it starts using an empty one. It does not put one in an existing directory that has contents. `cuno clean` does not delete an output directory without this marker.
