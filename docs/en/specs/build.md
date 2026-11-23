@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 4ead99d3aaad0965a4a982834755f535e1890371 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob c6530fd01511b02a41f2f79d5bb3101b7214b275 -->
 
 # Build
 
@@ -27,9 +27,9 @@
   - an input's modification time or size differs from the record, and its content hash differs too;
   - a file with the same name as a header or library it read has newly appeared in another place that is searched (below).
 - Same-named files appearing: when a file with the same name appears in a place the search reaches earlier, the next compile reads that one instead. Recording only the files read would miss this and report success with the old code. So for each step, cuno checks the following.
-  - Where it looks: for a compile, `include-dirs`, the default include paths (below), and the directories holding the source and the headers it read (because `#include "..."` searches from the directory of the including file). For a link, `lib-dirs`.
-  - Which names: for each file read, its path relative to the search directory it was found in (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. For a file under no search directory (such as a header that ships with Clang), its file name.
-  - If any combination of these places and names that did not exist when the record was made now exists, the step runs. One that already existed then (one later in the search order, which was not read) does not count as a change.
+  - Where it looks: for a compile, `include-dirs`, the default include paths (below), and the directories holding the source and the headers it read (because `#include "..."` searches from the directory of the including file), but not the compiler's own directories (`INCLUDE` and where the compiler is installed). For a link, `lib-dirs`.
+  - Which names: for each file read, its path relative to the directory of `include-dirs` or of the default include paths that holds it (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. For a file outside all of these but where the compiler is installed (such as a header that ships with Clang), its file name. A header found only in the including file's directory is not checked: `#include "..."` searches there first, so no place is searched ahead of it. For a link, `<lib>.lib` for every name in `links`, including one not found in `lib-dirs` and read from the system.
+  - If any combination of these places and names that did not exist when the record was made now exists, the step runs. One that already existed then (one later in the search order, which was not read) does not count as a change. But if one of them was modified two seconds or less before the step started, or later, the step is not recorded, as with an input (whether the compiler saw it before or after it was made cannot be told).
   - Rationale: the search order differs between compilers. Checking every place that may be searched, without reproducing the order, and looking only at what differs from the time of the record misses nothing on any compiler, and does not rerun a step every time because of an unrelated file of the same name. The only extra runs come when a file with the same name as a header or library read newly appears in a place later in the search order.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
@@ -42,6 +42,7 @@
   - What it misses is the following, and then it reports success with the old code:
     - a file whose content changed while its modification time and size stayed the same. The modification time stays the same only when, after the record, the file is rewritten to the same size within one tick of the modification time (see the rationale for the 2-second margin above), which never happens through a person's editing. It can happen when a tool or a test rewrites a file quickly;
     - a header that `__has_include` did not find, created later. No file was read, so there is no name to check;
+    - a header read through a name that leaves a search directory with `..`, such as `#include "../common/x.h"`, when a same-named header is created where the search finds it first. The names checked are relative paths inside a search directory; a name with `..` is not checked.
     - a file added later to the compiler's own directories (`INCLUDE`, or the directory of the headers that ship with Clang). These are not among the places checked. An update of the toolset or the SDK changes the value of `INCLUDE`, and an update of Clang changes the compiler's version, so either shows up as a different command line.
 - The records are kept inside the output directory (`target/<profile name>/`). Their format is cuno's own and not meant for users to read. A record from another cuno version, or one that cannot be read, is treated as absent (the step runs).
 
