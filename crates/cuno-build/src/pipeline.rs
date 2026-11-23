@@ -895,4 +895,20 @@ mod tests {
         assert_eq!(fake.runs.load(Ordering::SeqCst), 0);
         assert!(!root.path().join(compdb::FILE).exists());
     }
+
+    /// Without `tests/` nothing links the plain body, so a test build does
+    /// not compile it.
+    ///
+    /// Mutation: compile the plain body whether or not a `tests/`
+    /// executable links it; this test fails.
+    #[test]
+    fn without_tests_the_plain_body_is_not_compiled() {
+        let (root, manifest) = package_with("", &["a.cpp"]);
+        let fake = Fake::default();
+        run(root.path(), &manifest, Goal::Test, &fake).unwrap();
+        let compiles = fake.compiles.lock().unwrap();
+        // The body with `CUNO_TEST` and the runtime.
+        assert_eq!(compiles.len(), 2, "{compiles:?}");
+        assert!(!root.path().join("target/debug/obj").exists());
+    }
 }
