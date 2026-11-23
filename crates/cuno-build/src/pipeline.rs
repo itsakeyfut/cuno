@@ -17,7 +17,7 @@ use cuno_toolchain::{HostOs, Version};
 use crate::BuildError;
 use crate::compdb;
 use crate::exec::{self, Event, Spawner};
-use crate::graph::{self, Plan, Step, StepKind, Targets};
+use crate::graph::{self, Plan, Products, Step, StepKind};
 use crate::input::compile_settings;
 use crate::layout::{self, Layout};
 use crate::sources::{self, Bin};
@@ -53,8 +53,8 @@ pub enum Goal<'a> {
         /// `--bin`.
         bin: Option<&'a str>,
     },
-    /// `cuno test`'s build: the test executables, compiled with
-    /// `CUNO_TEST` (`docs/en/specs/testing.md`, "Running").
+    /// `cuno test`'s build: the test executables, every source compiled
+    /// with `CUNO_TEST` (`docs/en/specs/testing.md`, "Running").
     Test,
 }
 
@@ -95,12 +95,14 @@ pub struct Built {
     pub exe: Option<PathBuf>,
     /// For [`Goal::Test`], every test executable, the in-source tests'
     /// first and then one per source under `tests/` in path order.
-    pub tests: Vec<TestExecutable>,
+    pub test_executables: Vec<BuiltTest>,
 }
 
-/// A test executable a build made.
+/// A test executable a build made: where
+/// [`crate::sources::TestExecutable`] says what one is made from, this says
+/// where it ended up, for the command that runs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TestExecutable {
+pub struct BuiltTest {
     /// Its name (`docs/en/specs/build.md`, "Output directory").
     pub name: String,
     /// Where it is.
@@ -129,7 +131,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Goal::Build | Goal::Check | Goal::Run { .. } => false,
         Goal::Test => true,
     };
-    let settings = |lang: Lang, test: bool, mode: Mode| {
+    let compile = |lang: Lang, mode: Mode| {
         compile_settings(
             Some((root, manifest)),
             tool.kind,
@@ -141,21 +143,14 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             mode,
         )
     };
-    let compile = |lang: Lang, mode: Mode| settings(lang, test, mode);
-    // The program's settings, for the body the `tests/` executables link.
-    let plain = |lang: Lang| settings(lang, false, Mode::Compile);
 
     let sources = sources::classify(root, manifest, target_dir, host)?;
     for warning in &sources.warnings {
         shell.warning(warning);
     }
     let package = &manifest.package.name;
-    let program_layout = Layout::new(target_dir, profile, root, host);
-    let layout = if test {
-        program_layout.for_tests()
-    } else {
-        program_layout.clone()
-    };
+    let layout = Layout::new(target_dir, profile, root, host);
+    let layout = if test { layout.for_tests() } else { layout };
     // Chosen, and named, before anything is built, so a wrong `--bin` or
     // two test executables of one name cost nothing.
     let (mode, exe) = match goal {
@@ -172,14 +167,13 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Vec::new()
     };
     let runtime = bundled.join("cuno").join("test_main.c");
-    let targets = if test {
-        Targets::Tests {
+    // A match, so a new goal has to say what it makes.
+    let products = match goal {
+        Goal::Build | Goal::Check | Goal::Run { .. } => Products::Programs,
+        Goal::Test => Products::Tests {
             executables: &executables,
             runtime: &runtime,
-            plain: (&program_layout, &plain),
-        }
-    } else {
-        Targets::Programs
+        },
     };
     let verb = match mode {
         Mode::Compile => "Compiling",
@@ -190,7 +184,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let graph = graph::plan(&Plan {
         package,
         sources: &sources,
-        targets,
+        products,
         layout: &layout,
         kind: tool.kind,
         program: tool.executable,
@@ -218,7 +212,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let editors = graph::plan(&Plan {
         package,
         sources: &sources,
-        targets: Targets::Editors,
+        products: Products::CompileCommands,
         // The test build's objects: what compile_commands.json describes is
         // compiled with `CUNO_TEST` (build.md, "Output").
         layout: &Layout::new(target_dir, Profile::Dev, root, host).for_tests(),
@@ -311,15 +305,18 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             ),
         );
     }
-    let tests = executables
+    let test_executables = executables
         .into_iter()
-        .map(|exe| TestExecutable {
+        .map(|exe| BuiltTest {
             path: layout.test_exe(package, &exe.name),
             name: exe.name,
             file: exe.file.map(|f| f.path),
         })
         .collect();
-    Ok(Built { exe, tests })
+    Ok(Built {
+        exe,
+        test_executables,
+    })
 }
 
 /// The executable `cuno run` runs: the one `bin` names, or the only one.
@@ -538,6 +535,7 @@ mod tests {
     /// How a test runs a build.
     struct Options<'a> {
         goal: Goal<'a>,
+        profile: Profile,
         jobs: usize,
         verbose: bool,
         quiet: bool,
@@ -549,6 +547,7 @@ mod tests {
         fn default() -> Self {
             Options {
                 goal: Goal::Build,
+                profile: Profile::Dev,
                 jobs: 1,
                 verbose: false,
                 quiet: true,
@@ -572,7 +571,7 @@ mod tests {
             root,
             manifest,
             target_dir: &target,
-            profile: Profile::Dev,
+            profile: options.profile,
             goal: options.goal,
             host: HostOs::Windows,
             bundled: Path::new(BUNDLED),
@@ -804,10 +803,10 @@ mod tests {
     /// compiles everything with `CUNO_TEST`, the entry file not at all, and
     /// nothing of the program's (`build.md`, "Output directory").
     ///
-    /// Mutation: plan the program's targets for `Goal::Test`, compile the
-    /// test sources without `CUNO_TEST` or the `tests/` executables' body
-    /// with it, report no executables or another path, or drop the
-    /// `tests/` file from what one is made from; this test fails.
+    /// Mutation: plan the programs for `Goal::Test`, compile a test source
+    /// without `CUNO_TEST` or the body twice, report no executables or
+    /// another path, or drop the `tests/` file from what one is made from;
+    /// this test fails.
     #[test]
     fn a_test_build_makes_and_names_the_test_executables() {
         let (root, manifest) = package_with("", &["a.cpp"]);
@@ -816,45 +815,69 @@ mod tests {
         let built = run(root.path(), &manifest, Goal::Test, &fake).unwrap();
         let bin = paths::lexical(root.path()).join("target/debug/test/app/bin");
         assert_eq!(
-            built.tests,
+            built.test_executables,
             [
-                TestExecutable {
+                BuiltTest {
                     name: "app".into(),
                     path: bin.join("app.exe"),
                     file: None,
                 },
-                TestExecutable {
+                BuiltTest {
                     name: "tests-t".into(),
                     path: bin.join("tests-t.exe"),
                     file: Some(root.path().join("tests").join("t.cpp")),
                 },
             ]
         );
-        for test in &built.tests {
+        for test in &built.test_executables {
             assert!(test.path.is_file(), "{}", test.path.display());
         }
         let target = root.path().join("target").join("debug");
         assert!(!target.join("app.exe").exists());
-        // The program's body object, which the `tests/` executable links,
-        // and nothing else of the program's.
-        assert!(target.join("obj/app/src/a.cpp.obj").is_file());
-        assert!(!target.join("obj/app/src/main.cpp.obj").exists());
+        // Nothing of the program's.
+        assert!(!target.join("obj").exists());
         let compiles = fake.compiles.lock().unwrap();
-        // The body with and without `CUNO_TEST`, the test file and the
-        // runtime.
-        assert_eq!(compiles.len(), 4);
-        let defining = compiles
-            .iter()
-            .filter(|args| args.contains(&OsString::from("-DCUNO_TEST")))
-            .count();
-        assert_eq!(defining, 3);
+        // The body once, the test file and the runtime.
+        assert_eq!(compiles.len(), 3);
         for args in compiles.iter() {
+            assert!(args.contains(&OsString::from("-DCUNO_TEST")), "{args:?}");
             assert!(
                 !args
                     .iter()
                     .any(|a| a.to_string_lossy().ends_with("main.cpp")),
                 "{args:?}"
             );
+        }
+    }
+
+    /// `cuno test --release` builds the test executables with the release
+    /// profile's settings, in the release profile's directory.
+    ///
+    /// Mutation: lay out or compile a test build in `dev` whatever the
+    /// profile; this test fails.
+    #[test]
+    fn a_release_test_build_is_a_release_build() {
+        let (root, manifest) = package_with("", &["a.cpp"]);
+        write_old(root.path(), "tests/t.cpp");
+        let fake = Fake::default();
+        let built = build_with(
+            root.path(),
+            &manifest,
+            &fake,
+            Options {
+                goal: Goal::Test,
+                profile: Profile::Release,
+                ..Options::default()
+            },
+        )
+        .0
+        .unwrap();
+        let release = paths::lexical(root.path()).join("target/release/test/app/bin");
+        for test in &built.test_executables {
+            assert!(test.path.starts_with(&release), "{}", test.path.display());
+        }
+        for args in fake.compiles.lock().unwrap().iter() {
+            assert!(args.contains(&OsString::from("-O3")), "{args:?}");
         }
     }
 
@@ -894,21 +917,5 @@ mod tests {
         );
         assert_eq!(fake.runs.load(Ordering::SeqCst), 0);
         assert!(!root.path().join(compdb::FILE).exists());
-    }
-
-    /// Without `tests/` nothing links the plain body, so a test build does
-    /// not compile it.
-    ///
-    /// Mutation: compile the plain body whether or not a `tests/`
-    /// executable links it; this test fails.
-    #[test]
-    fn without_tests_the_plain_body_is_not_compiled() {
-        let (root, manifest) = package_with("", &["a.cpp"]);
-        let fake = Fake::default();
-        run(root.path(), &manifest, Goal::Test, &fake).unwrap();
-        let compiles = fake.compiles.lock().unwrap();
-        // The body with `CUNO_TEST` and the runtime.
-        assert_eq!(compiles.len(), 2, "{compiles:?}");
-        assert!(!root.path().join("target/debug/obj").exists());
     }
 }

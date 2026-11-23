@@ -150,9 +150,13 @@ impl CunoError for BuildError {
             BuildError::DuplicateName { .. } => {
                 Some("give one of them another name with [[bin]] name".to_owned())
             }
-            BuildError::DuplicateTestName { .. } => {
-                Some("rename one of the files in tests/".to_owned())
-            }
+            // The in-source tests are named after the package, which is
+            // the other thing that can be renamed.
+            BuildError::DuplicateTestName { sources, .. } => Some(if sources[0] == "src/" {
+                format!("rename {}, or the package", sources[1])
+            } else {
+                "rename one of the files in tests/".to_owned()
+            }),
             BuildError::SeveralBins { available } | BuildError::NoSuchBin { available, .. } => {
                 Some(format!("available: {available}"))
             }
@@ -224,7 +228,7 @@ mod tests {
     /// Two test executables of one name: what a user reads, the help and
     /// the exit code (`build.md`, "Output directory").
     ///
-    /// Mutation: change the message, the help or the exit class of
+    /// Mutation: change the message, either help or the exit class of
     /// `DuplicateTestName`; this test fails.
     #[test]
     fn two_test_executables_of_one_name_read_as_the_spec_says() {
@@ -238,8 +242,16 @@ mod tests {
         );
         assert_eq!(
             error.help().as_deref(),
-            Some("rename one of the files in tests/")
+            Some("rename tests/foo.cpp, or the package")
         );
         assert_eq!(error.exit_class(), ExitClass::Setup);
+        let two_files = BuildError::DuplicateTestName {
+            name: "tests-foo".into(),
+            sources: ["tests/foo.c".into(), "tests/foo.cpp".into()],
+        };
+        assert_eq!(
+            two_files.help().as_deref(),
+            Some("rename one of the files in tests/")
+        );
     }
 }

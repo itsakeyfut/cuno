@@ -136,11 +136,16 @@ impl Layout {
     fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
         let source = paths::lexical(source);
         let case = self.host.name_case();
-        // `src/` is the project's even when it is a link leading out of it.
-        let src = self.root.join("src");
+        // `src/` and `tests/` are the project's even when they are links
+        // leading out of it (`project-layout.md`, "Source collection and
+        // linking").
+        let within = |dir: &Path, name: &str| {
+            paths::relative(dir, &self.root.join(name), case).map(|r| Path::new(name).join(r))
+        };
         let under = source.parent().and_then(|dir| {
             paths::relative(dir, &self.root, case)
-                .or_else(|| paths::relative(dir, &src, case).map(|r| Path::new("src").join(r)))
+                .or_else(|| within(dir, "src"))
+                .or_else(|| within(dir, "tests"))
         });
         let (Some(under), Some(file)) = (under, source.file_name()) else {
             panic!(
@@ -449,5 +454,41 @@ mod tests {
     #[should_panic(expected = "a test executable from a program's layout")]
     fn a_program_layout_has_no_test_executable() {
         layout(Profile::Dev).test_exe("app", "app");
+    }
+
+    /// A source in a `tests/` that is a junction leading out of the project
+    /// gets its object under `test/<package>/tests`, as one in such a
+    /// `src/` does (`project-layout.md`, "Source collection and linking").
+    ///
+    /// Mutation: take only `src/` as the project's when it leads out; this
+    /// test fails (the object is refused as outside the project).
+    #[cfg(windows)]
+    #[test]
+    fn a_tests_linked_from_outside_has_its_objects_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, shared) = (dir.path().join("p"), dir.path().join("shared"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("tests"))
+            .arg(&shared)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let test =
+            Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows).for_tests();
+        assert_eq!(
+            test.object("app", &root.join("tests").join("t.cpp")),
+            root.join("target/debug/test/app/tests/t.cpp.obj")
+        );
+    }
+
+    /// Mutation: let a program's layout give a runtime object; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a runtime object from a program's layout")]
+    fn a_program_layout_has_no_runtime_object() {
+        layout(Profile::Dev).runtime_object("app", "test_main.c");
     }
 }

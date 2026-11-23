@@ -374,10 +374,22 @@ static int cuno_test_main(int argc, char **argv) {
 #ifdef _WIN32
 /* The arguments as UTF-16, converted to UTF-8, the encoding test names are
  * compiled in: char arguments are in the code page, which may not hold
- * them. */
-int wmain(int argc, wchar_t **wargv) {
-    char **argv = (char **)calloc((size_t)argc + 1, sizeof *argv);
+ * them. The entry point is `main` all the same, not `wmain`: a `main` of the
+ * user's linked in by mistake (a file under tests/ with one) is then a
+ * duplicate the linker refuses, rather than an entry point it prefers and
+ * the tests never running. */
+#include <shellapi.h>
+#pragma comment(lib, "shell32")
+int main(void) {
+    int argc = 0;
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    char **argv;
     int i;
+    if (wargv == NULL) {
+        fputs("error: cannot read the arguments\n", stderr);
+        return 2;
+    }
+    argv = (char **)calloc((size_t)argc + 1, sizeof *argv);
     if (argv == NULL) {
         fputs("error: out of memory reading the arguments\n", stderr);
         return 2;
