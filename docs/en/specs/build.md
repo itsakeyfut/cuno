@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob c55ec0c6e75d3e9d1dfbc3765f38cb237c24861e -->
+<!-- translated-from: docs/ja/specs/build.md @ blob ff2718cc6415d5f1a745239760b5893ead96a7a1 -->
 
 # Build
 
@@ -177,9 +177,10 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - **Generation is independent of compilation**: cuno generates it from the build graph (the compile commands scheduled to run). Regardless of whether compilation succeeds, running any of `build` / `run` / `check` / `test` / `lint` updates it to the latest content. `fmt` does not generate it (because it works without a compiler; [dev-tools.md](dev-tools.md#target-files)). `cuno lint` works even if nothing has been built yet.
   - **Self-contained content**: the MSVC / Windows SDK include paths and the MSVC version in use (`-fms-compatibility-version=<cl version>`) are written explicitly, so that clangd running outside a Developer Command Prompt can still find the standard headers and Windows headers, and analyze with the same `_MSC_VER` as the build.
     - The include paths are written so that they are searched after the tool's own built-in headers (`/imsvc` in cl style, `-idirafter` for clang), because in the build, too, `INCLUDE` is searched after the built-in headers. With `-isystem`, the Windows SDK's `stddef.h` and the like would be found before clang's own, and a program different from the build's would be analyzed.
-  - **Written in the form clang-based tools read**: the file is read by clangd and clang-tidy, which read cl commands as clang-cl too. So only the following two points are rewritten, to keep the meaning the same as in the build.
+  - **Written in the form clang-based tools read**: the file is read by clangd and clang-tidy, which read cl commands as clang-cl too. So only the following three points are rewritten, to keep the meaning the same as in the build.
     - `/c` is written `-c` (cl accepts it too), because when only analyzing, clang-cl warns that `/c` is an unused argument, and under `warnings-as-errors` that warning becomes an error.
     - MSVC standard switches that clang-cl does not know (`/std:c++23`, `/std:clatest`) are rewritten to clang-cl's switch for the same standard (the clang-cl column of the [Compiling](#compiling) table). Left as they are, clang-cl would ignore them and analyze with an older standard.
+    - MSVC's `/GL` (from `lto`) is not written. It is a link-time optimization switch with no bearing on analysis, and when only analyzing, clang-cl warns that it is an unused argument, which under `warnings-as-errors` becomes an error.
   - When the content is the same as last time, the file is not rewritten, so that an editor watching it does not reanalyze after every build.
   - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built.
     - Reason: editor completion and clang-tidy can analyze in-source test code as well (just as rust-analyzer analyzes test code). If the content changed with every build, the editor's analysis results would fluctuate.

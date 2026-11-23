@@ -244,8 +244,8 @@ mod tests {
     /// written as clang-cl's, so a tool analyses the standard the build
     /// compiles; one it knows, and clang-cl's own, stay.
     ///
-    /// Mutation: leave cl's `/std:c++23` or `/std:clatest`, or rewrite a
-    /// clang-cl command; this test fails.
+    /// Mutation: leave cl's `/std:c++23` or `/std:clatest`, keep its `/GL`,
+    /// or rewrite a clang-cl command; this test fails.
     #[test]
     fn an_msvc_standard_is_written_as_clang_cl_reads_it() {
         let cases = [
@@ -270,6 +270,16 @@ mod tests {
             let value = entries(Path::new("C:/p"), &graph, compiler);
             assert_eq!(arguments(&value[0])[2], read, "{kind:?} {written}");
         }
+        let graph = Graph {
+            steps: vec![compile(CompilerKind::Msvc, "src/main.cpp", &["/GL"])],
+        };
+        let msvc = Compiler {
+            kind: CompilerKind::Msvc,
+            include: &[],
+            msvc: None,
+        };
+        let value = entries(Path::new("C:/p"), &graph, msvc);
+        assert!(!arguments(&value[0]).contains(&"/GL"));
     }
 
     /// Mutation: keep an empty `INCLUDE` entry; this test fails.

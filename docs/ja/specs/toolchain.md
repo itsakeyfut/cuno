@@ -62,6 +62,7 @@ C++20 の指定を受け付けるものとする。
   - 理由: ヘッダの条件式を読んだり、MSVC の版ごとの対応表を cuno が持ったりすると、新しい Visual Studio で書き方や版が変わったときに、使えない組み合わせを「問題なし」と判定しうる。試しのコンパイルは数十ミリ秒で、標準ライブラリの答えそのものを使える。
 - **clang-tidy にも同じ確認を適用する。** clang-tidy は compile_commands.json のコマンドで解析し、MSVC の標準ヘッダを読むので、古い clang-tidy は STL1000 で全ファイルの解析に失敗する。
   - 方法: 同じファイルを、clang-tidy に `--checks=-*,readability-braces-around-statements`（チェックが 1 つもないと解析せずに止まるため、影響のない 1 つだけを有効にする）と、`--` に続けて上と同じコンパイルの条件を渡して解析させる。プロジェクトの `.clang-tidy` は読ませない。STL1000 は clang-tidy では標準出力に出る。判定は上と同じ。
+    - MSVC を選んだとき、clang-tidy はこの条件を clang-cl のコマンドとして読む。そのため、clang-cl が同じ意味に読む形に書き換えて渡す（MSVC の規格指定を clang-cl のものにし、`/GL` を除く。compile_commands.json と同じ書き換え。[build.md](build.md#出力)）。そのままでは、たとえば `/std:c++23` を clang-cl が知らずに無視し、`warnings-as-errors` ではその「使われない引数」の警告がエラーになって、存在しない問題を報告してしまう。
 - **どこで確認するか**:
 
   | コマンド | 確認するもの | C だけのプロジェクト（`[package] lang = "c"`） |

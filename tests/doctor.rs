@@ -1213,12 +1213,13 @@ fn the_check_takes_the_hosts_platform_layer() {
     );
 }
 
-/// Started below the project root, doctor probes the standard library
-/// where the build runs, the root, so a relative path in the project's
-/// flags means what it means to the build.
+/// Started below the project root, doctor probes the standard library,
+/// with the compiler and with clang-tidy, where the build runs, the root,
+/// so a relative path in the project's flags means what it means to the
+/// build.
 ///
-/// Mutation: probe in the directory doctor was started in; this test
-/// fails.
+/// Mutation: probe, or run clang-tidy's check, in the directory doctor was
+/// started in or in the scratch directory; this test fails.
 #[test]
 fn the_probe_runs_in_the_project_root() {
     if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_none() {
@@ -1238,6 +1239,44 @@ fn the_probe_runs_in_the_project_root() {
     assert!(
         run.stderr
             .contains("    Accepted by the MSVC standard library\n"),
+        "{}",
+        run.stderr
+    );
+    // clang-tidy's check reads the same flags in the same place.
+    if llvm_tools_here() {
+        assert!(
+            run.stderr.ends_with("Finished no problems found\n"),
+            "{}",
+            run.stderr
+        );
+    }
+}
+
+/// With MSVC selected, clang-tidy's standard library check reads the
+/// build's flags as clang-cl does: a C++23 project built with link-time
+/// optimization and errors for warnings reports no problem, where cl's
+/// `/std:c++23` or `/GL` would be an unused argument to clang-cl and so an
+/// error.
+///
+/// Mutation: give clang-tidy the cl command without the clang-cl reading,
+/// or keep `/GL` in it; this test fails.
+#[test]
+fn clang_tidy_reads_an_msvc_projects_flags_as_clang_cl() {
+    if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &manifest(
+                "edition = \"c++23\"\n[build]\nwarnings-as-errors = true\n[profile.dev]\nlto = true\n",
+            ),
+        )
+        .file("src/main.cpp", "int main() {}\n");
+    let run = project.cuno(&["doctor", "--compiler", "msvc"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr.ends_with("Finished no problems found\n"),
         "{}",
         run.stderr
     );
