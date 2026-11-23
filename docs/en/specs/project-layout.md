@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob af136d7f30910b37819eb403e058d25ffca96f9c -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 98764a8bce5dc1979c66bdb4c97a390df3fc55ca -->
 
 # Project Kinds and Layout
 
@@ -73,6 +73,10 @@ sources = ["Private"]
   - Two executables get the same name (a `[[bin]]` `name` written twice, or an auto-detected `src/bin/app.cpp` beside the default executable `app`, for example), since they would be the same file in the output directory. On Windows names are compared without regard to case (`Tool` and `tool` are the same file too).
 - On Windows, file and directory names are handled without regard to case: `src/Main.cpp` is the default entry file too, and a `[[bin]]` `path` written `SRC/Main.cpp` is the same file as `src/main.cpp`.
   - Rationale: counting the same file twice under two spellings would put an entry file in the package body as well, compiling it twice and defining `main` twice.
+- Whether two paths are the same place is decided by where the file system gets to. Links (symbolic links, junctions) and short names (8.3 format) are treated as the place they lead to. A file or directory that does not exist yet is the place reached by following the part that exists and continuing with the rest as written. This is the same everywhere cuno uses the judgement (classifying sources, whether the output directory is inside the project, Visual Studio locations).
+  - Rationale: comparing spellings alone would judge an output directory that points outside through a link inside the project to be "inside". If the method differs from place to place, a mistake fixed in one place happens again in another.
+  - Paths passed to compilers and paths displayed stay as written. Where they lead is used only for comparing.
+  - An object file's place is decided by where the source's directory leads and where the source file's name sits. A source file that is itself a link pointing outside the project is still compiled as a source in `src/`. A `[[bin]]` `path` naming a link to a file outside the project, on the other hand, is an error, since the entry file is outside the project.
 - A link to a directory inside `src/` (a symbolic link or a junction) is not read, and cuno warns about it.
   - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
 
