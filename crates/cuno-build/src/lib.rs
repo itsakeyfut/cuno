@@ -10,6 +10,7 @@ pub mod exec;
 pub mod graph;
 pub mod input;
 pub mod layout;
+pub mod pipeline;
 pub mod sources;
 pub mod state;
 

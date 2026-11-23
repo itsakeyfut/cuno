@@ -5,9 +5,10 @@ use std::path::PathBuf;
 
 use cuno_core::{CunoError, ExitClass};
 
-/// A problem with the package's layout, found before anything is compiled
-/// (`docs/en/specs/project-layout.md`, "Entry files and the package
-/// body"). Every one is a setup problem: exit code 3.
+/// What stops a build: a problem with the package's layout, found before
+/// anything is compiled (`docs/en/specs/project-layout.md`, "Entry files
+/// and the package body"), a `--bin` that names no executable, or a step
+/// that failed.
 #[derive(Debug)]
 pub enum BuildError {
     /// No entry file, nothing in `src/bin/`, no `[[bin]]`.
@@ -50,6 +51,25 @@ pub enum BuildError {
         /// Why.
         reason: String,
     },
+    /// `cuno run` without `--bin`, and more than one executable.
+    SeveralBins {
+        /// The executables' names, comma separated.
+        available: String,
+    },
+    /// `--bin` names no executable.
+    NoSuchBin {
+        /// The name given.
+        name: String,
+        /// The executables' names, comma separated.
+        available: String,
+    },
+    /// A compile or a link failed; the compiler said why.
+    Failed {
+        /// The package.
+        package: String,
+        /// Whether the first failure was a link.
+        link: bool,
+    },
 }
 
 impl fmt::Display for BuildError {
@@ -74,6 +94,14 @@ impl fmt::Display for BuildError {
                 entries[0], entries[1]
             ),
             BuildError::Unreadable { dir, reason } => write!(f, "cannot read {dir}: {reason}"),
+            BuildError::SeveralBins { .. } => {
+                f.write_str("several executables can be run; choose one with --bin")
+            }
+            BuildError::NoSuchBin { name, .. } => write!(f, "no executable named `{name}`"),
+            BuildError::Failed { package, link } => {
+                let what = if *link { "link" } else { "compile" };
+                write!(f, "could not {what} `{package}`")
+            }
         }
     }
 }
@@ -82,7 +110,16 @@ impl std::error::Error for BuildError {}
 
 impl CunoError for BuildError {
     fn exit_class(&self) -> ExitClass {
-        ExitClass::Setup
+        match self {
+            BuildError::Failed { .. } => ExitClass::Failure,
+            BuildError::SeveralBins { .. } | BuildError::NoSuchBin { .. } => ExitClass::Usage,
+            BuildError::NoExecutable { .. }
+            | BuildError::BinPathMissing { .. }
+            | BuildError::NotASource { .. }
+            | BuildError::OutsideProject { .. }
+            | BuildError::DuplicateName { .. }
+            | BuildError::Unreadable { .. } => ExitClass::Setup,
+        }
     }
 
     fn help(&self) -> Option<String> {
@@ -99,7 +136,71 @@ impl CunoError for BuildError {
             BuildError::DuplicateName { .. } => {
                 Some("give one of them another name with [[bin]] name".to_owned())
             }
-            BuildError::Unreadable { .. } => None,
+            BuildError::SeveralBins { available } | BuildError::NoSuchBin { available, .. } => {
+                Some(format!("available: {available}"))
+            }
+            BuildError::Unreadable { .. } | BuildError::Failed { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What a user reads, and the exit code, for the errors a build
+    /// command meets once the package is laid out (`commands.md`, "`cuno
+    /// run`" and "Exit codes").
+    ///
+    /// Mutation: change a message, a help line or an exit class of
+    /// `SeveralBins`, `NoSuchBin` or `Failed`; this test fails.
+    #[test]
+    fn the_run_and_failure_errors_read_as_the_spec_says() {
+        let cases = [
+            (
+                BuildError::SeveralBins {
+                    available: "app, tool".into(),
+                },
+                "several executables can be run; choose one with --bin",
+                Some("available: app, tool"),
+                ExitClass::Usage,
+            ),
+            (
+                BuildError::NoSuchBin {
+                    name: "x".into(),
+                    available: "app, tool".into(),
+                },
+                "no executable named `x`",
+                Some("available: app, tool"),
+                ExitClass::Usage,
+            ),
+            (
+                BuildError::Failed {
+                    package: "app".into(),
+                    link: false,
+                },
+                "could not compile `app`",
+                None,
+                ExitClass::Failure,
+            ),
+            (
+                BuildError::Failed {
+                    package: "app".into(),
+                    link: true,
+                },
+                "could not link `app`",
+                None,
+                ExitClass::Failure,
+            ),
+        ];
+        for (error, message, help, class) in cases {
+            assert_eq!(error.to_string(), message);
+            assert_eq!(error.help().as_deref(), help, "{message}");
+            assert_eq!(error.exit_class(), class, "{message}");
+        }
+        let layout = BuildError::NoExecutable {
+            default: "src/main.cpp".into(),
+        };
+        assert_eq!(layout.exit_class(), ExitClass::Setup);
     }
 }
