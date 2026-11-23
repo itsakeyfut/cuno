@@ -548,16 +548,6 @@ fn every_profile_key_overrides_its_default() {
     assert_eq!((release.debug_info, release.debug_assertions), (true, true));
 }
 
-/// Mutation: compare paths that do not exist as written, without resolving
-/// `.` and `..`; this test fails.
-#[test]
-fn paths_that_do_not_exist_are_compared_after_resolving_dots() {
-    let base = Path::new("no-such-dir-for-cuno");
-    assert!(holds(&base.join("y").join(".."), &base.join("y").join("z")));
-    assert!(holds(&base.join("."), base));
-    assert!(!holds(&base.join("y").join("out"), base));
-}
-
 /// Every layer that sets an output directory is checked, winning or not:
 /// `"."` in `cuno.toml` and `""` in `.cuno/config.toml` are errors even
 /// when the command line or the environment wins.
@@ -733,5 +723,43 @@ fn a_directory_inside_the_project_in_another_case_is_inside() {
         s.value.target_dir.to_string_lossy().ends_with("out"),
         "{}",
         s.value.target_dir.display()
+    );
+}
+
+/// Makes `link` a junction to `target`, which needs no privilege on Windows.
+#[cfg(windows)]
+fn junction(link: &Path, target: &Path) {
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+}
+
+/// An output directory written inside the project that reaches outside it
+/// through a junction is outside the project, and a project file may not
+/// set it (`project-layout.md`, "Source collection and linking").
+///
+/// Mutation: compare the output directory as written, without following
+/// links; this test fails.
+#[cfg(windows)]
+#[test]
+fn a_junction_inside_the_project_to_outside_it_is_outside() {
+    let f = Fixture::new();
+    junction(&f.root.join("link"), &f.outside);
+    f.write(
+        "project/cuno.toml",
+        &format!(
+            "{MANIFEST}[build]
+target-dir = \"link/out\"
+"
+        ),
+    );
+    let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
+    assert!(
+        err.message.contains("points outside the project: "),
+        "{err}"
     );
 }

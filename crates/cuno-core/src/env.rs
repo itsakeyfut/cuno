@@ -5,13 +5,13 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 
-/// How variable names are compared, which depends on the operating system the
-/// variables came from.
+/// How names are compared, variables' and files' alike, which depends on
+/// the operating system they came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NameCase {
-    /// `Path` and `PATH` are one variable (Windows).
+    /// `Path` and `PATH` are one name (Windows).
     Insensitive,
-    /// `Path` and `PATH` are two variables (other systems).
+    /// `Path` and `PATH` are two names (other systems).
     Sensitive,
 }
 
@@ -46,7 +46,25 @@ impl NameCase {
     }
 }
 
+impl NameCase {
+    /// `name` as compared: two names are one when these are equal.
+    pub fn fold(self, name: &OsStr) -> OsString {
+        fold(name, self)
+    }
+
+    /// Whether `a` and `b` are one name.
+    pub fn same(self, a: &str, b: &str) -> bool {
+        fold(OsStr::new(a), self) == fold(OsStr::new(b), self)
+    }
+}
+
 impl Env {
+    /// How this environment's names are compared, which is how the system
+    /// it came from compares file names too.
+    pub fn case(&self) -> NameCase {
+        self.case
+    }
+
     /// The environment of the running process. Only the binary calls this.
     pub fn from_process() -> Env {
         Env::from_pairs(std::env::vars_os(), NameCase::host())
@@ -60,7 +78,7 @@ impl Env {
     ) -> Env {
         let vars = pairs
             .into_iter()
-            .map(|(name, value)| (key(&name, case), (name, value)))
+            .map(|(name, value)| (fold(&name, case), (name, value)))
             .collect();
         Env { case, vars }
     }
@@ -68,7 +86,7 @@ impl Env {
     /// The value of `name`, if it is set.
     pub fn get(&self, name: &str) -> Option<&OsStr> {
         self.vars
-            .get(&key(OsStr::new(name), self.case))
+            .get(&fold(OsStr::new(name), self.case))
             .map(|(_, value)| value.as_os_str())
     }
 
@@ -85,7 +103,7 @@ impl Env {
     pub fn with(&self, name: &str, value: OsString) -> Env {
         let mut env = self.clone();
         env.vars
-            .insert(key(OsStr::new(name), self.case), (name.into(), value));
+            .insert(fold(OsStr::new(name), self.case), (name.into(), value));
         env
     }
 
@@ -94,7 +112,7 @@ impl Env {
     pub fn without(&self, names: &[&str]) -> Env {
         let mut env = self.clone();
         for name in names {
-            env.vars.remove(&key(OsStr::new(name), self.case));
+            env.vars.remove(&fold(OsStr::new(name), self.case));
         }
         env
     }
@@ -104,7 +122,7 @@ impl Env {
 /// at a time, keeping a character whose upper case is more than one character
 /// (such as `ß`): Windows folds names character by character, so `ß` must not
 /// become `SS`. Names that are not valid Unicode are kept as they are.
-fn key(name: &OsStr, case: NameCase) -> OsString {
+pub(crate) fn fold(name: &OsStr, case: NameCase) -> OsString {
     match (case, name.to_str()) {
         (NameCase::Insensitive, Some(name)) => name
             .chars()
@@ -129,8 +147,8 @@ mod tests {
         Env::from_pairs(pairs.iter().map(|(n, v)| (n.into(), v.into())), case)
     }
 
-    /// Mutation: make `key` ignore `case`, in either direction; this test
-    /// fails.
+    /// Mutation: make `fold` ignore `case`, in either direction, or have an
+    /// `Env` report another case than it was built with; this test fails.
     #[test]
     fn names_are_compared_as_the_case_says() {
         let windows = env(&[("Path", "C:\\bin")], NameCase::Insensitive);
@@ -139,6 +157,12 @@ mod tests {
         let other = env(&[("Path", "/bin")], NameCase::Sensitive);
         assert_eq!(other.get("Path"), Some(OsStr::new("/bin")));
         assert_eq!(other.get("PATH"), None);
+        assert_eq!(
+            (windows.case(), other.case()),
+            (NameCase::Insensitive, NameCase::Sensitive)
+        );
+        assert!(NameCase::Insensitive.same("Main", "MAIN"));
+        assert!(!NameCase::Sensitive.same("Main", "MAIN"));
     }
 
     /// Mutation: upper-case with `str::to_uppercase` (which turns `ß` into

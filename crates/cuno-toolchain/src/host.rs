@@ -2,6 +2,8 @@
 //! platform's branch is tested on any machine (`docs/en/specs/architecture.md`,
 //! "Dependencies between crates").
 
+use cuno_core::NameCase;
+
 /// The host operating system, as far as finding tools cares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostOs {
@@ -19,6 +21,15 @@ impl HostOs {
             HostOs::Windows
         } else {
             HostOs::Other
+        }
+    }
+
+    /// How this system's file systems compare names: on Windows, without
+    /// regard to case.
+    pub fn name_case(self) -> NameCase {
+        match self {
+            HostOs::Windows => NameCase::Insensitive,
+            HostOs::Other => NameCase::Sensitive,
         }
     }
 

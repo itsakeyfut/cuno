@@ -3,8 +3,11 @@
 //! (`docs/en/specs/project-layout.md`, "Source collection and linking").
 
 use std::fmt;
-use std::path::{Component, Path, PathBuf, Prefix};
+use std::path::{Path, PathBuf};
 
+use cuno_core::paths::{self, Place};
+
+use cuno_core::NameCase;
 use cuno_manifest::Manifest;
 use cuno_toolchain::HostOs;
 use cuno_toolchain::flags::{Lang, Subsystem};
@@ -98,39 +101,62 @@ pub fn classify(
     target_dir: &Path,
     host: HostOs,
 ) -> Result<Sources, BuildError> {
-    let names = Names(host);
-    let root = normalize(root);
+    let case = host.name_case();
+    let root = paths::lexical(root);
     let src = root.join("src");
     let bin_dir = src.join("bin");
+    let (root_place, src_place) = (Place::of(&root, case), Place::of(&src, case));
+    let bin_place = Place::of(&bin_dir, case);
+    // `src/` is the project's own even when it is a link that leads out of
+    // it (`project-layout.md`, "Source collection and linking").
+    let in_project = |p: &Place| p.within(&root_place) || p.within(&src_place);
     let mut found = Vec::new();
     let mut warnings = Vec::new();
     if src.is_dir() {
         Walk {
             root: &root,
-            target_dir: names.key(target_dir),
-            names,
+            target_dir: Place::of(target_dir, case),
+            case,
             found: &mut found,
             warnings: &mut warnings,
         }
         .dir(&src)?;
     }
-    found.sort_by_key(|p| names.key(p));
-    let in_dir = |p: &Path, dir: &Path| p.parent().is_some_and(|parent| names.same(parent, dir));
-    let is_main = |p: &Path| {
-        in_dir(p, &src)
-            && p.file_stem()
-                .is_some_and(|stem| names.same(Path::new(stem), Path::new("main")))
+    // Each path is resolved once: resolving asks the file system.
+    found.sort_by_cached_key(|p| case.fold(p.as_os_str()));
+    let found: Vec<(PathBuf, Place)> = found
+        .into_iter()
+        .map(|p| {
+            let place = Place::of(&p, case);
+            (p, place)
+        })
+        .collect();
+    let in_dir = |p: &Place, dir: &Place| p.parent().is_some_and(|parent| parent.same(dir));
+    // A source the file system names `src/main.*`, compared as a place so
+    // that a name it holds is spelled as it spells it.
+    let is_main = |path: &Path, place: &Place| {
+        in_dir(place, &src_place)
+            && path.extension().is_some_and(|ext| {
+                place.same(&Place::of(&src.join("main").with_extension(ext), case))
+            })
     };
-    let is_in_bin = |p: &Path| names.within(p, &bin_dir);
+    let is_in_bin = |p: &Place| p.within(&bin_place);
     // The spelling the search found, so one file is one path everywhere.
-    let as_found = |p: &Path| found.iter().find(|f| names.same(f, p)).cloned();
+    let as_found = |p: &Place| {
+        found
+            .iter()
+            .find(|(_, f)| f.same(p))
+            .map(|(f, _)| f.clone())
+    };
 
+    let mut entries: Vec<Place> = Vec::new();
     let bins = match &manifest.bins {
         Some(listed) => {
             let mut bins = Vec::new();
             for bin in listed {
-                let path = normalize(&bin.path);
-                if !names.within(&path, &root) {
+                let path = paths::lexical(&bin.path);
+                let place = Place::of(&path, case);
+                if !in_project(&place) {
                     return Err(BuildError::OutsideProject {
                         name: bin.name.clone(),
                         path,
@@ -151,15 +177,16 @@ pub fn classify(
                 bins.push(Bin {
                     name: bin.name.clone(),
                     entry: Source {
-                        path: as_found(&path).unwrap_or(path),
+                        path: as_found(&place).unwrap_or(path),
                         lang,
                     },
                     subsystem: bin.subsystem,
                 });
+                entries.push(place);
             }
-            for path in &found {
-                let listed = bins.iter().any(|b| names.same(&b.entry.path, path));
-                if (is_main(path) || is_in_bin(path)) && !listed {
+            for (path, place) in &found {
+                let listed = entries.iter().any(|e| e.same(place));
+                if (is_main(path, place) || is_in_bin(place)) && !listed {
                     warnings.push(SourceWarning {
                         path: shown(&root, path),
                         why: NotBuilt::NotListed,
@@ -171,14 +198,16 @@ pub fn classify(
         None => {
             let mut bins = Vec::new();
             let lang = manifest.package.lang;
-            if let Some(path) = as_found(&src.join(default_entry(lang))) {
+            let default = Place::of(&src.join(default_entry(lang)), case);
+            if let Some(path) = as_found(&default) {
                 bins.push(Bin {
                     name: manifest.package.name.clone(),
                     entry: Source { path, lang },
                     subsystem: Subsystem::Console,
                 });
+                entries.push(default);
             }
-            for path in found.iter().filter(|p| in_dir(p, &bin_dir)) {
+            for (path, place) in found.iter().filter(|(_, p)| in_dir(p, &bin_place)) {
                 let name = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -191,6 +220,7 @@ pub fn classify(
                     },
                     subsystem: Subsystem::Console,
                 });
+                entries.push(place.clone());
             }
             bins
         }
@@ -201,10 +231,7 @@ pub fn classify(
         });
     }
     for (i, bin) in bins.iter().enumerate() {
-        if let Some(other) = bins[..i]
-            .iter()
-            .find(|b| names.same(Path::new(&b.name), Path::new(&bin.name)))
-        {
+        if let Some(other) = bins[..i].iter().find(|b| case.same(&b.name, &bin.name)) {
             return Err(BuildError::DuplicateName {
                 name: bin.name.clone(),
                 entries: [
@@ -217,10 +244,10 @@ pub fn classify(
 
     let body = found
         .into_iter()
-        .filter(|p| {
-            !is_main(p) && !is_in_bin(p) && !bins.iter().any(|b| names.same(&b.entry.path, p))
+        .filter(|(path, place)| {
+            !is_main(path, place) && !is_in_bin(place) && !entries.iter().any(|e| e.same(place))
         })
-        .filter_map(|path| {
+        .filter_map(|(path, _)| {
             let lang = language(&path)?;
             Some(Source { path, lang })
         })
@@ -240,50 +267,11 @@ fn default_entry(lang: Lang) -> &'static str {
     }
 }
 
-/// How the host's file systems compare paths: on Windows, without regard
-/// to case.
-#[derive(Clone, Copy)]
-pub(crate) struct Names(pub(crate) HostOs);
-
-impl Names {
-    /// A key every spelling of one path shares: `.` and `..` resolved, `/`
-    /// between components, no `\\?\` prefix, and lower case on Windows.
-    pub(crate) fn key(&self, path: &Path) -> String {
-        let parts: Vec<String> = normalize(path)
-            .components()
-            .map(|component| match component {
-                Component::Prefix(prefix) => match prefix.kind() {
-                    Prefix::VerbatimDisk(d) | Prefix::Disk(d) => format!("{}:", char::from(d)),
-                    _ => prefix.as_os_str().to_string_lossy().into_owned(),
-                },
-                Component::RootDir => String::new(),
-                other => other.as_os_str().to_string_lossy().into_owned(),
-            })
-            .collect();
-        let key = parts.join("/");
-        match self.0 {
-            HostOs::Windows => key.to_lowercase(),
-            HostOs::Other => key,
-        }
-    }
-
-    /// Whether `a` and `b` name the same path.
-    pub(crate) fn same(&self, a: &Path, b: &Path) -> bool {
-        self.key(a) == self.key(b)
-    }
-
-    /// Whether `path` is `dir` or lies under it.
-    pub(crate) fn within(&self, path: &Path, dir: &Path) -> bool {
-        let (path, dir) = (self.key(path), self.key(dir));
-        path == dir || path.starts_with(&format!("{dir}/"))
-    }
-}
-
 /// The search of `src/` for sources.
 struct Walk<'a> {
     root: &'a Path,
-    target_dir: String,
-    names: Names,
+    target_dir: Place,
+    case: NameCase,
     found: &'a mut Vec<PathBuf>,
     warnings: &'a mut Vec<SourceWarning>,
 }
@@ -294,7 +282,7 @@ impl Walk<'_> {
     /// cycle cannot make this run forever and no file outside the project
     /// joins the body unannounced.
     fn dir(&mut self, dir: &Path) -> Result<(), BuildError> {
-        if self.names.key(dir) == self.target_dir {
+        if Place::of(dir, self.case).same(&self.target_dir) {
             return Ok(());
         }
         let unreadable = |e: std::io::Error| BuildError::Unreadable {
@@ -320,22 +308,6 @@ impl Walk<'_> {
         }
         Ok(())
     }
-}
-
-/// `path` with `.` and `..` resolved by name, so a `[[bin]] path` written
-/// with `..` compares equal to the file it names.
-pub(crate) fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// `path` relative to `root` with `/` separators, as messages show it.

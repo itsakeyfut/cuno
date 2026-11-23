@@ -5,10 +5,9 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use cuno_core::paths;
 use cuno_manifest::Profile;
 use cuno_toolchain::HostOs;
-
-use crate::sources::{Names, normalize};
 
 /// The file a build leaves in an output directory it made, and without
 /// which `cuno clean` removes nothing (`docs/en/specs/build.md`, "Output
@@ -61,10 +60,10 @@ impl Layout {
     /// `target_dir`, for executables run on `host`.
     pub fn new(target_dir: &Path, profile: Profile, root: &Path, host: HostOs) -> Layout {
         Layout {
-            root: normalize(root),
+            root: paths::lexical(root),
             // Normalized, so a `--target-dir` written with `..` gives the
             // executable a path `cuno run` can show (commands.md, "`cuno run`").
-            profile_dir: normalize(target_dir).join(profile_dir_name(profile)),
+            profile_dir: paths::lexical(target_dir).join(profile_dir_name(profile)),
             host,
         }
     }
@@ -98,22 +97,35 @@ impl Layout {
     /// `source`'s path under `obj/<package>`, with `suffix` added to its
     /// name. Panics on a `source` outside the project, as
     /// [`Layout::object`] says.
+    ///
+    /// Its directory is compared as where it leads, and the file by where
+    /// its name sits, so a source that is itself a link to a file outside
+    /// the project still gets an object here, as does one in a `src/` that
+    /// is a link leading out of the project (`docs/en/specs/project-layout.md`,
+    /// "Source collection and linking").
     fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
-        let source = normalize(source);
-        assert!(
-            Names(self.host).within(&source, &self.root),
-            "an object was asked for {}, outside the project {}",
-            source.display(),
-            self.root.display()
-        );
-        let mut object = self.profile_dir.join("obj").join(package);
-        for component in source.components().skip(self.root.components().count()) {
-            object.push(component);
-        }
-        let mut name = object.file_name().map(OsString::from).unwrap_or_default();
+        let source = paths::lexical(source);
+        let case = self.host.name_case();
+        // `src/` is the project's even when it is a link leading out of it.
+        let src = self.root.join("src");
+        let under = source.parent().and_then(|dir| {
+            paths::relative(dir, &self.root, case)
+                .or_else(|| paths::relative(dir, &src, case).map(|r| Path::new("src").join(r)))
+        });
+        let (Some(under), Some(file)) = (under, source.file_name()) else {
+            panic!(
+                "an object was asked for {}, outside the project {}",
+                source.display(),
+                self.root.display()
+            );
+        };
+        let mut name = OsString::from(file);
         name.push(suffix);
-        object.set_file_name(name);
-        object
+        self.profile_dir
+            .join("obj")
+            .join(package)
+            .join(under)
+            .join(name)
     }
 
     /// The executable `bin`.
@@ -244,5 +256,59 @@ mod tests {
             HostOs::Other,
         );
         assert_eq!(other.exe("app"), Path::new("/p/target/debug/app"));
+    }
+
+    /// A source spelled through a junction to the project's `src/` gets its
+    /// object where the same source spelled under the root does.
+    ///
+    /// Mutation: compare the source's directory with the root as written,
+    /// without following links; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_source_through_a_junction_has_its_object_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.cpp"), "").unwrap();
+        let alias = dir.path().join("alias");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(root.join("src"))
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let dev = Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows);
+        assert_eq!(
+            dev.object("app", &alias.join("a.cpp")),
+            root.join("target/debug/obj/app/src/a.cpp.obj")
+        );
+    }
+
+    /// A source in a `src/` that is a junction leading out of the project
+    /// gets its object under `obj/<package>/src`, as before the comparison
+    /// followed links.
+    ///
+    /// Mutation: place by where the directory leads only, without taking
+    /// `src/` as the project's; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_src_linked_from_outside_has_its_objects_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, shared) = (dir.path().join("p"), dir.path().join("shared"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("src"))
+            .arg(&shared)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let dev = Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows);
+        assert_eq!(
+            dev.object("app", &root.join("src").join("a.cpp")),
+            root.join("target/debug/obj/app/src/a.cpp.obj")
+        );
     }
 }
