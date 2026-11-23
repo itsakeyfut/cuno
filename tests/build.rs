@@ -803,11 +803,12 @@ fn compile_commands(project: &Project) -> Vec<(String, Vec<String>)> {
 
 /// On every compiler, `compile_commands.json` lists every source with the
 /// `dev` command and `CUNO_TEST` defined, even after a `--release` build,
-/// and is written when a compile fails.
+/// each naming the test build's object as its `output`, and is written when
+/// a compile fails (docs/en/specs/build.md, "Output").
 ///
 /// Mutation: write it from the built profile's graph, without the test
-/// define, leave a source out, or only after the build succeeds; this test
-/// fails.
+/// define, with the program's objects as the outputs, leave a source out,
+/// or only after the build succeeds; this test fails.
 #[test]
 fn compile_commands_hold_the_dev_commands_whatever_is_built() {
     for (name, compiler) in COMPILERS {
@@ -824,6 +825,18 @@ fn compile_commands_hold_the_dev_commands_whatever_is_built() {
             .collect();
         files.sort();
         assert_eq!(files, ["main.cpp", "tool.c", "util.cpp"], "{name}");
+        let text = std::fs::read_to_string(project.path().join("compile_commands.json")).unwrap();
+        let entries: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let test_objects = project
+            .path()
+            .join("target")
+            .join("debug")
+            .join("test")
+            .join("app");
+        for entry in entries.as_array().unwrap() {
+            let output = std::path::Path::new(entry["output"].as_str().unwrap());
+            assert!(output.starts_with(&test_objects), "{name}: {output:?}");
+        }
         for (file, args) in &commands {
             assert!(
                 args.iter().any(|a| a.ends_with("DCUNO_TEST")),
@@ -934,8 +947,8 @@ fn compile_commands_analyse_the_program_that_was_built() {
 }
 
 /// `cuno check` and `cuno run` write the file as `cuno build` does, from
-/// the `dev` graph, with each object where the `dev` build puts it; one
-/// that cannot be written is a warning and the build goes on.
+/// the `dev` graph, with each object where the `dev` test build puts it;
+/// one that cannot be written is a warning and the build goes on.
 ///
 /// Mutation: write it only for `cuno build`, lay the entries out for the
 /// built profile, or drop the warning; this test fails.
@@ -954,7 +967,10 @@ fn compile_commands_are_written_by_every_build_command() {
             .unwrap_or_else(|e| panic!("{command}: {e}"));
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         let output = value[0]["output"].as_str().unwrap().replace('\\', "/");
-        assert!(output.contains("/target/debug/obj/"), "{command}: {output}");
+        assert!(
+            output.contains("/target/debug/test/"),
+            "{command}: {output}"
+        );
     }
 
     let project = Project::new()

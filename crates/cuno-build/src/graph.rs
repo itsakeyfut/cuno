@@ -121,6 +121,13 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         // A disagreement is a bug in cuno: a check planned with compile
         // flags would write objects and stamp nothing it checked.
         assert_eq!(settings.mode, p.mode, "compile settings for another mode");
+        // So is a test layout with settings that leave out `CUNO_TEST`: its
+        // objects would hold no tests, and a test run would find none.
+        assert_eq!(
+            settings.test,
+            p.layout.is_test(),
+            "compile settings for another build than the layout's"
+        );
         let (kind, output) = match p.mode {
             Mode::Compile => (
                 StepKind::Compile {
@@ -603,5 +610,47 @@ mod tests {
                 g.steps[0].output.display()
             );
         }
+    }
+
+    /// A test layout planned with settings that leave out `CUNO_TEST`, or
+    /// the reverse, is a bug in cuno and stops the plan.
+    ///
+    /// Mutation: plan without comparing the settings' test build with the
+    /// layout's; this test fails.
+    #[test]
+    #[should_panic(expected = "compile settings for another build than the layout's")]
+    fn a_test_layout_needs_test_settings() {
+        let sources = sources();
+        let layout = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        )
+        .for_tests();
+        let kind = CompilerKind::Clang;
+        let compile = |lang| {
+            compile_settings(
+                None,
+                kind,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                false,
+                Mode::Compile,
+            )
+        };
+        let link = compile(Lang::Cxx);
+        plan(&Plan {
+            package: "app",
+            sources: &sources,
+            layout: &layout,
+            kind,
+            program: Path::new("C:/clang.exe"),
+            mode: Mode::Compile,
+            compile: &compile,
+            link: (&link.build, &link.profile),
+            color: false,
+        });
     }
 }

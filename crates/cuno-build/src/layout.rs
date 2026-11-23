@@ -44,6 +44,18 @@ pub struct Layout {
     root: PathBuf,
     profile_dir: PathBuf,
     host: HostOs,
+    variant: Variant,
+}
+
+/// Which build of a profile a layout lays out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Variant {
+    /// The program, its objects under `obj/<package>/`.
+    Normal,
+    /// The test build, compiled with `CUNO_TEST`, its objects under
+    /// `test/<package>/` so they never mix with the program's
+    /// (`docs/en/specs/build.md`, "Output directory").
+    Test,
 }
 
 /// The directory a profile's output goes in: `debug` for `dev`, as cuno's
@@ -65,6 +77,24 @@ impl Layout {
             // executable a path `cuno run` can show (commands.md, "`cuno run`").
             profile_dir: paths::lexical(target_dir).join(profile_dir_name(profile)),
             host,
+            variant: Variant::Normal,
+        }
+    }
+
+    /// The same profile's test build.
+    pub fn for_tests(&self) -> Layout {
+        Layout {
+            variant: Variant::Test,
+            ..self.clone()
+        }
+    }
+
+    /// Whether this lays out a test build, whose sources must be compiled
+    /// with `CUNO_TEST` defined.
+    pub fn is_test(&self) -> bool {
+        match self.variant {
+            Variant::Normal => false,
+            Variant::Test => true,
         }
     }
 
@@ -121,14 +151,20 @@ impl Layout {
         };
         let mut name = OsString::from(file);
         name.push(suffix);
+        let dir = match self.variant {
+            Variant::Normal => "obj",
+            Variant::Test => "test",
+        };
         self.profile_dir
-            .join("obj")
+            .join(dir)
             .join(package)
             .join(under)
             .join(name)
     }
 
-    /// The executable `bin`.
+    /// The executable `bin`. Where a test build's executables go is not
+    /// decided yet (`cuno test`, M3), so a test layout gives the program's
+    /// path here and nothing should link through one.
     pub fn exe(&self, bin: &str) -> PathBuf {
         let suffix = match self.host {
             HostOs::Windows => ".exe",
@@ -309,6 +345,25 @@ mod tests {
         assert_eq!(
             dev.object("app", &root.join("src").join("a.cpp")),
             root.join("target/debug/obj/app/src/a.cpp.obj")
+        );
+    }
+
+    /// A test build's objects go under `test/<package>/`, by the source's
+    /// place in the project as the program's go under `obj/<package>/`
+    /// (`docs/en/specs/build.md`, "Output directory").
+    ///
+    /// Mutation: put test objects under `obj/`, drop the package, or move
+    /// the program's objects too; this test fails.
+    #[test]
+    fn a_test_build_has_its_own_objects() {
+        let dev = layout(Profile::Dev);
+        assert_eq!(
+            dev.for_tests().object("app", Path::new("C:/p/src/a.cpp")),
+            Path::new("C:/p/target/debug/test/app/src/a.cpp.obj")
+        );
+        assert_eq!(
+            dev.object("app", Path::new("C:/p/src/a.cpp")),
+            Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
         );
     }
 }

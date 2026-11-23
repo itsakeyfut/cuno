@@ -166,7 +166,9 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let editors = graph::plan(&Plan {
         package,
         sources: &sources,
-        layout: &Layout::new(target_dir, Profile::Dev, root, host),
+        // The test build's objects: what compile_commands.json describes is
+        // compiled with `CUNO_TEST` (build.md, "Output").
+        layout: &Layout::new(target_dir, Profile::Dev, root, host).for_tests(),
         kind: tool.kind,
         program: tool.executable,
         mode: Mode::Compile,
