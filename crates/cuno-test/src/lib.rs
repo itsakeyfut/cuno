@@ -722,4 +722,53 @@ mod tests {
         );
         assert!(!summary.succeeded());
     }
+
+    /// Under `--nocapture` a failed test's output follows its line and is
+    /// not shown a second time among the failures.
+    ///
+    /// Mutation: show the captured output among the failures under
+    /// `--nocapture` too; this test fails.
+    #[test]
+    fn nocapture_shows_a_failures_output_once() {
+        let mut fake = Fake::default();
+        fake.lists
+            .insert(PathBuf::from("C:/p/app.exe"), Ok(listing(&["bad"])));
+        fake.tests.insert(
+            "bad".into(),
+            Script {
+                records: Some("fail\ta.c\t1\tx failed\ndone\n"),
+                code: Some(1),
+                stdout: "said once\n",
+                stderr: "",
+            },
+        );
+        let (_, text) = run_with(&fake, &[exe("C:/p/app.exe")], 1, true, None);
+        assert!(text.contains("test bad ... FAILED\nsaid once\n"), "{text}");
+        assert_eq!(text.matches("said once").count(), 1, "{text}");
+    }
+
+    /// A result file cuno cannot read fails the test, saying so, rather
+    /// than passing it.
+    ///
+    /// Mutation: pass a test whose file cannot be read; this test fails.
+    #[test]
+    fn an_unreadable_result_fails_the_test() {
+        let mut fake = Fake::default();
+        fake.lists
+            .insert(PathBuf::from("C:/p/app.exe"), Ok(listing(&["odd"])));
+        fake.tests.insert(
+            "odd".into(),
+            Script {
+                records: Some("pass\n"),
+                code: Some(0),
+                ..Script::default()
+            },
+        );
+        let (summary, text) = run_with(&fake, &[exe("C:/p/app.exe")], 1, false, None);
+        assert_eq!(summary.failed, 1, "{text}");
+        assert!(
+            text.contains("---- odd ----\na result record cuno cannot read: `pass`\n"),
+            "{text}"
+        );
+    }
 }
