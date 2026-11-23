@@ -19,6 +19,7 @@ cuno-manifest.workspace = true
 cuno-toolchain.workspace = true
 
 [dev-dependencies]
+cuno-test.workspace = true
 cuno-toolchain.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -52,6 +53,7 @@ cuno-build = { path = "crates/cuno-build" }
 cuno-core = { path = "crates/cuno-core" }
 cuno-toolchain = { path = "crates/cuno-toolchain" }
 cuno-manifest = { path = "crates/cuno-manifest" }
+cuno-test = { path = "crates/cuno-test" }
 # See docs/en/specs/architecture.md, "Main external libraries".
 clap = { version = "4.6.9", features = ["derive"] }
 # Reading JSON: vswhere output (cuno-toolchain) and `cargo metadata` in tests.
