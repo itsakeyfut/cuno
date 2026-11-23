@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 4087abd184bfdef9c2cf9490e7d5c166c802881d -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob e80e93f18f67d197dd27f00fa333bead674522ca -->
 
 # Testing
 
@@ -144,6 +144,7 @@ cuno_test(add_works) {
 - `cuno test [name filter]`.
 - **Unit of test executables**: In-source tests are combined into one executable per package. One executable per file **directly under** `tests/` (same as cargo).
   - Subdirectories of `tests/` are treated as places for helper code shared among tests (they do not become test executables themselves, and are linked into each test executable directly under `tests/`).
+  - The executables in `tests/` link the package body too, so the in-source tests are registered there as well ("Linking rules" in [project-layout.md](project-layout.md)). In an executable in `tests/`, cuno runs only the tests whose registration place is inside `tests/`; in-source tests are run only in the in-source test executable.
 - The working directory during test execution is the **project root** (same as `cuno run`).
 - Tests run in parallel. The degree of parallelism is set with the common option `-j` (default is the number of CPU cores).
 - Both standard output and standard error during tests are captured, and shown only for failed tests. `--nocapture` always shows them.

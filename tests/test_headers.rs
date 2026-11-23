@@ -1085,8 +1085,8 @@ fn comparisons_report_exactly() {
 /// and chosen, and its result written under such a path (testing.md,
 /// "Contract between cuno and test executables").
 ///
-/// Mutation: read the arguments through `main` rather than `wmain`, or the
-/// path through `getenv`/`fopen`; this test fails.
+/// Mutation: take the arguments from `argv` rather than the UTF-16 command
+/// line, or the path through `getenv`/`fopen`; this test fails.
 #[test]
 fn names_and_paths_need_not_fit_the_code_page() {
     for compiler in COMPILERS {

@@ -1,6 +1,8 @@
 //! Which files of a package are compiled, and into what: its executables'
-//! entry files and the package body, each source with its language
-//! (`docs/en/specs/project-layout.md`, "Source collection and linking").
+//! entry files, the package body, and its integration tests and their
+//! helpers under `tests/`, each source with its language
+//! (`docs/en/specs/project-layout.md`, "Source collection and linking"), and
+//! the test executables made from them.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,7 @@ use crate::BuildError;
 /// A source to compile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
-    /// Its absolute path, spelled as found under `src/`.
+    /// Its absolute path, spelled as found under `src/` or `tests/`.
     pub path: PathBuf,
     /// The language its extension gives.
     pub lang: Lang,
@@ -43,6 +45,13 @@ pub struct Sources {
     /// The package body: every source under `src/` that is not an entry
     /// file, `src/main.*` or under `src/bin/`, in path order.
     pub body: Vec<Source>,
+    /// The integration tests: the sources directly under `tests/`, each a
+    /// test executable of its own, in path order
+    /// (`docs/en/specs/testing.md`, "Running").
+    pub integration_tests: Vec<Source>,
+    /// The sources in `tests/`'s subdirectories: helpers linked into every
+    /// executable made from `tests/`, in path order.
+    pub test_helpers: Vec<Source>,
     /// What is not built and why.
     pub warnings: Vec<SourceWarning>,
 }
@@ -91,9 +100,11 @@ pub fn language(path: &Path) -> Option<Lang> {
     }
 }
 
-/// Classifies the sources of the package at `root`, skipping `target_dir`
-/// when it lies under `src/`. On a Windows `host`, paths and names are
-/// compared without regard to case, as its file systems do
+/// Classifies the sources of the package at `root`: the entry files and the
+/// body under `src/`, and the integration tests and their helpers under
+/// `tests/`, both walked alike, skipping `target_dir` when it lies under
+/// either and warning about links to directories. On a Windows `host`, paths
+/// and names are compared without regard to case, as its file systems do
 /// (`project-layout.md`, "Entry files and the package body").
 pub fn classify(
     root: &Path,
@@ -122,6 +133,39 @@ pub fn classify(
         }
         .dir(&src)?;
     }
+    let tests_dir = root.join("tests");
+    let mut found_tests = Vec::new();
+    if tests_dir.is_dir() {
+        Walk {
+            root: &root,
+            target_dir: Place::of(target_dir, case),
+            case,
+            found: &mut found_tests,
+            warnings: &mut warnings,
+        }
+        .dir(&tests_dir)?;
+    }
+    found_tests.sort_by_cached_key(|p| case.fold(p.as_os_str()));
+    let tests_place = Place::of(&tests_dir, case);
+    let (integration_tests, test_helpers): (Vec<Source>, Vec<Source>) = {
+        let mut direct = Vec::new();
+        let mut helpers = Vec::new();
+        for path in found_tests {
+            let lang = language(&path).expect("the walk keeps C and C++ sources only");
+            let place = Place::of(&path, case);
+            let source = Source { path, lang };
+            if place
+                .parent()
+                .is_some_and(|parent| parent.same(&tests_place))
+            {
+                direct.push(source);
+            } else {
+                helpers.push(source);
+            }
+        }
+        (direct, helpers)
+    };
+
     // Each path is resolved once: resolving asks the file system.
     found.sort_by_cached_key(|p| case.fold(p.as_os_str()));
     let found: Vec<(PathBuf, Place)> = found
@@ -255,8 +299,65 @@ pub fn classify(
     Ok(Sources {
         bins,
         body,
+        integration_tests,
+        test_helpers,
         warnings,
     })
+}
+
+/// A test executable: the package's in-source tests, or one source
+/// directly under `tests/` (`docs/en/specs/testing.md`, "Running").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestExecutable {
+    /// Its name, without an extension: the package's for its in-source
+    /// tests, `tests-<stem>` for a source under `tests/`
+    /// (`docs/en/specs/build.md`, "Output directory").
+    pub name: String,
+    /// The source under `tests/` it is made from; `None` for the in-source
+    /// tests.
+    pub file: Option<Source>,
+}
+
+/// The test executables of `package`, whose sources at `root` are
+/// `sources`: one for its in-source tests, then one per source directly
+/// under `tests/`. Two of one name, compared without case on a Windows
+/// `host`, are an error naming both: one link would overwrite the other
+/// and its tests never run (`build.md`, "Output directory").
+pub fn test_executables(
+    root: &Path,
+    package: &str,
+    sources: &Sources,
+    host: HostOs,
+) -> Result<Vec<TestExecutable>, BuildError> {
+    let case = host.name_case();
+    let mut exes = vec![TestExecutable {
+        name: package.to_owned(),
+        file: None,
+    }];
+    for source in &sources.integration_tests {
+        let stem = source
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        exes.push(TestExecutable {
+            name: format!("tests-{stem}"),
+            file: Some(source.clone()),
+        });
+    }
+    let made_from = |exe: &TestExecutable| match &exe.file {
+        Some(file) => shown(&paths::lexical(root), &file.path),
+        None => "src/".to_owned(),
+    };
+    for (i, exe) in exes.iter().enumerate() {
+        if let Some(other) = exes[..i].iter().find(|e| case.same(&e.name, &exe.name)) {
+            return Err(BuildError::DuplicateTestName {
+                name: exe.name.clone(),
+                sources: [made_from(other), made_from(exe)],
+            });
+        }
+    }
+    Ok(exes)
 }
 
 /// The default entry file's name for a package in `lang`.
@@ -280,7 +381,7 @@ impl Walk<'_> {
     /// Every C or C++ source under `dir`, skipping the target directory. A
     /// link to a directory is warned about and not followed, so a link
     /// cycle cannot make this run forever and no file outside the project
-    /// joins the body unannounced.
+    /// joins the build unannounced.
     fn dir(&mut self, dir: &Path) -> Result<(), BuildError> {
         if Place::of(dir, self.case).same(&self.target_dir) {
             return Ok(());
@@ -780,5 +881,162 @@ path = \"src/main.cpp\"
         junction(&root.join("src"), outside.path());
         let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
         assert_eq!(names(&s), ["x"]);
+    }
+
+    /// Sources directly under `tests/` are tests, each its own executable;
+    /// those in its subdirectories are helpers; anything else there is not
+    /// a source (`testing.md`, "Running").
+    ///
+    /// Mutation: take `tests/` recursively as tests, drop the helpers, or
+    /// read files that are not sources; this test fails.
+    #[test]
+    fn tests_and_their_helpers_are_told_apart() {
+        let (_dir, root, manifest) = project(
+            "c++",
+            "",
+            &[
+                "src/main.cpp",
+                "tests/b.c",
+                "tests/a.cpp",
+                "tests/README.md",
+                "tests/common/util.cpp",
+                "tests/common/deep/x.c",
+            ],
+        );
+        let sources = classify(&root, &manifest, &root.join("target"), HostOs::Windows).unwrap();
+        let shown_all = |list: &[Source]| -> Vec<(String, Lang)> {
+            list.iter()
+                .map(|s| (shown(&root, &s.path), s.lang))
+                .collect()
+        };
+        assert_eq!(
+            shown_all(&sources.integration_tests),
+            [
+                ("tests/a.cpp".to_owned(), Lang::Cxx),
+                ("tests/b.c".to_owned(), Lang::C)
+            ]
+        );
+        assert_eq!(
+            shown_all(&sources.test_helpers),
+            [
+                ("tests/common/deep/x.c".to_owned(), Lang::C),
+                ("tests/common/util.cpp".to_owned(), Lang::Cxx)
+            ]
+        );
+        assert!(sources.body.is_empty());
+    }
+
+    fn with_tests(files: &[&str]) -> Sources {
+        Sources {
+            bins: Vec::new(),
+            body: Vec::new(),
+            integration_tests: files
+                .iter()
+                .map(|f| Source {
+                    path: Path::new("C:/p").join(f),
+                    lang: language(Path::new(f)).unwrap(),
+                })
+                .collect(),
+            test_helpers: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn names_of(exes: &[TestExecutable]) -> Vec<&str> {
+        exes.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    /// The in-source tests are named after the package and each source
+    /// under `tests/` after its stem behind `tests-`; two of one name are
+    /// an error naming both, without regard to case on Windows (`build.md`,
+    /// "Output directory").
+    ///
+    /// Mutation: drop the `tests-` prefix, skip the duplicate check, compare
+    /// names with case on Windows or without it elsewhere, or show the
+    /// in-source tests as anything but `src/`; this test fails.
+    #[test]
+    fn test_executables_are_named_and_never_share_a_name() {
+        let root = Path::new("C:/p");
+        let exes =
+            test_executables(root, "app", &with_tests(&["tests/a.cpp"]), HostOs::Windows).unwrap();
+        assert_eq!(names_of(&exes), ["app", "tests-a"]);
+        assert_eq!(exes[0].file, None);
+        assert_eq!(
+            exes[1].file.as_ref().map(|f| f.path.clone()),
+            Some(PathBuf::from("C:/p/tests/a.cpp"))
+        );
+
+        let refused = |package: &str, files: &[&str], host| match test_executables(
+            root,
+            package,
+            &with_tests(files),
+            host,
+        ) {
+            Err(BuildError::DuplicateTestName { name, sources }) => Some((name, sources)),
+            Err(other) => panic!("{other}"),
+            Ok(_) => None,
+        };
+        assert_eq!(
+            refused("app", &["tests/foo.c", "tests/foo.cpp"], HostOs::Windows),
+            Some((
+                "tests-foo".to_owned(),
+                ["tests/foo.c".to_owned(), "tests/foo.cpp".to_owned()]
+            ))
+        );
+        assert_eq!(
+            refused("tests-foo", &["tests/foo.cpp"], HostOs::Windows),
+            Some((
+                "tests-foo".to_owned(),
+                ["src/".to_owned(), "tests/foo.cpp".to_owned()]
+            ))
+        );
+        assert!(refused("app", &["tests/Foo.c", "tests/foo.cpp"], HostOs::Windows).is_some());
+        assert_eq!(
+            refused("app", &["tests/Foo.c", "tests/foo.cpp"], HostOs::Other),
+            None
+        );
+    }
+
+    /// The integration tests are in path order without regard to case, as
+    /// the body is, whatever order the file system lists them in.
+    ///
+    /// Mutation: sort `tests/` with case, or not at all; this test fails.
+    #[test]
+    fn integration_tests_are_in_path_order_without_case() {
+        let (_dir, root, manifest) = project(
+            "c++",
+            "",
+            &["src/main.cpp", "tests/B.c", "tests/a.cpp", "tests/c.cpp"],
+        );
+        let sources = classify(&root, &manifest, &root.join("target"), HostOs::Windows).unwrap();
+        let order: Vec<String> = sources
+            .integration_tests
+            .iter()
+            .map(|s| shown(&root, &s.path))
+            .collect();
+        assert_eq!(order, ["tests/a.cpp", "tests/B.c", "tests/c.cpp"]);
+    }
+
+    /// A link to a directory inside `tests/` is warned about and not read,
+    /// as one in `src/` is (`project-layout.md`, "Source collection and
+    /// linking").
+    ///
+    /// Mutation: drop the warnings of the `tests/` walk; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_link_in_tests_is_warned_about() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("shared.cpp"), "").unwrap();
+        let (_d, root, m) = project("c++", "", &["src/main.cpp", "tests/t.cpp"]);
+        junction(&root.join("tests").join("shared"), outside.path());
+        let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        assert!(s.test_helpers.is_empty(), "{:?}", s.test_helpers);
+        assert_eq!(
+            s.warnings,
+            [SourceWarning {
+                path: "tests/shared".to_owned(),
+                why: NotBuilt::DirectoryLink,
+            }]
+        );
     }
 }

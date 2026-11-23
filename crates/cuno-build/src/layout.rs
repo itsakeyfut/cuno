@@ -136,11 +136,16 @@ impl Layout {
     fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
         let source = paths::lexical(source);
         let case = self.host.name_case();
-        // `src/` is the project's even when it is a link leading out of it.
-        let src = self.root.join("src");
+        // `src/` and `tests/` are the project's even when they are links
+        // leading out of it (`project-layout.md`, "Source collection and
+        // linking").
+        let within = |dir: &Path, name: &str| {
+            paths::relative(dir, &self.root.join(name), case).map(|r| Path::new(name).join(r))
+        };
         let under = source.parent().and_then(|dir| {
             paths::relative(dir, &self.root, case)
-                .or_else(|| paths::relative(dir, &src, case).map(|r| Path::new("src").join(r)))
+                .or_else(|| within(dir, "src"))
+                .or_else(|| within(dir, "tests"))
         });
         let (Some(under), Some(file)) = (under, source.file_name()) else {
             panic!(
@@ -162,15 +167,47 @@ impl Layout {
             .join(name)
     }
 
-    /// The executable `bin`. Where a test build's executables go is not
-    /// decided yet (`cuno test`, M3), so a test layout gives the program's
-    /// path here and nothing should link through one.
+    /// The program's executable `bin`. A test build makes none: its
+    /// executables are [`Layout::test_exe`]'s, and asking a test layout for
+    /// this is a bug in cuno.
     pub fn exe(&self, bin: &str) -> PathBuf {
+        assert!(!self.is_test(), "a program's executable from a test layout");
+        self.profile_dir.join(self.executable(bin))
+    }
+
+    /// The test executable `name` of `package`:
+    /// `test/<package>/bin/<name>`, apart from both the objects and the
+    /// program (`docs/en/specs/build.md`, "Output directory"). Only a test
+    /// layout has one; asking another is a bug in cuno.
+    pub fn test_exe(&self, package: &str, name: &str) -> PathBuf {
+        assert!(self.is_test(), "a test executable from a program's layout");
+        self.profile_dir
+            .join("test")
+            .join(package)
+            .join("bin")
+            .join(self.executable(name))
+    }
+
+    /// The object of `file`, a source of cuno's bundled test runtime, for
+    /// `package`: `test/<package>/cuno/<file>.obj`. The runtime lies outside
+    /// the project, so it has a directory of its own rather than a place
+    /// beside the project's sources. Only a test layout has one.
+    pub fn runtime_object(&self, package: &str, file: &str) -> PathBuf {
+        assert!(self.is_test(), "a runtime object from a program's layout");
+        self.profile_dir
+            .join("test")
+            .join(package)
+            .join("cuno")
+            .join(format!("{file}.obj"))
+    }
+
+    /// `name` with the host's executable suffix.
+    fn executable(&self, name: &str) -> String {
         let suffix = match self.host {
             HostOs::Windows => ".exe",
             HostOs::Other => "",
         };
-        self.profile_dir.join(format!("{bin}{suffix}"))
+        format!("{name}{suffix}")
     }
 }
 
@@ -365,5 +402,93 @@ mod tests {
             dev.object("app", Path::new("C:/p/src/a.cpp")),
             Path::new("C:/p/target/debug/obj/app/src/a.cpp.obj")
         );
+    }
+
+    /// A test build's executables go in `test/<package>/bin/`, and the
+    /// runtime's objects in `test/<package>/cuno/`: apart from the
+    /// program, from each other and from the objects of `src/` and
+    /// `tests/` (`build.md`, "Output directory").
+    ///
+    /// Mutation: put test executables beside the program or the objects,
+    /// drop the package from either path, or the executable's suffix; this
+    /// test fails.
+    #[test]
+    fn a_test_build_has_its_own_executables_and_runtime_objects() {
+        let test = layout(Profile::Dev).for_tests();
+        assert_eq!(
+            test.test_exe("app", "tests-foo"),
+            Path::new("C:/p/target/debug/test/app/bin/tests-foo.exe")
+        );
+        assert_eq!(
+            test.runtime_object("app", "test_main.c"),
+            Path::new("C:/p/target/debug/test/app/cuno/test_main.c.obj")
+        );
+        assert_eq!(
+            test.object("app", Path::new("C:/p/tests/foo.cpp")),
+            Path::new("C:/p/target/debug/test/app/tests/foo.cpp.obj")
+        );
+        let other = Layout::new(
+            Path::new("/p/target"),
+            Profile::Dev,
+            Path::new("/p"),
+            HostOs::Other,
+        )
+        .for_tests();
+        assert_eq!(
+            other.test_exe("app", "app"),
+            Path::new("/p/target/debug/test/app/bin/app")
+        );
+    }
+
+    /// Mutation: let a test layout give a program's executable; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a program's executable from a test layout")]
+    fn a_test_layout_has_no_program() {
+        layout(Profile::Dev).for_tests().exe("app");
+    }
+
+    /// Mutation: let a program's layout give a test executable; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a test executable from a program's layout")]
+    fn a_program_layout_has_no_test_executable() {
+        layout(Profile::Dev).test_exe("app", "app");
+    }
+
+    /// A source in a `tests/` that is a junction leading out of the project
+    /// gets its object under `test/<package>/tests`, as one in such a
+    /// `src/` does (`project-layout.md`, "Source collection and linking").
+    ///
+    /// Mutation: take only `src/` as the project's when it leads out; this
+    /// test fails (the object is refused as outside the project).
+    #[cfg(windows)]
+    #[test]
+    fn a_tests_linked_from_outside_has_its_objects_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, shared) = (dir.path().join("p"), dir.path().join("shared"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("tests"))
+            .arg(&shared)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let test =
+            Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows).for_tests();
+        assert_eq!(
+            test.object("app", &root.join("tests").join("t.cpp")),
+            root.join("target/debug/test/app/tests/t.cpp.obj")
+        );
+    }
+
+    /// Mutation: let a program's layout give a runtime object; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "a runtime object from a program's layout")]
+    fn a_program_layout_has_no_runtime_object() {
+        layout(Profile::Dev).runtime_object("app", "test_main.c");
     }
 }

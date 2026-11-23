@@ -44,6 +44,14 @@ pub enum BuildError {
         /// The two entry files, as shown.
         entries: [String; 2],
     },
+    /// Two test executables with the same name.
+    DuplicateTestName {
+        /// The name.
+        name: String,
+        /// What each is made from, as shown: `src/` for the in-source
+        /// tests, the file otherwise.
+        sources: [String; 2],
+    },
     /// A directory of sources that could not be read.
     Unreadable {
         /// The directory, as shown.
@@ -93,6 +101,11 @@ impl fmt::Display for BuildError {
                 "two executables are named `{name}`: {} and {}",
                 entries[0], entries[1]
             ),
+            BuildError::DuplicateTestName { name, sources } => write!(
+                f,
+                "two test executables are named `{name}`: {} and {}",
+                sources[0], sources[1]
+            ),
             BuildError::Unreadable { dir, reason } => write!(f, "cannot read {dir}: {reason}"),
             BuildError::SeveralBins { .. } => {
                 f.write_str("several executables can be run; choose one with --bin")
@@ -118,6 +131,7 @@ impl CunoError for BuildError {
             | BuildError::NotASource { .. }
             | BuildError::OutsideProject { .. }
             | BuildError::DuplicateName { .. }
+            | BuildError::DuplicateTestName { .. }
             | BuildError::Unreadable { .. } => ExitClass::Setup,
         }
     }
@@ -136,6 +150,13 @@ impl CunoError for BuildError {
             BuildError::DuplicateName { .. } => {
                 Some("give one of them another name with [[bin]] name".to_owned())
             }
+            // The in-source tests are named after the package, which is
+            // the other thing that can be renamed.
+            BuildError::DuplicateTestName { sources, .. } => Some(if sources[0] == "src/" {
+                format!("rename {}, or the package", sources[1])
+            } else {
+                "rename one of the files in tests/".to_owned()
+            }),
             BuildError::SeveralBins { available } | BuildError::NoSuchBin { available, .. } => {
                 Some(format!("available: {available}"))
             }
@@ -202,5 +223,35 @@ mod tests {
             default: "src/main.cpp".into(),
         };
         assert_eq!(layout.exit_class(), ExitClass::Setup);
+    }
+
+    /// Two test executables of one name: what a user reads, the help and
+    /// the exit code (`build.md`, "Output directory").
+    ///
+    /// Mutation: change the message, either help or the exit class of
+    /// `DuplicateTestName`; this test fails.
+    #[test]
+    fn two_test_executables_of_one_name_read_as_the_spec_says() {
+        let error = BuildError::DuplicateTestName {
+            name: "tests-foo".into(),
+            sources: ["src/".into(), "tests/foo.cpp".into()],
+        };
+        assert_eq!(
+            error.to_string(),
+            "two test executables are named `tests-foo`: src/ and tests/foo.cpp"
+        );
+        assert_eq!(
+            error.help().as_deref(),
+            Some("rename tests/foo.cpp, or the package")
+        );
+        assert_eq!(error.exit_class(), ExitClass::Setup);
+        let two_files = BuildError::DuplicateTestName {
+            name: "tests-foo".into(),
+            sources: ["tests/foo.c".into(), "tests/foo.cpp".into()],
+        };
+        assert_eq!(
+            two_files.help().as_deref(),
+            Some("rename one of the files in tests/")
+        );
     }
 }
