@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 6ca48ca3514c2b115c08b768036ae6218b3d129f -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob 4087abd184bfdef9c2cf9490e7d5c166c802881d -->
 
 # Testing
 
@@ -130,10 +130,13 @@ cuno_test(add_works) {
   - Reason: reading sources can miss tests that go through macros or `#if`. A missed test would never run, and the run would still be reported as a success.
 - **Bundled runtime**: The registry and `main` live in a C source bundled with the headers (`cuno/test_main.c`), which is linked into every executable of a test build. Both entry points register through this C interface.
 - **Mixed languages**: Each file uses the entry point for its own language. A `.c` file in a C++ package uses `cuno/test.h`; a `.cpp` file in a C package uses the entry point that fits its standard (`cuno/test.hpp` for C++20 and later). Tests written either way register with the same runtime and run in the same test executable.
-- **Test identity**: Determined by the pair of "name" and "source location (file + line)".
+- **Test identity**: Determined by the pair of "name" and "source location (file + line)". cuno makes this decision, using the location of each registration that the test executable reports in its list.
   - Multiple registrations from the same location (when a header is included by multiple translation units) are merged into one.
+  - Whether two locations are in the same file is decided by the file system, not by how the path is spelled (same as [project-layout.md](project-layout.md)). The same header included under different spellings, such as `"util.h"` and `"../src/util.h"`, is the same location.
   - If a test with the same name exists at a different location, it is an error as a duplicate.
-- **Tests in headers**: The modern API registers them only once via the identity rule above. The macro API does not support tests in headers; when a duplicate is detected, it reports an error with guidance.
+- **Tests in headers**: The modern API registers them only once via the identity rule above. The macro API does not support tests in headers; when multiple registrations from the same location are detected, it reports an error with guidance.
+  - With MSVC in C, the name of a macro-API test becomes a single program-wide name (symbol), so two tests with the same name in different places, and tests in headers, become link errors rather than cuno's guidance.
+    - Reason: this keeps the linker from discarding the registration functions. If they were discarded, an optimized build (`lto = true`) would run no tests at all and still be reported as a success.
 - **Not provided (for now)**: Subcases (doctest's SUBCASE) and a dedicated fixture mechanism. Shared logic is written as ordinary functions.
 
 ## Execution
@@ -159,13 +162,15 @@ cuno_test(add_works) {
 
 | Argument | Behavior |
 |---|---|
-| `--list` | Outputs the list of tests |
+| `--list` | Reports the registered tests, each registration with its name, file, line and entry point (modern API / macro API) |
 | `--exact <name>` | Runs only the specified test |
 
 - Results are returned via the exit code (`0` = success, anything else = failure).
-- Each test's result (passed, failed or skipped and why, the location and values of a failed check, and `info` notes) is written, in a format interpreted only by cuno, to the file that cuno names in the environment variable `CUNO_TEST_RESULT`. Standard output and standard error belong to the user: cuno captures and displays them but does not interpret their contents.
-  - Reason: so that no string in the user's output can be mistaken for a result.
+- The list of tests and each test's result (passed, failed or skipped and why, the location and values of a failed check, and `info` notes) are written, in a format interpreted only by cuno, to the file that cuno names in the environment variable `CUNO_TEST_RESULT`. Standard output and standard error belong to the user: cuno captures and displays them but does not interpret their contents.
+  - Reason: so that no string in the user's output can be mistaken for a result. If the list were written to standard output, a single library that prints something at program startup would be enough to corrupt test names and keep those tests from running.
 - A test that ends without writing the result file (a crash, a call to `exit`, etc.) fails, even if its exit code is 0.
+- A test that calls `skip` after a failed check fails (failure takes precedence over skip).
+- Test names and the `CUNO_TEST_RESULT` path are passed independently of the code page, on Windows too (Japanese names and paths can be used as they are).
 
 ### Output
 

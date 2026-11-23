@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob ccf28594c50e489b1abd6f690d6dd37bdc50bc12 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 92a820f8cf4a9de80a5aa94ca860c2be1525b0ab -->
 
 # Build
 
@@ -202,9 +202,11 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - Normal: `target/<profile name>/`. However, the `dev` profile uses `debug/`, as in Cargo (`target/debug/`, `target/release/`; custom profiles keep their name, e.g. `target/profiling/`).
   - When cross-compiling: `target/<target>/<profile name>/`
   - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files. As with intermediate files, objects are placed by the source's position in the project (`target/debug/test/<package name>/src/calc.cpp.obj`).
-    - Test executables go in `test/<package name>/bin/`: `<package name>.exe` for in-source tests, and `tests-foo.exe` for `tests/foo.cpp`.
+    - Test executables go in `test/<package name>/bin/`: `<package name>` for in-source tests, and `tests-foo` for `tests/foo.cpp` (each with the platform's executable suffix; `.exe` on Windows).
     - Objects of the bundled runtime ([testing.md](testing.md)) go in `test/<package name>/cuno/`.
-    - Reason: so that the executables overlap neither with where objects go (`src/`, `tests/`) nor with each other (a `<package name>.cpp` in `tests/` still gets a different name, because of the `tests-` prefix).
+    - Reason: so that the executables do not overlap with where objects go (`src/`, `tests/`).
+    - When two test executables would have the same name (`tests/foo.c` and `tests/foo.cpp`, or a package named `tests-foo` and `tests/foo.cpp`, etc.), it is an error (exit code 3) that names both files. Names are compared the same way as for duplicate executable names ([project-layout.md](project-layout.md)): case-insensitively on Windows.
+      - Reason: building them under the same name would let one link overwrite the other, and that test would never run while the run is still reported as a success.
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
 - A build (`build` / `run` / `check`) puts a marker file `.cuno-target` directly in the output directory when it creates the directory, or when it starts using an empty one. It does not put one in an existing directory that has contents. `cuno clean` does not delete an output directory without this marker.
