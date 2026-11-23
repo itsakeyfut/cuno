@@ -19,9 +19,16 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::graph::Step;
+
+/// How long before a step's start an input's modification time still
+/// counts as during the step. A file's time is stamped by a coarser clock
+/// than the one a step's start is read from, so a file saved just after
+/// the start can carry a time before it (`docs/en/specs/build.md`,
+/// "Deciding what changed").
+const SETTLE: Duration = Duration::from_secs(2);
 
 /// The first line of every record.
 const HEADER: &str = concat!("cuno-state ", env!("CARGO_PKG_VERSION"));
@@ -107,15 +114,15 @@ impl Records {
 
     /// Records that `step`, started at `started`, succeeded having read
     /// `inputs`. The step is left unrecorded, and so runs again, when an
-    /// input was modified after it started (the compiler may have read
-    /// either version) or a path cannot be written in the record: it is
+    /// input was modified after it started, or within [`SETTLE`] before it
+    /// (the compiler may have read either version) or a path cannot be written in the record: it is
     /// never judged on what it may not have read.
     pub fn record(&self, step: &Step, inputs: &[PathBuf], started: SystemTime) -> io::Result<()> {
         self.write(step, inputs, Some(started))
     }
 
-    /// Writes `step`'s record, refusing an input modified at or after
-    /// `started` when it is given. The record is written beside and then
+    /// Writes `step`'s record, refusing an input modified later than
+    /// [`SETTLE`] before `started` when it is given. The record is written beside and then
     /// renamed over the old one, so it is never seen half written.
     fn write(
         &self,
@@ -123,7 +130,12 @@ impl Records {
         inputs: &[PathBuf],
         started: Option<SystemTime>,
     ) -> io::Result<()> {
-        let started = started.map(|t| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+        let limit = started.map(|t| {
+            t.checked_sub(SETTLE)
+                .unwrap_or(UNIX_EPOCH)
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        });
         let mut text = format!("{HEADER}\ncommand {:016x}\n", self.command(step));
         let mut seen = std::collections::HashSet::new();
         for path in inputs {
@@ -131,7 +143,7 @@ impl Records {
                 continue;
             }
             let stamp = self.stamp(path)?;
-            if started.is_some_and(|started| stamp.modified >= started) {
+            if limit.is_some_and(|limit| stamp.modified >= limit) {
                 return Err(io::Error::other("an input changed while the step ran"));
             }
             // A path that is not Unicode cannot be written. (A line break,

@@ -198,6 +198,34 @@ fn an_input_changed_while_the_step_ran_is_not_recorded() {
     assert!(!fresh().up_to_date(&case.step));
 }
 
+/// An input whose time is at the step's start, or within two seconds
+/// before it, may have been saved after the start under a coarser clock,
+/// so the step is left unrecorded; one older than that is recorded.
+///
+/// Mutation: refuse only an input later than the start, drop the margin,
+/// widen it past two seconds, or refuse every input; this test fails.
+#[test]
+fn an_input_saved_just_before_the_step_is_not_recorded() {
+    let (case, records) = recorded();
+    let started = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
+    let at = |time: SystemTime| {
+        fs::File::options()
+            .write(true)
+            .open(&case.input)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        records
+            .record(&case.step, std::slice::from_ref(&case.input), started)
+            .is_ok()
+    };
+    assert!(!at(started), "at the start");
+    assert!(!at(started - Duration::from_secs(1)), "1 s before");
+    assert!(!at(started - Duration::from_millis(1_999)), "just within");
+    assert!(at(started - Duration::from_millis(2_001)), "just outside");
+    assert!(at(started - Duration::from_secs(3)), "3 s before");
+}
+
 /// A record cut short, as when cuno is stopped while writing it, is not
 /// trusted on the inputs it still holds.
 ///
