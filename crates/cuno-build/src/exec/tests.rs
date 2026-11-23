@@ -339,6 +339,17 @@ fn compile_case(during: Box<dyn Fn() + Sync>) -> (tempfile::TempDir, Graph, Comp
     let header = root.path().join("a h.h");
     std::fs::write(&source, "int a;").unwrap();
     std::fs::write(&header, "#define A").unwrap();
+    // An hour back, as a project's files are when a build starts: one
+    // written just now is within the margin and leaves the step unrecorded
+    // (`docs/en/specs/build.md`, "Deciding what changed").
+    for file in [&source, &header] {
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
     let output = root.path().join("obj").join("a.obj");
     let step = Step {
         output: output.clone(),

@@ -101,6 +101,8 @@ impl Records {
         }
         if moved {
             let inputs: Vec<PathBuf> = record.inputs.into_iter().map(|(p, _)| p).collect();
+            let inputs: Vec<(PathBuf, Duration)> =
+                inputs.into_iter().map(|p| (p, Duration::ZERO)).collect();
             let _ = self.write(step, &inputs, None);
         }
         true
@@ -113,37 +115,55 @@ impl Records {
     }
 
     /// Records that `step`, started at `started`, succeeded having read
-    /// `inputs`. The step is left unrecorded, and so runs again, when an
-    /// input was modified after it started, or within [`SETTLE`] before it
-    /// (the compiler may have read either version) or a path cannot be written in the record: it is
-    /// never judged on what it may not have read.
-    pub fn record(&self, step: &Step, inputs: &[PathBuf], started: SystemTime) -> io::Result<()> {
-        self.write(step, inputs, Some(started))
-    }
-
-    /// Writes `step`'s record, refusing an input modified later than
-    /// [`SETTLE`] before `started` when it is given. The record is written beside and then
-    /// renamed over the old one, so it is never seen half written.
-    fn write(
+    /// `inputs` and `built`, the outputs of the steps it waited for. The
+    /// step is left unrecorded, and so runs again, when an input was
+    /// modified after it started or within two seconds before it, or one
+    /// of `built` after it started (the compiler may have read either
+    /// version), or a path cannot be written in the record: it is never
+    /// judged on what it may not have read. `built` has no margin: this
+    /// build finished writing them before the step started, so nobody's
+    /// edit can race it.
+    pub fn record(
         &self,
         step: &Step,
         inputs: &[PathBuf],
+        built: &[PathBuf],
+        started: SystemTime,
+    ) -> io::Result<()> {
+        let read: Vec<(PathBuf, Duration)> = inputs
+            .iter()
+            .map(|p| (p.clone(), SETTLE))
+            .chain(built.iter().map(|p| (p.clone(), Duration::ZERO)))
+            .collect();
+        self.write(step, &read, Some(started))
+    }
+
+    /// Writes `step`'s record. When `started` is given, an input modified
+    /// later than its margin before `started` is refused. The record is
+    /// written beside and then renamed over the old one, so it is never
+    /// seen half written.
+    fn write(
+        &self,
+        step: &Step,
+        inputs: &[(PathBuf, Duration)],
         started: Option<SystemTime>,
     ) -> io::Result<()> {
-        let limit = started.map(|t| {
-            t.checked_sub(SETTLE)
-                .unwrap_or(UNIX_EPOCH)
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        });
+        let limit = |margin: Duration| {
+            started.map(|t| {
+                t.checked_sub(margin)
+                    .unwrap_or(UNIX_EPOCH)
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos())
+            })
+        };
         let mut text = format!("{HEADER}\ncommand {:016x}\n", self.command(step));
         let mut seen = std::collections::HashSet::new();
-        for path in inputs {
+        for (path, margin) in inputs {
             if !seen.insert(path) {
                 continue;
             }
             let stamp = self.stamp(path)?;
-            if limit.is_some_and(|limit| stamp.modified >= limit) {
+            if limit(*margin).is_some_and(|limit| stamp.modified >= limit) {
                 return Err(io::Error::other("an input changed while the step ran"));
             }
             // A path that is not Unicode cannot be written. (A line break,

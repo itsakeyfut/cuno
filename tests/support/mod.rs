@@ -56,12 +56,24 @@ impl Project {
     /// Writes `contents` to `path` inside the project, creating any parent
     /// directories. `path` is relative and `/`-separated. Returns `self` so
     /// that files can be chained.
+    ///
+    /// The file is dated an hour back, as a project's files are when a
+    /// build starts: a build does not record a step whose input changed
+    /// within two seconds of its start (`docs/en/specs/build.md`, "Deciding
+    /// what changed"), so a file written just now would leave a test's
+    /// first build unrecorded and its second running everything again.
     pub fn file(self, path: &str, contents: &str) -> Project {
         let full = self.project.join(path);
         if let Some(parent) = full.parent() {
             std::fs::create_dir_all(parent).expect("parent directories should be created");
         }
         std::fs::write(&full, contents).expect("the file should be written");
+        let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&full)
+            .and_then(|file| file.set_modified(an_hour_ago))
+            .expect("the file's time should be set");
         self
     }
 

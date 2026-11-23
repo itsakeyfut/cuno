@@ -219,7 +219,11 @@ fn a_file_read_by_embed_is_an_input() {
                  int main(void) { printf(\"%c\\n\", d[0]); return 0; }\n",
             );
         build(&project, name);
-        std::fs::write(project.path().join("src/data.bin"), "B").unwrap();
+        let data = project.path().join("src/data.bin");
+        std::fs::write(&data, "B").unwrap();
+        // Out of the margin a build gives a file saved just before it, so
+        // the rebuild is recorded (build.md, "Deciding what changed").
+        set_time(&data, SystemTime::now() - Duration::from_secs(60));
         assert!(ran(&build(&project, name)).1, "{name}");
         assert_eq!(output(&project), "B\n", "{name}");
         // Recorded with the file, not left to run every time.

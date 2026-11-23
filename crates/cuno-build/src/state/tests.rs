@@ -31,7 +31,7 @@ fn recorded() -> (Case, Records) {
     };
     let records = fresh();
     records
-        .record(&step, std::slice::from_ref(&input), later())
+        .record(&step, std::slice::from_ref(&input), &[], later())
         .unwrap();
     (
         Case {
@@ -169,6 +169,7 @@ fn paths_with_spaces_are_recorded_once() {
         .record(
             &case.step,
             &[case.input.clone(), spaced.clone(), spaced.clone()],
+            &[],
             later(),
         )
         .unwrap();
@@ -191,7 +192,7 @@ fn an_input_changed_while_the_step_ran_is_not_recorded() {
     fs::write(&case.input, "int edited;").unwrap();
     assert!(
         records
-            .record(&case.step, std::slice::from_ref(&case.input), started)
+            .record(&case.step, std::slice::from_ref(&case.input), &[], started)
             .is_err()
     );
     assert!(!state_path(&case.step.output).exists());
@@ -216,7 +217,7 @@ fn an_input_saved_just_before_the_step_is_not_recorded() {
             .set_modified(time)
             .unwrap();
         records
-            .record(&case.step, std::slice::from_ref(&case.input), started)
+            .record(&case.step, std::slice::from_ref(&case.input), &[], started)
             .is_ok()
     };
     assert!(!at(started), "at the start");
@@ -224,6 +225,27 @@ fn an_input_saved_just_before_the_step_is_not_recorded() {
     assert!(!at(started - Duration::from_millis(1_999)), "just within");
     assert!(at(started - Duration::from_millis(2_001)), "just outside");
     assert!(at(started - Duration::from_secs(3)), "3 s before");
+}
+
+/// What this build made before the step started (a link's objects) has
+/// no margin: written moments before, it is recorded, while the same
+/// time on one of the step's own inputs is refused.
+///
+/// Mutation: give the outputs of earlier steps the margin, or none to the
+/// step's own inputs; this test fails.
+#[test]
+fn what_the_build_made_before_the_step_has_no_margin() {
+    let (case, records) = recorded();
+    let started = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000);
+    fs::File::options()
+        .write(true)
+        .open(&case.input)
+        .unwrap()
+        .set_modified(started - Duration::from_millis(500))
+        .unwrap();
+    let input = std::slice::from_ref(&case.input);
+    assert!(records.record(&case.step, &[], input, started).is_ok());
+    assert!(records.record(&case.step, input, &[], started).is_err());
 }
 
 /// A record cut short, as when cuno is stopped while writing it, is not
@@ -237,7 +259,12 @@ fn a_record_cut_short_is_none() {
     let header = case.input.with_file_name("a.h");
     fs::write(&header, "#define A 1").unwrap();
     records
-        .record(&case.step, &[case.input.clone(), header.clone()], later())
+        .record(
+            &case.step,
+            &[case.input.clone(), header.clone()],
+            &[],
+            later(),
+        )
         .unwrap();
     let path = state_path(&case.step.output);
     let text = fs::read_to_string(&path).unwrap();
