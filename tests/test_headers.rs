@@ -12,8 +12,8 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use support::Project;
 use support::compilers::{Compiler, Language, require_driver};
+use support::{Project, Run};
 
 const COMPILERS: [Compiler; 3] = [Compiler::Msvc, Compiler::Clang, Compiler::ClangCl];
 
@@ -47,23 +47,32 @@ struct Flags {
     test: bool,
     /// Whether C++ exceptions are enabled.
     exceptions: bool,
+    /// Whether to optimise across files at link time (`lto = true`).
+    lto: bool,
 }
 
 const TEST: Flags = Flags {
     std: Std::C11,
     test: true,
     exceptions: true,
+    lto: false,
+};
+
+const CXX20: Flags = Flags {
+    std: Std::Cxx20,
+    ..TEST
 };
 
 /// The compile of `source` to `object` with `compiler`, or `None` when the
-/// compiler is missing and that is allowed.
+/// compiler is missing and that is allowed. Sources are UTF-8, as cuno
+/// compiles them (`/utf-8`).
 fn compile(compiler: Compiler, flags: Flags, source: &Path, object: &str) -> Option<Command> {
     let mut cmd = require_driver(compiler, flags.std.language())?;
     let cxx = flags.std.language() == Language::Cxx;
     let include = headers();
     match compiler {
         Compiler::Msvc | Compiler::ClangCl => {
-            cmd.args(["/nologo", "/c", "/W4", "/WX"]);
+            cmd.args(["/nologo", "/c", "/W4", "/WX", "/utf-8"]);
             cmd.arg(format!("/I{}", include.display()));
             cmd.arg(match flags.std {
                 Std::C11 => "/std:c11",
@@ -79,6 +88,12 @@ fn compile(compiler: Compiler, flags: Flags, source: &Path, object: &str) -> Opt
             if flags.test {
                 cmd.arg("/DCUNO_TEST");
             }
+            if flags.lto {
+                cmd.args(match compiler {
+                    Compiler::Msvc => ["/O2", "/GL"],
+                    _ => ["/O2", "-flto"],
+                });
+            }
             cmd.arg(source).arg(format!("/Fo{object}"));
         }
         Compiler::Clang => {
@@ -89,11 +104,19 @@ fn compile(compiler: Compiler, flags: Flags, source: &Path, object: &str) -> Opt
                 Std::Cxx17 => "-std=c++17",
                 Std::Cxx20 => "-std=c++20",
             });
+            if cxx {
+                // Warnings a user may well turn on, which a header has to
+                // pass in their normal builds too.
+                cmd.args(["-Wdouble-promotion", "-Wzero-as-null-pointer-constant"]);
+            }
             if cxx && !flags.exceptions {
                 cmd.arg("-fno-exceptions");
             }
             if flags.test {
                 cmd.arg("-DCUNO_TEST");
+            }
+            if flags.lto {
+                cmd.args(["-O2", "-flto"]);
             }
             cmd.arg(source).arg("-o").arg(object);
         }
@@ -102,22 +125,24 @@ fn compile(compiler: Compiler, flags: Flags, source: &Path, object: &str) -> Opt
 }
 
 /// Compiles each of `sources` (in the project) with its flags, and the
-/// runtime when `runtime`, then links them into `exe`. Panics on any
-/// compiler error or warning; `None` when the compiler is missing.
-fn build(
+/// runtime when `runtime`, then links them into `exe`, returning the link's
+/// result and the executable's path. Panics on any compiler error or
+/// warning; `None` when the compiler is missing.
+fn compile_and_link(
     p: &Project,
     compiler: Compiler,
     sources: &[(&str, Flags)],
     runtime: bool,
     exe: &str,
-) -> Option<PathBuf> {
+) -> Option<(Run, PathBuf)> {
     let main = headers().join("cuno").join("test_main.c");
     let mut all: Vec<(PathBuf, Flags)> = sources
         .iter()
         .map(|(source, flags)| (p.path().join(source), *flags))
         .collect();
+    let lto = sources.iter().any(|(_, flags)| flags.lto);
     if runtime {
-        all.push((main, TEST));
+        all.push((main, Flags { lto, ..TEST }));
     }
     let mut objects = Vec::new();
     for (i, (source, flags)) in all.iter().enumerate() {
@@ -136,16 +161,41 @@ fn build(
     }
     let mut link = require_driver(compiler, Language::Cxx)?;
     match compiler {
-        Compiler::Msvc | Compiler::ClangCl => {
+        Compiler::Msvc => {
             link.arg("/nologo")
                 .args(&objects)
                 .arg(format!("/Fe:{exe}.exe"));
+            if lto {
+                link.args(["/link", "/LTCG"]);
+            }
+        }
+        Compiler::ClangCl => {
+            link.arg("/nologo")
+                .args(&objects)
+                .arg(format!("/Fe:{exe}.exe"));
+            if lto {
+                link.arg("-fuse-ld=lld");
+            }
         }
         Compiler::Clang => {
             link.args(&objects).arg("-o").arg(format!("{exe}.exe"));
+            if lto {
+                link.args(["-flto", "-fuse-ld=lld"]);
+            }
         }
     }
-    let run = p.run_command(link);
+    Some((p.run_command(link), p.path().join(format!("{exe}.exe"))))
+}
+
+/// [`compile_and_link`], panicking unless the link succeeds.
+fn build(
+    p: &Project,
+    compiler: Compiler,
+    sources: &[(&str, Flags)],
+    runtime: bool,
+    exe: &str,
+) -> Option<PathBuf> {
+    let (run, exe) = compile_and_link(p, compiler, sources, runtime, exe)?;
     assert_eq!(
         run.code,
         Some(0),
@@ -154,38 +204,70 @@ fn build(
         run.stdout,
         run.stderr
     );
-    Some(p.path().join(format!("{exe}.exe")))
+    Some(exe)
 }
 
-/// Runs one test of `exe` as cuno does, returning its exit code and its
-/// result file, with each failure's file reduced to its name (compilers
-/// spell `__FILE__` differently).
-fn exact(p: &Project, exe: &Path, name: &str) -> (Option<i32>, String) {
-    let result = p.path().join("result.txt");
-    let _ = std::fs::remove_file(&result);
+/// Runs `exe` with `args` as cuno does, with `CUNO_TEST_RESULT` naming
+/// `result`, returning its exit code and the records it wrote. Each record's
+/// tab-separated fields are joined with spaces, and a file in a `fail` or
+/// `test` record is reduced to its name (compilers spell `__FILE__`
+/// differently). Also asserts that the file's lines end in LF alone.
+fn records(p: &Project, exe: &Path, args: &[&str], result: &Path) -> (Option<i32>, String) {
+    let _ = std::fs::remove_file(result);
     let mut cmd = Command::new(exe);
-    cmd.args(["--exact", name]);
+    cmd.args(args);
     let run = p.run_command_with(cmd, &[("CUNO_TEST_RESULT", result.to_str().unwrap())]);
-    let text = std::fs::read_to_string(&result).unwrap_or_default();
+    let bytes = std::fs::read(result).unwrap_or_default();
+    assert!(
+        !bytes.contains(&b'\r'),
+        "{exe:?} {args:?}: a CR in the result file"
+    );
+    let text = String::from_utf8(bytes).expect("the result file is UTF-8");
     let events: Vec<String> = text
         .lines()
         .map(|line| {
-            let fields: Vec<&str> = line.split('\t').collect();
-            if fields[0] == "fail" {
-                let file = fields[1].rsplit(['/', '\\']).next().unwrap();
-                format!("fail {file}:{} {}", fields[2], fields[3])
-            } else {
-                fields.join(" ")
+            let mut fields: Vec<&str> = line.split('\t').collect();
+            let file = match fields[0] {
+                "fail" => 1,
+                "test" => 2,
+                _ => 0,
+            };
+            if file != 0 {
+                fields[file] = fields[file].rsplit(['/', '\\']).next().unwrap();
             }
+            if fields[0] == "fail" {
+                // As a failure is shown: `file:line message`.
+                return format!("fail {}:{} {}", fields[1], fields[2], fields[3]);
+            }
+            fields.join(" ")
         })
         .collect();
     (run.code, events.join("\n"))
 }
 
+/// Runs one test of `exe` as cuno does: [`records`] of `--exact name`.
+fn exact(p: &Project, exe: &Path, name: &str) -> (Option<i32>, String) {
+    records(p, exe, &["--exact", name], &p.path().join("result.txt"))
+}
+
+/// The `test` records `exe --list` writes, one per line.
 fn list(p: &Project, exe: &Path) -> String {
-    let run = p.run(exe, &["--list"]);
-    assert_eq!(run.code, Some(0), "{}", run.stderr);
-    run.stdout.replace("\r\n", "\n")
+    let (code, text) = records(p, exe, &["--list"], &p.path().join("list.txt"));
+    assert_eq!(code, Some(0), "{exe:?} --list");
+    text
+}
+
+/// The names `exe --list` reports, one per line.
+fn names(p: &Project, exe: &Path) -> String {
+    list(p, exe)
+        .lines()
+        .map(|record| {
+            // `test <name> <file> <line> <api>`, where only the name may
+            // hold spaces.
+            let fields: Vec<&str> = record.rsplitn(4, ' ').collect();
+            format!("{}\n", fields[3].strip_prefix("test ").unwrap())
+        })
+        .collect()
 }
 
 const C_TESTS: &str = r#"#include <cuno/test.h>
@@ -264,7 +346,8 @@ static cuno::test::suite tests = [] {
 };
 "#;
 
-/// Every test, in C, C++17 and C++20 in one executable (#80), is listed
+/// Every test, in C, C++17 and C++20 in one executable (a package
+/// may mix the two languages, testing.md, "Common rules"), is listed
 /// once, runs alone, and reports through the result file: failures with
 /// their place and values, `info`, skips, a `require` that ends the test, and
 /// the exit code.
@@ -308,7 +391,7 @@ fn tests_register_run_and_report_on_every_compiler() {
         };
         let who = compiler.name();
         assert_eq!(
-            list(&p, &exe),
+            names(&p, &exe),
             "c_passes\nc_check_goes_on\nc_require_ends\nc_skips\n\
              cxx17_passes\ncxx17_fails\n\
              cxx20 passes\ncxx20 check goes on\ncxx20 require ends\ncxx20 skips\n\
@@ -381,12 +464,13 @@ fn require_ends_a_test_without_exceptions() {
             std: Std::Cxx20,
             test: true,
             exceptions: false,
+            lto: false,
         };
         let Some(exe) = build(&p, compiler, &[("t.cpp", flags)], true, "t") else {
             continue;
         };
         assert!(
-            !list(&p, &exe).contains("exceptions"),
+            !names(&p, &exe).contains("exceptions"),
             "{}",
             compiler.name()
         );
@@ -406,73 +490,66 @@ static cuno::test::suite shared_tests = [] {
 };
 "#;
 
-/// A C++ test in a header that two files include is one test; two tests of
-/// one name in different places are an error naming both (testing.md,
-/// "Common rules").
+/// `--list` writes a record for every registration, with the place it
+/// names and the entry it came through, and leaves telling tests apart to
+/// cuno (testing.md, "Common rules"): a C++ test in a header two files
+/// include is listed twice from one place, and two tests of one name are
+/// listed from their own places. `--exact` runs the first registration.
 ///
-/// Mutation: drop the same-place check in `cuno_test_first` (the test is
-/// listed twice), or treat a name alone as the identity (the header's test
-/// becomes an error, or the duplicate passes).
+/// Mutation: list each name once, drop a field from the `test` record, or
+/// mark a `test.hpp` registration `macro`; this test fails.
 #[test]
-fn tests_are_told_apart_by_name_and_place() {
+fn every_registration_is_listed_with_its_place() {
+    let same = "#include <cuno/test.hpp>\n\
+                static cuno::test::suite s = [] { cuno::test::test(\"same\", [] {}); };\n";
     for compiler in COMPILERS {
         let p = Project::new()
             .file("shared.hpp", SHARED_HPP)
-            .file("a.cpp", "#include \"shared.hpp\"\n")
-            .file("b.cpp", "#include \"shared.hpp\"\n");
-        let cxx20 = Flags {
-            std: Std::Cxx20,
-            ..TEST
-        };
+            .file("a.cpp", &format!("#include \"shared.hpp\"\n{same}"))
+            .file("b.cpp", &format!("#include \"shared.hpp\"\n\n{same}"));
         let Some(exe) = build(
             &p,
             compiler,
-            &[("a.cpp", cxx20), ("b.cpp", cxx20)],
+            &[("a.cpp", CXX20), ("b.cpp", CXX20)],
             true,
             "shared",
         ) else {
             continue;
         };
-        assert_eq!(list(&p, &exe), "twice doubles\n", "{}", compiler.name());
+        let who = compiler.name();
+        let mut listed: Vec<&str> = Vec::new();
+        let text = list(&p, &exe);
+        listed.extend(text.lines());
+        listed.sort_unstable();
+        assert_eq!(
+            listed,
+            [
+                "test same a.cpp 3 modern",
+                "test same b.cpp 4 modern",
+                "test twice doubles shared.hpp 4 modern",
+                "test twice doubles shared.hpp 4 modern",
+            ],
+            "{who}"
+        );
         assert_eq!(
             exact(&p, &exe, "twice doubles"),
-            (Some(0), "done".to_owned())
-        );
-
-        let same = "#include <cuno/test.hpp>\n\
-                    static cuno::test::suite s = [] { cuno::test::test(\"same\", [] {}); };\n";
-        let p = Project::new()
-            .file("a.cpp", same)
-            .file("b.cpp", &format!("\n{same}"));
-        let exe = build(
-            &p,
-            compiler,
-            &[("a.cpp", cxx20), ("b.cpp", cxx20)],
-            true,
-            "same",
-        )
-        .unwrap();
-        let run = p.run(&exe, &["--list"]);
-        assert_eq!(run.code, Some(1), "{}", compiler.name());
-        assert!(
-            run.stderr
-                .starts_with("error: two tests are named `same`: ")
-                && run.stderr.contains("a.cpp:2 and ")
-                && run.stderr.contains("b.cpp:3"),
-            "{}: {}",
-            compiler.name(),
-            run.stderr
+            (Some(0), "done".to_owned()),
+            "{who}"
         );
     }
 }
 
-/// The macro API does not support a test in a header: compiled by two
-/// files, it is an error that says what to do (testing.md, "Common rules").
+/// The macro API's registrations are marked `macro`, so that cuno can
+/// refuse one compiled more than once (a test in a header). On MSVC the
+/// linker refuses it first: each C test's registration has a name of its
+/// own there, kept through link-time optimisation (testing.md, "Common
+/// rules").
 ///
-/// Mutation: register macro tests as `test.hpp`'s are (the header's test is
-/// listed once); this test fails.
+/// Mutation: mark a macro registration `modern` (Clang and clang-cl), or
+/// make the MSVC registration pointer static again (the header's test links
+/// on MSVC); this test fails.
 #[test]
-fn a_macro_test_in_a_header_is_an_error() {
+fn a_macro_test_in_a_header_is_listed_or_refused() {
     for compiler in COMPILERS {
         let p = Project::new()
             .file(
@@ -481,21 +558,67 @@ fn a_macro_test_in_a_header_is_an_error() {
             )
             .file("a.c", "#include \"shared.h\"\n")
             .file("b.c", "#include \"shared.h\"\n");
-        let Some(exe) = build(&p, compiler, &[("a.c", TEST), ("b.c", TEST)], true, "h") else {
+        let Some((run, exe)) =
+            compile_and_link(&p, compiler, &[("a.c", TEST), ("b.c", TEST)], true, "h")
+        else {
             continue;
         };
-        let run = p.run(&exe, &["--list"]);
-        assert_eq!(run.code, Some(1), "{}", compiler.name());
-        assert!(
-            run.stderr.starts_with("error: the test `in_header` at ")
-                && run.stderr.contains(
-                    "help: cuno_test does not support tests in headers; move it into a source \
-                     file, or use cuno/test.hpp"
-                ),
-            "{}: {}",
-            compiler.name(),
-            run.stderr
+        let who = compiler.name();
+        if compiler == Compiler::Msvc {
+            assert_ne!(run.code, Some(0), "{who}");
+            assert!(
+                run.stdout.contains("LNK2005")
+                    && run.stdout.contains("cuno_test_initialiser_in_header"),
+                "{who}: {}",
+                run.stdout
+            );
+            continue;
+        }
+        assert_eq!(run.code, Some(0), "{who}: {}{}", run.stdout, run.stderr);
+        assert_eq!(
+            list(&p, &exe),
+            "test in_header shared.h 2 macro\ntest in_header shared.h 2 macro",
+            "{who}"
         );
+    }
+}
+
+/// Every C and C++ test registers through link-time optimisation, which
+/// drops what nothing refers to (`lto = true`, build.md). A C package is
+/// built on its own: a C++ object in the same executable keeps MSVC's
+/// initialiser section alive and would hide the loss.
+///
+/// Mutation: make the MSVC registration pointer static again (and drop its
+/// `/include`); MSVC then lists no C test and this test fails.
+#[test]
+fn registration_survives_link_time_optimisation() {
+    for compiler in COMPILERS {
+        let p = Project::new()
+            .file(
+                "c.c",
+                "#include <cuno/test.h>\ncuno_test(in_c) { cuno_check(1); }\n",
+            )
+            .file(
+                "cxx.cpp",
+                "#include <cuno/test.hpp>\n\
+                 static cuno::test::suite s = [] { cuno::test::test(\"in cxx\", [] {}); };\n",
+            );
+        let c = Flags { lto: true, ..TEST };
+        let cxx = Flags { lto: true, ..CXX20 };
+        let Some(c_exe) = build(&p, compiler, &[("c.c", c)], true, "c") else {
+            continue;
+        };
+        let Some(cxx_exe) = build(&p, compiler, &[("cxx.cpp", cxx)], true, "cxx") else {
+            continue;
+        };
+        let who = compiler.name();
+        assert_eq!(names(&p, &c_exe), "in_c\n", "{who}");
+        assert_eq!(
+            exact(&p, &c_exe, "in_c"),
+            (Some(0), "done".to_owned()),
+            "{who}"
+        );
+        assert_eq!(names(&p, &cxx_exe), "in cxx\n", "{who}");
     }
 }
 
@@ -721,6 +844,15 @@ fn a_test_executable_run_by_hand() {
             (Some(0), "info\ta\\tb\\\\c\\rd\ndone\n".to_owned()),
             "{who}"
         );
+        // The list, too, never goes to stdout, which is the user's.
+        let listed = p.run(&exe, &["--list"]);
+        assert_eq!(listed.code, Some(0), "{who}");
+        assert_eq!(listed.stdout, "", "{who}");
+        assert!(
+            listed.stderr.contains("test\tescapes\t"),
+            "{who}: {}",
+            listed.stderr
+        );
     }
 }
 
@@ -774,5 +906,231 @@ fn a_build_finds_the_bundled_headers() {
                 "{file}"
             );
         }
+    }
+}
+
+const OPS_C: &str = r#"#include <math.h>
+#include <cuno/test.h>
+enum color { RED, GREEN };
+cuno_test(c_ops) {
+    char c = 'x';
+    enum color e = GREEN;
+    cuno_check_ne(1, 1);
+    cuno_check_le(2, 1);
+    cuno_check_gt(1, 2);
+    cuno_check_lt(1.5f, 1.0f);
+    cuno_check_eq(0.5L, 0.25L);
+    cuno_check_eq(-5LL, 5ULL);
+    cuno_check_eq(c, 'y');
+    cuno_check_eq(e, RED);
+    cuno_check_approx(1.0, 1.5, 0.5);
+}
+cuno_test(c_nan) {
+    cuno_check_ne(NAN, NAN);
+    cuno_check_eq(NAN, 1.0);
+    cuno_check_le(NAN, 1.0);
+    cuno_check_ge(NAN, 1.0);
+}
+cuno_test(c_require_ne) { cuno_require_ne(1, 1); cuno_check(0); }
+cuno_test(c_require_approx) { cuno_require_approx(1.0, 2.0, 0.5); cuno_check(0); }
+cuno_test(c_skip_after_failure) { cuno_check(0); cuno_skip("later"); }
+"#;
+
+const OPS_CPP: &str = r#"#include <cuno/test.hpp>
+static cuno::test::suite tests = [] {
+    using namespace cuno::test;
+    test("cxx ops", [] {
+        char c = 'a';
+        expect(ne(1, 1));
+        expect(le(2, 1));
+        expect(gt(1, 2));
+        expect(ge(1, 2));
+        expect(eq(c, 'b'));
+        expect(eq(c, 'a'));
+        expect(approx(1.0, 1.5, 0.5));
+        expect(ne(1.0, 1.0));
+        expect(lt(2.0, 1.0));
+        expect(le(2.0, 1.0));
+        expect(gt(1.0, 2.0));
+        expect(ge(1.0, 2.0));
+    });
+    test("cxx require ne", [] { require(ne(1, 1)); expect(false); });
+    test("cxx skip after failure", [] { expect(false); skip("later"); });
+};
+"#;
+
+/// Every comparison, in both entries, reports its own failure; a NaN is
+/// equal to nothing in C; `approx` holds at its tolerance; C++ compares
+/// characters and C compares enums; a `require` of any kind ends the test;
+/// and a skip after a failure still fails (testing.md, "Contract between
+/// cuno and test executables").
+///
+/// Mutations, each failing this test:
+/// - point any `cuno_check_*` or `cuno_require_*` macro at another
+///   operator, or `ne`, `le`, `gt`, `ge` in `test.hpp`;
+/// - return SAME for an unordered pair in `cuno_test_order`;
+/// - compare `approx` with `<` rather than `<=`;
+/// - send a character through `std::cmp_equal` (C++ does not compile);
+/// - match `x` itself rather than `1 ? (x) : (x)` in `CUNO_TEST_VALUE`
+///   (MSVC does not compile the enum);
+/// - map `float` or `long double` to another kind in the `_Generic` table;
+/// - let `cuno_require_approx` go on, or `cuno_test_skip` exit 0 after a
+///   failure.
+#[test]
+fn comparisons_report_exactly() {
+    for compiler in COMPILERS {
+        let p = Project::new().file("ops.c", OPS_C).file("ops.cpp", OPS_CPP);
+        let Some(exe) = build(
+            &p,
+            compiler,
+            &[("ops.c", TEST), ("ops.cpp", CXX20)],
+            true,
+            "ops",
+        ) else {
+            continue;
+        };
+        let who = compiler.name();
+        let fail = |line: u32, what: &str, left: &str, right: &str| {
+            format!("fail ops.c:{line} {what} failed\\n  left:  {left}\\n  right: {right}\n")
+        };
+        let c_ops = [
+            fail(7, "ne(1, 1)", "1", "1"),
+            fail(8, "le(2, 1)", "2", "1"),
+            fail(9, "gt(1, 2)", "1", "2"),
+            fail(10, "lt(1.5f, 1.0f)", "1.5", "1"),
+            fail(11, "eq(0.5L, 0.25L)", "0.5", "0.25"),
+            fail(12, "eq(-5LL, 5ULL)", "-5", "5"),
+            fail(13, "eq(c, 'y')", "120", "121"),
+            fail(14, "eq(e, RED)", "1", "0"),
+        ]
+        .concat();
+        assert_eq!(
+            exact(&p, &exe, "c_ops"),
+            (Some(1), format!("{c_ops}done")),
+            "{who}"
+        );
+        let (code, nan) = exact(&p, &exe, "c_nan");
+        let failed: Vec<&str> = nan
+            .lines()
+            .filter(|l| l.starts_with("fail"))
+            // The operator: NAN is a macro, so what follows is the C
+            // library's spelling of it.
+            .map(|l| &l.split(' ').nth(2).unwrap()[..3])
+            .collect();
+        assert_eq!(
+            (code, failed),
+            (Some(1), vec!["eq(", "le(", "ge("]),
+            "{who}: {nan}"
+        );
+        assert_eq!(
+            exact(&p, &exe, "c_require_ne"),
+            (Some(1), format!("{}done", fail(23, "ne(1, 1)", "1", "1"))),
+            "{who}"
+        );
+        assert_eq!(
+            exact(&p, &exe, "c_require_approx"),
+            (
+                Some(1),
+                format!("{}done", fail(24, "approx(1.0, 2.0, 0.5)", "1", "2"))
+            ),
+            "{who}"
+        );
+        assert_eq!(
+            exact(&p, &exe, "c_skip_after_failure"),
+            (
+                Some(1),
+                "fail ops.c:25 check(0) failed\nskip later".to_owned()
+            ),
+            "{who}"
+        );
+
+        let cxx = |line: u32, what: &str, left: &str, right: &str| {
+            format!("fail ops.cpp:{line} {what} failed\\n  left:  {left}\\n  right: {right}\n")
+        };
+        let cxx_ops = [
+            cxx(6, "ne", "1", "1"),
+            cxx(7, "le", "2", "1"),
+            cxx(8, "gt", "1", "2"),
+            cxx(9, "ge", "1", "2"),
+            cxx(10, "eq", "97", "98"),
+            cxx(13, "ne", "1", "1"),
+            cxx(14, "lt", "2", "1"),
+            cxx(15, "le", "2", "1"),
+            cxx(16, "gt", "1", "2"),
+            cxx(17, "ge", "1", "2"),
+        ]
+        .concat();
+        assert_eq!(
+            exact(&p, &exe, "cxx ops"),
+            (Some(1), format!("{cxx_ops}done")),
+            "{who}"
+        );
+        assert_eq!(
+            exact(&p, &exe, "cxx require ne"),
+            (Some(1), format!("{}done", cxx(19, "ne", "1", "1"))),
+            "{who}"
+        );
+        assert_eq!(
+            exact(&p, &exe, "cxx skip after failure"),
+            (
+                Some(1),
+                "fail ops.cpp:20 expect failed\nskip later".to_owned()
+            ),
+            "{who}"
+        );
+    }
+}
+
+/// A test named in characters outside the Windows code page can be listed
+/// and chosen, and its result written under such a path (testing.md,
+/// "Contract between cuno and test executables").
+///
+/// Mutation: read the arguments through `main` rather than `wmain`, or the
+/// path through `getenv`/`fopen`; this test fails.
+#[test]
+fn names_and_paths_need_not_fit_the_code_page() {
+    for compiler in COMPILERS {
+        let p = Project::new().file(
+            "u.cpp",
+            "#include <cuno/test.hpp>\n\
+             static cuno::test::suite s = [] { cuno::test::test(\"足し算 é\", [] {}); };\n",
+        );
+        let Some(exe) = build(&p, compiler, &[("u.cpp", CXX20)], true, "u") else {
+            continue;
+        };
+        let who = compiler.name();
+        assert_eq!(names(&p, &exe), "足し算 é\n", "{who}");
+        let dir = p.path().join("dé");
+        std::fs::create_dir(&dir).unwrap();
+        assert_eq!(
+            records(&p, &exe, &["--exact", "足し算 é"], &dir.join("r.txt")),
+            (Some(0), "done".to_owned()),
+            "{who}"
+        );
+    }
+}
+
+/// A test may be named like the runtime's own functions: the names the
+/// macros make never are one.
+///
+/// Mutation: name the registration function `cuno_test_register_<name>`
+/// again; `cuno_test(macro)` then does not compile.
+#[test]
+fn a_test_may_be_named_after_the_runtime() {
+    for compiler in COMPILERS {
+        let p = Project::new().file(
+            "n.c",
+            "#include <cuno/test.h>\n\
+             cuno_test(macro) {}\ncuno_test(register) {}\ncuno_test(info) {}\n",
+        );
+        let Some(exe) = build(&p, compiler, &[("n.c", TEST)], true, "n") else {
+            continue;
+        };
+        assert_eq!(
+            names(&p, &exe),
+            "macro\nregister\ninfo\n",
+            "{}",
+            compiler.name()
+        );
     }
 }

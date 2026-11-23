@@ -19,6 +19,8 @@
 
 #include <cuno/test.h>
 
+#include <concepts>
+#include <cstddef>
 #include <source_location>
 #include <type_traits>
 #include <utility>
@@ -31,6 +33,7 @@ struct check {
     const char *what = "";
     // When set, the failure is this sentence rather than two values.
     const char *note = nullptr;
+    // Each side as shown: any number in full, or a string cut with `..`.
     char left[96] = {};
     char right[96] = {};
 };
@@ -43,13 +46,18 @@ concept text = requires(const T &t) {
     { t.size() } -> std::convertible_to<std::size_t>;
 };
 
+// Writes the `n` characters at `s` in quotes to `out`, which holds `size`
+// bytes, cut and marked with `..` where they do not fit. The two quotes,
+// `..` and the terminating NUL take 5 bytes.
 inline void quote(const char *s, std::size_t n, char *out, std::size_t size) {
+    const std::size_t room = size - 5;
+    const std::size_t shown = n < room ? n : room;
     std::size_t at = 0;
     out[at++] = '"';
-    for (std::size_t i = 0; i < n && at + 5 < size; ++i) {
+    for (std::size_t i = 0; i < shown; ++i) {
         out[at++] = s[i];
     }
-    if (n > size - 5) {
+    if (shown < n) {
         out[at++] = '.';
         out[at++] = '.';
     }
@@ -97,21 +105,28 @@ void show(const T &value, char *out, std::size_t size) {
     }
 }
 
+// The integer types std::cmp_equal and its relatives accept: not bool, and
+// not the character types.
+template <class T>
+constexpr bool standard_integer =
+    std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char> &&
+    !std::is_same_v<T, wchar_t> && !std::is_same_v<T, char8_t> &&
+    !std::is_same_v<T, char16_t> && !std::is_same_v<T, char32_t>;
+
 // Integers compare by value, so `eq(v.size(), 3)` neither warns about
 // mixing signedness nor gets it wrong.
 template <class A, class B>
-constexpr bool integers =
-    std::is_integral_v<A> && std::is_integral_v<B> && !std::is_same_v<A, bool> &&
-    !std::is_same_v<B, bool>;
+constexpr bool integers = standard_integer<A> && standard_integer<B>;
 
-template <class A, class B, class Same, class Compare>
-check compare(const char *what, const A &a, const B &b, Same same, Compare compare) {
+template <class A, class B, class ByValue, class ByOperator>
+check compare(const char *what, const A &a, const B &b, ByValue by_value,
+              ByOperator by_operator) {
     check result;
     result.what = what;
     if constexpr (integers<std::remove_cvref_t<A>, std::remove_cvref_t<B>>) {
-        result.ok = same(a, b);
+        result.ok = by_value(a, b);
     } else {
-        result.ok = compare(a, b);
+        result.ok = by_operator(a, b);
     }
     if (!result.ok) {
         show(a, result.left, sizeof result.left);
@@ -125,6 +140,8 @@ inline void report(const check &c, const std::source_location &at, int fatal) {
         return;
     }
     if (c.note != nullptr) {
+        // `what` is a short word (`throws`), kept under 100 so that the
+        // suffix always fits; the note is cut to what is left.
         char message[256];
         std::size_t n = 0;
         for (const char *p = c.what; *p != '\0' && n < 100; ++p) {
@@ -165,7 +182,8 @@ struct suite {
     }
 };
 
-/// Declares one test.
+/// Declares one test. The copy of `body` is never freed: the registry holds
+/// it until the process, which runs one test, ends.
 template <class F>
 void test(const char *name, F body,
           std::source_location at = std::source_location::current()) {

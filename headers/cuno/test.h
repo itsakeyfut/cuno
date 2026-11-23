@@ -68,7 +68,7 @@ void cuno_test_truth(int value, int expected, const char *expression, const char
     inline cuno_test_value cuno_test_value_of(type v) {                                        \
         cuno_test_value r;                                                                     \
         r.kind = kind_;                                                                        \
-        r.as.field = v;                                                                        \
+        r.as.field = static_cast<decltype(r.as.field)>(v);                                     \
         return r;                                                                              \
     }
 CUNO_TEST_FROM(bool, u, CUNO_TEST_UNSIGNED)
@@ -88,7 +88,7 @@ CUNO_TEST_FROM(double, f, CUNO_TEST_FLOAT)
 CUNO_TEST_FROM(long double, f, CUNO_TEST_FLOAT)
 CUNO_TEST_FROM(const volatile void *, p, CUNO_TEST_POINTER)
 inline cuno_test_value cuno_test_value_of(decltype(nullptr)) {
-    return cuno_test_value_of(static_cast<const volatile void *>(0));
+    return cuno_test_value_of(static_cast<const volatile void *>(nullptr));
 }
 #undef CUNO_TEST_FROM
 #define CUNO_TEST_VALUE(x) cuno_test_value_of(x)
@@ -105,8 +105,11 @@ CUNO_TEST_FROM(unsigned, unsigned long long, u, CUNO_TEST_UNSIGNED)
 CUNO_TEST_FROM(float, long double, f, CUNO_TEST_FLOAT)
 CUNO_TEST_FROM(pointer, const volatile void *, p, CUNO_TEST_POINTER)
 #undef CUNO_TEST_FROM
+/* Chosen by the type of `1 ? (x) : (x)` rather than of x: the conditional
+ * promotes an enum to its integer type, which MSVC's _Generic otherwise
+ * matches with no integer type at all. It is not evaluated. */
 #define CUNO_TEST_VALUE(x)                                                                     \
-    _Generic((x),                                                                              \
+    _Generic(1 ? (x) : (x),                                                                    \
         _Bool: cuno_test_unsigned,                                                             \
         char: cuno_test_signed,                                                                \
         signed char: cuno_test_signed,                                                         \
@@ -125,24 +128,34 @@ CUNO_TEST_FROM(pointer, const volatile void *, p, CUNO_TEST_POINTER)
         default: cuno_test_pointer)(x)
 #endif
 
-/* Registration: a function the C runtime calls before main. MSVC is given
- * the pointer in its initialiser section directly; Clang and GCC take the
- * constructor attribute. In C++ a static object's initialiser does it. */
+/* Registration: a function the C runtime calls before main. In C++ a static
+ * object's initialiser does it. In C, Clang (clang-cl included) and GCC take
+ * the constructor attribute; the MSVC compiler has none, so it is given the
+ * function's pointer in the CRT's initialiser section, .CRT$XCU. That
+ * pointer has an external name the linker is told to keep (/include):
+ * nothing refers to it, so with /GL and /LTCG the linker would otherwise
+ * drop it, and the test with it (testing.md, "Common rules"). */
 #if defined(__cplusplus)
 #define CUNO_TEST_REGISTER(name)                                                               \
     static const int cuno_test_registered_##name =                                             \
         (cuno_test_register_macro(#name, __FILE__, __LINE__, cuno_test_run_##name), 0);
 #elif defined(_MSC_VER) && !defined(__clang__)
 #pragma section(".CRT$XCU", read)
+#if defined(_M_IX86)
+#define CUNO_TEST_SYMBOL_PREFIX "_"
+#else
+#define CUNO_TEST_SYMBOL_PREFIX ""
+#endif
 #define CUNO_TEST_REGISTER(name)                                                               \
-    static void cuno_test_register_##name(void) {                                              \
+    static void cuno_test_init_##name(void) {                                                  \
         cuno_test_register_macro(#name, __FILE__, __LINE__, cuno_test_run_##name);             \
     }                                                                                          \
-    __declspec(allocate(".CRT$XCU")) static void (*cuno_test_initialiser_##name)(void) =      \
-        cuno_test_register_##name;
+    __pragma(comment(linker, "/include:" CUNO_TEST_SYMBOL_PREFIX "cuno_test_initialiser_" #name)) \
+    __declspec(allocate(".CRT$XCU")) void (*cuno_test_initialiser_##name)(void) =             \
+        cuno_test_init_##name;
 #else
 #define CUNO_TEST_REGISTER(name)                                                               \
-    __attribute__((constructor)) static void cuno_test_register_##name(void) {                 \
+    __attribute__((constructor)) static void cuno_test_init_##name(void) {                     \
         cuno_test_register_macro(#name, __FILE__, __LINE__, cuno_test_run_##name);             \
     }
 #endif
@@ -157,8 +170,8 @@ CUNO_TEST_FROM(pointer, const volatile void *, p, CUNO_TEST_POINTER)
     CUNO_TEST_REGISTER(name)                                                                   \
     static void cuno_test_body_##name(void)
 #else
-/* Marked unused for Clang and GCC, which warn about an unused static
- * function in the file being compiled, inline or not. */
+/* Marked unused for Clang, which warns about an unused static function in
+ * the file being compiled, inline or not. */
 #if defined(__GNUC__) || defined(__clang__)
 #define CUNO_TEST_UNUSED __attribute__((unused))
 #else
