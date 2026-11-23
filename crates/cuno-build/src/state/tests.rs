@@ -223,6 +223,10 @@ fn an_input_saved_just_before_the_step_is_not_recorded() {
     assert!(!at(started), "at the start");
     assert!(!at(started - Duration::from_secs(1)), "1 s before");
     assert!(!at(started - Duration::from_millis(1_999)), "just within");
+    assert!(
+        !at(started - Duration::from_secs(2)),
+        "exactly two seconds before"
+    );
     assert!(at(started - Duration::from_millis(2_001)), "just outside");
     assert!(at(started - Duration::from_secs(3)), "3 s before");
 }

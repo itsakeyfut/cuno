@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 64db4d9820be152294992bc3a97680bf07796275 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 73bc2e949db1cffc669fc1e65ace6b19acee5aba -->
 
 # Build
 
@@ -27,7 +27,7 @@
   - an input's modification time or size differs from the record, and its content hash differs too.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
 - A step that fails is not recorded, so the next build always runs it.
-- Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it. An input modified later than 2 seconds before the step starts is also treated as modified while it ran, except an input cuno itself finished writing earlier in the same build, before the step started (such as the objects a link reads), which gets no such margin.
+- Nor is a step one of whose inputs was modified while it ran (whether the compiler read it before or after the change cannot be known). The next build runs it. An input modified 2 seconds or less before the step starts, or later, is also treated as modified while it ran, except an input cuno itself finished writing earlier in the same build, before the step started (such as the objects a link reads), which gets no such margin.
   - Rationale: file modification times are stamped by a coarser clock than the one that measures when a step starts, so a file saved just after the start can get a modification time before it (from a few to a dozen or so milliseconds on Windows; in 2-second units on FAT file systems). Without the margin, cuno would record a step whose compiler may have read the old content. The only cost of the margin is that a file saved just before a build is compiled once more by the next build. An input cuno itself has just made is finished before the step starts, so it cannot race a user's edit; giving it the margin would put a link's objects inside it every time, and every build would link again with nothing changed.
 - `cuno check` steps (checking one source) are judged the same way. A check produces no output, so when it succeeds cuno puts an empty file in place of the output. Like the records, this file is internal to cuno.
 - Rationale:

@@ -117,7 +117,7 @@ impl Records {
     /// Records that `step`, started at `started`, succeeded having read
     /// `inputs` and `built`, the outputs of the steps it waited for. The
     /// step is left unrecorded, and so runs again, when an input was
-    /// modified after it started or within two seconds before it, or one
+    /// modified two seconds or less before it started, or later, or one
     /// of `built` after it started (the compiler may have read either
     /// version), or a path cannot be written in the record: it is never
     /// judged on what it may not have read. `built` has no margin: this
