@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 7fe264c87569d7e827c08359154a2ad52a224ccf -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob a56bcb6d01273ed409452a2ae4b4c2f78e4a7e41 -->
 
 # Commands
 
@@ -158,6 +158,11 @@ Values of `--vcs`:
 |---|---|
 | `[filter]` | Run only tests whose names contain the given string |
 | `--nocapture` | Always show stdout and stderr during tests (by default, only for failed tests) |
+
+- The common options for build commands (`--release`, `--profile`, `--compiler`, `--target-dir`, `-j`) are also available.
+- cuno builds the test build ([build.md](build.md#output-directory)) the same way as `cuno build` (with the same output and the same handling of failures). Then, for each test executable, a `Running` line shows the executable's path before it runs, and the results are shown in the format of [testing.md](testing.md#output).
+- The filter applies to every test executable alike. An executable with no matching tests still prints `running 0 tests`.
+- Exit codes: `0` when everything passes (including when the filter matches no tests). `1` if even one test fails. A build failure is also `1` ([Exit codes](#exit-codes)).
 
 ### `cuno clean`
 
