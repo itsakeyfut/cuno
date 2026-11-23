@@ -384,6 +384,7 @@ MVP では使わない。項目名のみ予約。
   5. ユーザー単位の `<管理ディレクトリ>/config.toml`
   6. 既定値
 - プロジェクトで決めた設定（`cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
+- 例外: 色付けでは、設定ファイルの `[term] color` が環境変数 `NO_COLOR` より優先する（[commands.md](commands.md#全コマンドで使えるもの)）。
 - 管理ディレクトリは [distribution.md](distribution.md) を参照。
 
 ### プロジェクトの設定と信用
@@ -458,7 +459,7 @@ rr = "run --release"
 
 | 項目 | 既定値 | 説明 |
 |---|---|---|
-| `color` | `"auto"` | 色付け。値は `--color` と同じ（[commands.md](commands.md)） |
+| `color` | `"auto"` | 色付け。値は `--color` と同じ。`--color` より劣後し、環境変数 `NO_COLOR` より優先する（[commands.md](commands.md#全コマンドで使えるもの)） |
 | `verbose` | `false` | 詳しく表示するか |
 
 `verbose`:

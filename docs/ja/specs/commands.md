@@ -72,7 +72,16 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - `always`: 常に色を付ける。
 - `never`: 色を付けない。
 
-- 環境変数 `NO_COLOR` が設定されていれば、`--color` / `[term] color` を指定しない限り `never` として扱う（NO_COLOR の慣習に従う）。
+- 色付けは、次のうち上にあるものに従う。
+  1. `--color`
+  2. 設定ファイルの `[term] color`（[manifest.md](manifest.md#term)）
+  3. 環境変数 `NO_COLOR`。値が空でも、設定されていれば `never` として扱う
+  4. 既定値 `auto`
+  - 理由: NO_COLOR の慣習では、利用者が引数や設定ファイルで明示した指定を NO_COLOR より優先する。環境全体で `NO_COLOR` を設定したまま、cuno だけ色を付けられる。
+- cuno 自身の表示（エラー、警告、進捗）は、環境変数 `CLICOLOR` / `CLICOLOR_FORCE` を読まない。端末でない出力にも色を付けるには、`--color always` か `[term] color = "always"` を使う。
+  - 理由: 常に色を付ける方法はすでに 2 つあり、読む環境変数と順位の規則を増やさないため。
+- 例外: `--help`、コマンドを指定しない `cuno`、使い方の誤り（終了コード 2）の表示は、上の順位に従わない。引数を解釈するライブラリが、出力先が端末かどうかと環境変数（`NO_COLOR`、`CLICOLOR`、`CLICOLOR_FORCE`）から独自の規則で決め、`--color` も `[term] color` も効かない。
+- 設定ファイルを読み終える前に出るエラー（設定ファイル自体の誤りなど）は、`--color` と `NO_COLOR` だけで決めた色で表示する。
 
 ### コマンドを指定しない場合（`--version` / `--help` / 引数なし）
 

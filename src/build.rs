@@ -86,16 +86,15 @@ pub fn build(
         target_dir: args.target_dir,
         jobs: args.jobs,
     };
-    let loaded = cuno_manifest::resolve(Inputs {
-        cwd,
-        env,
-        cli: &cli,
-    })
+    let settings = crate::settings::resolve(
+        Inputs {
+            cwd,
+            env,
+            cli: &cli,
+        },
+        shell,
+    )
     .map_err(boxed)?;
-    for warning in &loaded.warnings {
-        shell.warning(warning);
-    }
-    let settings = loaded.value;
     let verbose = verbosity.verbose || settings.verbose;
     let Some((project, manifest)) = &settings.project else {
         return Err(Box::new(CommandError::NoProject {

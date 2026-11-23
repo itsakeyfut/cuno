@@ -38,27 +38,28 @@ pub fn clean(
         (false, None) => None,
         (release, name) => Some(profile_named(release, name.as_deref())?),
     };
-    // Before the settings, so outside a project the error says so rather
-    // than judging an output directory there is nothing to clean in.
+    let cli = CliSettings {
+        target_dir: args.target_dir,
+        ..CliSettings::default()
+    };
+    // Read first, so that outside a project too the error is colored as the
+    // user's configuration says, as `cuno build`'s is.
+    let resolved = crate::settings::resolve(
+        Inputs {
+            cwd,
+            env,
+            cli: &cli,
+        },
+        shell,
+    );
+    // Outside a project the error says so, rather than judging an output
+    // directory there is nothing to clean in.
     if cuno_manifest::find_project(cwd).is_none() {
         return Err(Box::new(CommandError::NoProject {
             cwd: cwd.to_owned(),
         }));
     }
-    let cli = CliSettings {
-        target_dir: args.target_dir,
-        ..CliSettings::default()
-    };
-    let loaded = cuno_manifest::resolve(Inputs {
-        cwd,
-        env,
-        cli: &cli,
-    })
-    .map_err(boxed)?;
-    for warning in &loaded.warnings {
-        shell.warning(warning);
-    }
-    let target_dir = loaded.value.target_dir;
+    let target_dir = resolved.map_err(boxed)?.target_dir;
     let removed = if std::fs::symlink_metadata(&target_dir).is_err() {
         0
     } else if !is_claimed(&target_dir) {

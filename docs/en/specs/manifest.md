@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob b654a2b7a709fb7b4628467cc9619b0a4fc694d9 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 970232d5b1a924cfc37e0a80a5d8b0a17b12bc16 -->
 
 # Configuration Files
 
@@ -386,6 +386,7 @@ Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags
   5. User-level `<cuno home>/config.toml`
   6. Default values
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
+- Exception: for coloring, `[term] color` in a configuration file takes precedence over the `NO_COLOR` environment variable ([commands.md](commands.md#available-for-all-commands)).
 - For the cuno home directory, see [distribution.md](distribution.md).
 
 ### A project's settings and trust
@@ -460,7 +461,7 @@ For cross-compilation. Per target, write the locations of required tools, etc. (
 
 | Item | Default | Description |
 |---|---|---|
-| `color` | `"auto"` | Coloring. Same values as `--color` ([commands.md](commands.md)) |
+| `color` | `"auto"` | Coloring. Same values as `--color`. Ranks below `--color` and above the `NO_COLOR` environment variable ([commands.md](commands.md#available-for-all-commands)) |
 | `verbose` | `false` | Whether to show verbose output |
 
 `verbose`:

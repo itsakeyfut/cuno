@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 01f2517660d6f0ab8db530062bcf7c45af0d23ab -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 61beaf8c3543cf3857c6b3acb69ee4d6e1eef1cc -->
 
 # Commands
 
@@ -74,7 +74,16 @@ Values of `--color`:
 - `always`: Always color.
 - `never`: Never color.
 
-- If the `NO_COLOR` environment variable is set, it is treated as `never` unless `--color` / `[term] color` is specified (following the NO_COLOR convention).
+- Coloring follows the highest of the following:
+  1. `--color`
+  2. `[term] color` in a configuration file ([manifest.md](manifest.md#term))
+  3. The `NO_COLOR` environment variable. If it is set, it is treated as `never`, even when its value is empty
+  4. The default `auto`
+  - Reason: under the NO_COLOR convention, a setting the user gave explicitly in arguments or a configuration file takes precedence over NO_COLOR. You can keep `NO_COLOR` set for the whole environment and still color cuno alone.
+- cuno's own output (errors, warnings, progress) does not read the `CLICOLOR` / `CLICOLOR_FORCE` environment variables. To color output that is not a terminal, use `--color always` or `[term] color = "always"`.
+  - Reason: there are already two ways to always color, and this avoids adding more environment variables to read and more precedence rules.
+- Exception: `--help`, `cuno` with no command, and usage errors (exit code 2) do not follow the order above. The library that parses the arguments decides their color by its own rules, from whether the output is a terminal and the environment variables (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`); neither `--color` nor `[term] color` applies.
+- Errors shown before the configuration files have been read (such as errors in a configuration file itself) are colored as decided by `--color` and `NO_COLOR` alone.
 
 ### Without a command (`--version` / `--help` / no arguments)
 

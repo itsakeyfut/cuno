@@ -7,6 +7,7 @@ mod build;
 mod clean;
 mod doctor;
 mod scratch;
+mod settings;
 mod toolchain;
 
 use std::ffi::OsString;
@@ -32,8 +33,9 @@ use cuno_core::{ColorChoice, CunoError, Env, Shell};
 )]
 struct Cli {
     // The line below is the help text `cuno --help` prints for this option,
-    // pinned by tests/cli.rs. `None` when not given: NO_COLOR applies only
-    // then (docs/en/specs/commands.md, "Available for all commands").
+    // pinned by tests/cli.rs. `None` when not given: `[term] color`, then
+    // NO_COLOR, apply only then (docs/en/specs/commands.md, "Available for
+    // all commands").
     /// Coloring
     #[arg(long, value_name = "WHEN", value_enum, global = true)]
     color: Option<Color>,

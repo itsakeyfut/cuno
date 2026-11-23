@@ -58,8 +58,9 @@ pub struct Settings {
     pub target_dir: PathBuf,
     /// `-j` or `[build] jobs`; `None` means the number of CPU cores.
     pub jobs: Option<NonZeroU32>,
-    /// `[term] color` of the configuration files. `--color` and `NO_COLOR`
-    /// rank above it and are the binary's (`commands.md`).
+    /// `[term] color` of the configuration files. It ranks below `--color`
+    /// and above `NO_COLOR`, which are the binary's (`commands.md`,
+    /// "Available for all commands").
     pub color: Option<ColorChoice>,
     /// `[term] verbose` of the configuration files.
     pub verbose: bool,

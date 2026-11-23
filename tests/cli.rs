@@ -188,3 +188,37 @@ fn a_panic_exits_101() {
     let run = triggered("panic", &[], &[]);
     assert_eq!(run.code, Some(101), "{run:?}");
 }
+
+/// `[term] color` in a configuration file colors every command that reads
+/// the settings: it ranks above `NO_COLOR` and below `--color`
+/// (docs/en/specs/commands.md, "Available for all commands"), from the
+/// warning the settings raise onwards.
+///
+/// Mutation: leave out `shell.configure` in `settings::resolve`, or call
+/// it after the settings' warnings are printed, have `build`, `clean` or
+/// `doctor` read the settings without `settings::resolve`, or let the
+/// configured choice beat `--color`; this test fails.
+#[test]
+fn the_configured_color_colors_every_command() {
+    let p = Project::new()
+        .file(
+            "cuno.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        // An unknown key, so that there is a warning to color.
+        .file(".cuno/config.toml", "[term]\ncolor = \"always\"\nzzz = 1\n");
+    let run = |args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(args);
+        p.run_command_with(cmd, &[("NO_COLOR", "1")]).stderr
+    };
+    for command in ["build", "clean", "doctor"] {
+        let colored = run(&[command]);
+        assert!(
+            colored.starts_with("\x1b[1;33mwarning\x1b[0m: "),
+            "{command}: {colored}"
+        );
+        let plain = run(&["--color", "never", command]);
+        assert!(!plain.contains('\x1b'), "{command}: {plain}");
+    }
+}
