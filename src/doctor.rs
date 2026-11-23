@@ -15,6 +15,7 @@ use cuno_toolchain::probe::{self, ProbeInputs};
 use cuno_toolchain::select::{self, Choices, Found};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
+use crate::bundled;
 use crate::scratch;
 use crate::toolchain::{self, ProbeCompile};
 
@@ -267,7 +268,11 @@ fn diagnose(
 
     // The standard library probe, in C++ projects and outside a project,
     // with the dev profile's flags (toolchain.md, "Minimum compiler
-    // versions").
+    // versions"). Without a cuno home, already reported as a problem, there
+    // is no include path to give it that matches a build's.
+    let Ok(home) = cuno_core::cuno_home(env) else {
+        return diagnosed;
+    };
     let Some(stl) = toolchain::probe_compile(
         &selected,
         &prepared,
@@ -275,6 +280,7 @@ fn diagnose(
         Profile::Dev,
         cwd,
         host,
+        &bundled::include_dir(&home),
     ) else {
         return diagnosed;
     };

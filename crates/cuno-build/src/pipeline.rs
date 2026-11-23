@@ -69,6 +69,8 @@ pub struct Request<'a> {
     pub goal: Goal<'a>,
     /// The system cuno runs on.
     pub host: HostOs,
+    /// Where cuno's bundled headers are, on every compile's include path.
+    pub bundled: &'a Path,
     /// How many steps run at once.
     pub jobs: usize,
     /// `-v`: show each step's command.
@@ -100,6 +102,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         profile,
         goal,
         host,
+        bundled,
         quiet,
         ..
     } = *request;
@@ -111,6 +114,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             profile,
             lang,
             host,
+            bundled,
             false,
             mode,
         )
@@ -159,6 +163,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             Profile::Dev,
             lang,
             host,
+            bundled,
             true,
             Mode::Compile,
         )
@@ -380,6 +385,7 @@ mod tests {
     use cuno_core::NameCase;
 
     use crate::exec::Output;
+    use crate::input::tests::BUNDLED;
 
     /// Stands in for clang: writes each step's output, and a compile's
     /// dependency file naming its source, and fails when told to. It notes
@@ -393,11 +399,15 @@ mod tests {
         running: AtomicUsize,
         most: AtomicUsize,
         hold: Duration,
+        compiles: Mutex<Vec<Vec<OsString>>>,
     }
 
     impl Spawner for Fake {
         fn run(&self, step: &Step, _env: &Env, cwd: &Path) -> io::Result<Output> {
             self.runs.fetch_add(1, Ordering::SeqCst);
+            if matches!(step.kind, StepKind::Compile { .. }) {
+                self.compiles.lock().unwrap().push(step.args.clone());
+            }
             self.compdb_first
                 .lock()
                 .unwrap()
@@ -508,6 +518,7 @@ mod tests {
             profile: Profile::Dev,
             goal: options.goal,
             host: HostOs::Windows,
+            bundled: Path::new(BUNDLED),
             jobs: options.jobs,
             verbose: options.verbose,
             quiet: options.quiet,
@@ -557,6 +568,26 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(*fake.compdb_first.lock().unwrap(), Some(true));
+    }
+
+    /// Every compile, and compile_commands.json, has cuno's bundled headers
+    /// on the include path (`build.md`, "Default include paths").
+    ///
+    /// Mutation: drop `bundled` from either `compile_settings` call in
+    /// `build`; this test fails.
+    #[test]
+    fn the_bundled_headers_are_on_every_include_path() {
+        let (root, manifest) = package();
+        let fake = Fake::default();
+        run(root.path(), &manifest, Goal::Build, &fake).unwrap();
+        let flag = OsString::from(format!("-I{BUNDLED}"));
+        let compiles = fake.compiles.lock().unwrap();
+        assert!(!compiles.is_empty());
+        for args in compiles.iter() {
+            assert!(args.contains(&flag), "{args:?}");
+        }
+        let compdb = std::fs::read_to_string(root.path().join(compdb::FILE)).unwrap();
+        assert!(compdb.contains(&format!("-I{BUNDLED}")), "{compdb}");
     }
 
     /// A build runs against the records: what the last one did is not done

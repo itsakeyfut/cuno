@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob c7a10232790453e64fb6fb6cd6bc56c100666716 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob c88ff5cacbcd1e43a7a69aff515b4321b1036a2b -->
 
 # Distribution and Operation of cuno Itself
 
@@ -33,6 +33,8 @@
 | `sources/` | Dependency sources |
 | `builds/` | Cache of built dependencies |
 | `toolchains/` | Automatically installed compilers |
+
+- A command that builds writes the bundled headers before it builds. A file whose content is already the same is not rewritten. If they cannot be written, it is an error (exit code 3).
 
 ## Self-update
 

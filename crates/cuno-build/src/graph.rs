@@ -246,6 +246,7 @@ fn libraries(build: &BuildSettings) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use crate::input::compile_settings;
+    use crate::input::tests::BUNDLED;
     use crate::sources::Bin;
     use cuno_manifest::Profile;
     use cuno_toolchain::HostOs;
@@ -293,8 +294,18 @@ mod tests {
             Path::new("C:/p"),
             HostOs::Windows,
         );
-        let compile =
-            |lang| compile_settings(None, kind, Profile::Dev, lang, HostOs::Windows, false, mode);
+        let compile = |lang| {
+            compile_settings(
+                None,
+                kind,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                Path::new(BUNDLED),
+                false,
+                mode,
+            )
+        };
         let link = compile(Lang::Cxx);
         plan(&Plan {
             package: "app",
@@ -455,6 +466,7 @@ mod tests {
             Profile::Dev,
             Lang::Cxx,
             HostOs::Windows,
+            Path::new(BUNDLED),
             false,
             Mode::Compile,
         )
@@ -491,6 +503,7 @@ mod tests {
                 Profile::Dev,
                 lang,
                 HostOs::Windows,
+                Path::new(BUNDLED),
                 false,
                 Mode::Compile,
             );
@@ -545,6 +558,7 @@ mod tests {
                     Profile::Dev,
                     lang,
                     HostOs::Windows,
+                    Path::new(BUNDLED),
                     false,
                     Mode::Compile,
                 )
@@ -636,6 +650,7 @@ mod tests {
                 Profile::Dev,
                 lang,
                 HostOs::Windows,
+                Path::new(BUNDLED),
                 false,
                 Mode::Compile,
             )

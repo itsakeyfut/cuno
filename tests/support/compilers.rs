@@ -83,17 +83,7 @@ impl Compiler {
     /// executable `exe`, with the environment the compiler needs, or why the
     /// compiler is unavailable.
     pub fn compile(self, language: Language, source: &str, exe: &str) -> Result<Command, Missing> {
-        let mut cmd = match self {
-            Compiler::Msvc => msvc_command()?,
-            Compiler::Clang => Command::new(llvm_tool(
-                self,
-                match language {
-                    Language::C => "clang",
-                    Language::Cxx => "clang++",
-                },
-            )?),
-            Compiler::ClangCl => Command::new(llvm_tool(self, "clang-cl")?),
-        };
+        let mut cmd = self.driver(language)?;
         match self {
             Compiler::Msvc | Compiler::ClangCl => {
                 cmd.arg("/nologo");
@@ -109,6 +99,31 @@ impl Compiler {
             }
         }
         Ok(cmd)
+    }
+
+    /// The compiler driver for `language` with the environment it needs and
+    /// no arguments, for a test that writes its own command line.
+    pub fn driver(self, language: Language) -> Result<Command, Missing> {
+        Ok(match self {
+            Compiler::Msvc => msvc_command()?,
+            Compiler::Clang => Command::new(llvm_tool(
+                self,
+                match language {
+                    Language::C => "clang",
+                    Language::Cxx => "clang++",
+                },
+            )?),
+            Compiler::ClangCl => Command::new(llvm_tool(self, "clang-cl")?),
+        })
+    }
+}
+
+/// [`Compiler::driver`] under the missing-compiler policy of [`require`].
+#[track_caller]
+pub fn require_driver(compiler: Compiler, language: Language) -> Option<Command> {
+    match compiler.driver(language) {
+        Ok(cmd) => Some(cmd),
+        Err(missing) => skip_or_fail(&missing),
     }
 }
 
