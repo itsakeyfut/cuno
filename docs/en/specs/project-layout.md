@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 0fab004d40c58d05700f7ffed90fff699eca4611 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 0f2829c294c68a44d4d7691be57a8e0f54da1e64 -->
 
 # Project Kinds and Layout
 
@@ -105,14 +105,17 @@ The following are excluded:
 | Artifact | What is linked |
 |---|---|
 | Executable | Its entry file + package body |
-| In-source test executable | Test runner + package body (entry files are not included) |
-| Integration test executable in `tests/` (one per file) | Test runner + package body + that test file |
+| In-source test executable | Test runner + package body (compiled with `CUNO_TEST` defined; entry files are not included) |
+| Integration test executable in `tests/` (one per file) | Test runner + package body (compiled without `CUNO_TEST`) + that test file + the files in subdirectories of `tests/` |
 
 - **Entry files are not included in test builds**, to avoid a collision between the test runner's `main` and the user's `main`.
   - Other approaches considered and why they were rejected:
     - Renaming the user's `main` in test builds (`/Dmain=...`): SDL3 itself does `#define main SDL_main`, which collides. Fatal for game development.
     - Replacing the entry point via linker settings: entangled with C runtime initialization, and fragile across compilers.
   - If tests are written in an entry file, cuno warns that they will not be run.
+- **Executables in `tests/` link the package body compiled without `CUNO_TEST`** (the same objects as a normal build). In-source tests go only into the in-source test executable.
+  - Rationale: linking the body compiled with `CUNO_TEST` would register the in-source tests in every executable in `tests/` as well, running the same tests once per executable.
+  - Cost: the body is compiled two ways (with `CUNO_TEST` and without); the one without is shared with `cuno build`, so it adds nothing once already built. Helper functions written inside `#ifdef CUNO_TEST` cannot be used from files in `tests/`.
 - The library kind (static / shared / header-only) is specified with `[lib] kind` in `cuno.toml`.
 
 ## Open questions

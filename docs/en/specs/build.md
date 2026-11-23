@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 92a820f8cf4a9de80a5aa94ca860c2be1525b0ab -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 7eb8d4724ebf20a364930789c0b73932474bb429 -->
 
 # Build
 
@@ -191,7 +191,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
     - MSVC standard switches that clang-cl does not know (`/std:c++23`, `/std:clatest`) are rewritten to clang-cl's switch for the same standard (the clang-cl column of the [Compiling](#compiling) table). Left as they are, clang-cl would ignore them and analyze with an older standard.
     - MSVC's `/GL` (from `lto`) is not written. It is a link-time optimization switch with no bearing on analysis, and when only analyzing, clang-cl warns that it is an unused argument, which under `warnings-as-errors` becomes an error.
   - When the content is the same as last time, the file is not rewritten, so that an editor watching it does not reanalyze after every build.
-  - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built. Each compile's output (`output`) names where that test build's object is (see [Output directory](#output-directory)). The normal build's object is compiled without `CUNO_TEST`, so naming it would point at something else. Entry files are not part of a test build ([project-layout.md](project-layout.md)), but they are listed so that editors and clang-tidy can analyse them; their `output` is where the test build's layout would put them (no build makes anything there).
+  - **Content is always fixed**: it contains the commands for "the `dev` profile with `CUNO_TEST` defined". The content does not change regardless of which profile is built. Each compile's output (`output`) names where that test build's object is (see [Output directory](#output-directory)). The normal build's object is compiled without `CUNO_TEST`, so naming it would point at something else. Entry files are not part of a test build ([project-layout.md](project-layout.md)), but they are listed so that editors and clang-tidy can analyse them; their `output` is where the test build's layout would put them (no build makes anything there). Files under `tests/` are listed too. The bundled runtime (`cuno/test_main.c`) is not listed, because it is not the user's source.
     - Reason: editor completion and clang-tidy can analyze in-source test code as well (just as rust-analyzer analyzes test code). If the content changed with every build, the editor's analysis results would fluctuate.
   - The header dependency arguments ([Always-on flags](#always-on-flags)) are left out of each compile's command. They make the compiler write a file that cuno uses to decide what changed, and have no bearing on what the source means.
   - If the file cannot be written, cuno prints a warning (`warning: could not write compile_commands.json: <reason>`) and the build continues.
@@ -205,7 +205,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
     - Test executables go in `test/<package name>/bin/`: `<package name>` for in-source tests, and `tests-foo` for `tests/foo.cpp` (each with the platform's executable suffix; `.exe` on Windows).
     - Objects of the bundled runtime ([testing.md](testing.md)) go in `test/<package name>/cuno/`.
     - Reason: so that the executables do not overlap with where objects go (`src/`, `tests/`).
-    - When two test executables would have the same name (`tests/foo.c` and `tests/foo.cpp`, or a package named `tests-foo` and `tests/foo.cpp`, etc.), it is an error (exit code 3) that names both files. Names are compared the same way as for duplicate executable names ([project-layout.md](project-layout.md)): case-insensitively on Windows.
+    - When two test executables would have the same name (`tests/foo.c` and `tests/foo.cpp`, or a package named `tests-foo` and `tests/foo.cpp`, etc.), it is an error (exit code 3) that names both files (`` error: two test executables are named `tests-foo`: src/ and tests/foo.cpp ``; in-source tests are shown as `src/`). Names are compared the same way as for duplicate executable names ([project-layout.md](project-layout.md)): case-insensitively on Windows.
       - Reason: building them under the same name would let one link overwrite the other, and that test would never run while the run is still reported as a success.
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
