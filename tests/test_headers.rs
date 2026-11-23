@@ -546,6 +546,184 @@ fn a_normal_build_compiles_no_test() {
     }
 }
 
+const EDGE_CPP: &str = r#"#include <cuno/test.hpp>
+#include <climits>
+static cuno::test::suite tests = [] {
+    using namespace cuno::test;
+    test("signs", [] { expect(eq(-1, UINT_MAX)); expect(lt(-1, 0u)); });
+    test("escapes", [] { info("a\tb\\c\rd"); });
+    test("floats", [] { expect(approx(1.5, 2.0, 0.25)); expect(eq(0.5, 0.25)); });
+    test("null text", [] { const char *p = nullptr; expect(eq(p, "x")); });
+    test("other exception", [] { expect(throws<int>([] { throw 1.0; })); });
+};
+"#;
+
+const EDGE_C: &str = r#"#include <cuno/test.h>
+cuno_test(c_floats) {
+    cuno_check_approx(1.5, 2.0, 0.25);
+    cuno_check_eq(0.5, 0.25);
+}
+"#;
+
+/// The values a failure shows, and the result file's escaping, exactly.
+///
+/// Mutations, each failing this test:
+/// - compare C++ integers after converting one to the other's type, so
+///   `eq(-1, UINT_MAX)` passes;
+/// - drop the escaping of a tab, CR or backslash in `cuno_test_field` (the
+///   line splits where cuno reads a field);
+/// - show floating-point values, or `approx`'s two sides, any other way;
+/// - show a null `const char *` as an empty string;
+/// - report an exception of another type in `throws` as anything else.
+#[test]
+fn failures_show_their_values_and_fields_are_escaped() {
+    for compiler in COMPILERS {
+        let p = Project::new()
+            .file("edge.cpp", EDGE_CPP)
+            .file("edge.c", EDGE_C);
+        let cxx20 = Flags {
+            std: Std::Cxx20,
+            ..TEST
+        };
+        let Some(exe) = build(
+            &p,
+            compiler,
+            &[("edge.cpp", cxx20), ("edge.c", TEST)],
+            true,
+            "edge",
+        ) else {
+            continue;
+        };
+        let expected: [(&str, i32, &str); 6] = [
+            (
+                "signs",
+                1,
+                "fail edge.cpp:5 eq failed\\n  left:  -1\\n  right: 4294967295\ndone",
+            ),
+            ("escapes", 0, "info a\\tb\\\\c\\rd\ndone"),
+            (
+                "floats",
+                1,
+                "fail edge.cpp:7 approx failed\\n  left:  1.5\\n  right: 2\n\
+                 fail edge.cpp:7 eq failed\\n  left:  0.5\\n  right: 0.25\n\
+                 done",
+            ),
+            (
+                "null text",
+                1,
+                "fail edge.cpp:8 eq failed\\n  left:  NULL\\n  right: \"x\"\ndone",
+            ),
+            (
+                "other exception",
+                1,
+                "fail edge.cpp:9 throws failed: an exception of another type was thrown\ndone",
+            ),
+            (
+                "c_floats",
+                1,
+                "fail edge.c:3 approx(1.5, 2.0, 0.25) failed\\n  left:  1.5\\n  right: 2\n\
+                 fail edge.c:4 eq(0.5, 0.25) failed\\n  left:  0.5\\n  right: 0.25\n\
+                 done",
+            ),
+        ];
+        for (name, code, events) in expected {
+            assert_eq!(
+                exact(&p, &exe, name),
+                (Some(code), events.to_owned()),
+                "{}: {name}",
+                compiler.name()
+            );
+        }
+    }
+}
+
+/// A test whose name is empty or spans lines would break the `--list`
+/// protocol, so the executable refuses to start (testing.md, "Contract
+/// between cuno and test executables").
+///
+/// Mutation: drop the name check in `cuno_test_check_registry`; this test
+/// fails.
+#[test]
+fn a_test_name_must_be_one_nonempty_line() {
+    for compiler in COMPILERS {
+        let p = Project::new().file(
+            "names.cpp",
+            "#include <cuno/test.hpp>\n\
+             static cuno::test::suite s = [] {\n\
+             cuno::test::test(\"\", [] {});\n\
+             cuno::test::test(\"two\\nlines\", [] {});\n\
+             };\n",
+        );
+        let cxx20 = Flags {
+            std: Std::Cxx20,
+            ..TEST
+        };
+        let Some(exe) = build(&p, compiler, &[("names.cpp", cxx20)], true, "names") else {
+            continue;
+        };
+        let run = p.run(&exe, &["--list"]);
+        assert_eq!(run.code, Some(1), "{}", compiler.name());
+        let says = "has a name that is empty or spans lines";
+        assert_eq!(
+            run.stderr.matches(says).count(),
+            2,
+            "{}: {}",
+            compiler.name(),
+            run.stderr
+        );
+        assert!(
+            run.stderr.contains("names.cpp:3 ") && run.stderr.contains("names.cpp:4 "),
+            "{}: {}",
+            compiler.name(),
+            run.stderr
+        );
+    }
+}
+
+/// Run by hand, a test executable says how it is used, refuses a name it
+/// does not have, and without `CUNO_TEST_RESULT` writes the result to
+/// stderr.
+///
+/// Mutations, each failing this test: return 0 for an unknown name; open
+/// `CUNO_TEST_RESULT` without checking it is set (the run crashes or writes
+/// nothing); accept no arguments.
+#[test]
+fn a_test_executable_run_by_hand() {
+    for compiler in COMPILERS {
+        let p = Project::new().file("edge.cpp", EDGE_CPP);
+        let cxx20 = Flags {
+            std: Std::Cxx20,
+            ..TEST
+        };
+        let Some(exe) = build(&p, compiler, &[("edge.cpp", cxx20)], true, "hand") else {
+            continue;
+        };
+        let who = compiler.name();
+        // The C runtime ends lines with CRLF on Windows.
+        let unknown = p.run(&exe, &["--exact", "nope"]);
+        assert_eq!(
+            (unknown.code, unknown.stderr.replace("\r\n", "\n")),
+            (Some(2), "error: no test named `nope`\n".to_owned()),
+            "{who}"
+        );
+        let usage = p.run(&exe, &[]);
+        assert_eq!(usage.code, Some(2), "{who}");
+        assert!(
+            usage
+                .stderr
+                .replace("\r\n", "\n")
+                .starts_with("usage: --list | --exact <name>\n"),
+            "{who}"
+        );
+        let run = p.run(&exe, &["--exact", "escapes"]);
+        assert_eq!(
+            (run.code, run.stderr.replace("\r\n", "\n")),
+            (Some(0), "info\ta\\tb\\\\c\\rd\ndone\n".to_owned()),
+            "{who}"
+        );
+    }
+}
+
 /// `cuno build` writes the bundled headers to the cuno home and puts them on
 /// the include path, so a normal build of a file including `cuno/test.h`
 /// succeeds (build.md, "Default include paths").
