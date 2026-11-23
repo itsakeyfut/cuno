@@ -61,6 +61,11 @@ pub struct Step {
     /// and its headers: a compile's source, and the libraries of `links`
     /// a link finds in `lib-dirs` (`build.md`, "Deciding what changed").
     pub reads: Vec<PathBuf>,
+    /// The directories cuno tells the tool to search, where a user's file
+    /// can appear: a compile's include directories (cuno's own, then
+    /// `include-dirs`), a link's `lib-dirs` (`build.md`, "Deciding what
+    /// changed").
+    pub searched: Vec<PathBuf>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -141,6 +146,12 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             echo,
             headers: Some(headers),
             reads: vec![source.path.clone()],
+            searched: settings
+                .include_dirs
+                .iter()
+                .chain(&settings.build.include_dirs)
+                .cloned()
+                .collect(),
         });
         steps.len() - 1
     };
@@ -173,6 +184,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             echo: None,
             headers: None,
             reads: libraries(p.link.0),
+            searched: p.link.0.lib_dirs.clone(),
         });
     }
     Graph { steps }

@@ -197,7 +197,7 @@ pub fn build(
     // So that `cuno clean` knows the output directory is cuno's; one it
     // cannot mark is only one `cuno clean` will refuse.
     let _ = layout::claim(&settings.target_dir);
-    let records = Records::new(prepared.identity(&version));
+    let records = Records::new(prepared.identity(&version), &include, host.name_case());
     // Printed when the first step starts, so a build with nothing to do
     // shows only its Finished line (commands.md, "Output").
     let mut first_status = Some(format!(
@@ -500,6 +500,7 @@ mod tests {
             echo: None,
             headers: None,
             reads: Vec::new(),
+            searched: Vec::new(),
         })
     }
 
