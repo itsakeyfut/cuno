@@ -48,6 +48,10 @@ cuno replaces CMake, Ninja, ctest, and hand-written `.clang-format` / `.clang-ti
 
 The Japanese documents are the source of truth. The English version is a translation for public readers; if the two disagree, the Japanese version prevails.
 
+## Examples
+
+[`examples/`](examples/) holds small C and C++ projects, one per feature cuno supports today: a single file, several files and headers, several executables, `[[bin]]`, `include-dirs`, the language edition and the release profile, per-compiler flags, and C inside a C++ package. Each builds, checks and runs on MSVC, Clang and clang-cl in CI.
+
 ## License
 
 Licensed under either of
