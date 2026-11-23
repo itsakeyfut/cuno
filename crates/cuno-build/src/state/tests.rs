@@ -235,8 +235,9 @@ fn an_input_saved_just_before_the_step_is_not_recorded() {
 /// no margin: written moments before, it is recorded, while the same
 /// time on one of the step's own inputs is refused.
 ///
-/// Mutation: give the outputs of earlier steps the margin, or none to the
-/// step's own inputs; this test fails.
+/// Mutation: give the outputs of earlier steps the margin, none to the
+/// step's own inputs, or accept an output stamped at the start itself;
+/// this test fails.
 #[test]
 fn what_the_build_made_before_the_step_has_no_margin() {
     let (case, records) = recorded();
@@ -250,6 +251,14 @@ fn what_the_build_made_before_the_step_has_no_margin() {
     let input = std::slice::from_ref(&case.input);
     assert!(records.record(&case.step, &[], input, started).is_ok());
     assert!(records.record(&case.step, input, &[], started).is_err());
+    // Written at the start itself, it may be after the start: refused.
+    fs::File::options()
+        .write(true)
+        .open(&case.input)
+        .unwrap()
+        .set_modified(started)
+        .unwrap();
+    assert!(records.record(&case.step, &[], input, started).is_err());
 }
 
 /// A record cut short, as when cuno is stopped while writing it, is not
