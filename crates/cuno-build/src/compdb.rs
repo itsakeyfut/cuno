@@ -162,6 +162,8 @@ mod tests {
             echo: None,
             headers: Some(headers),
             reads: Vec::new(),
+            searched: Vec::new(),
+            looked_for: Vec::new(),
         }
     }
 

@@ -320,6 +320,8 @@ mod tests {
             echo: None,
             headers: None,
             reads: Vec::new(),
+            searched: Vec::new(),
+            looked_for: Vec::new(),
         }
     }
 
@@ -656,6 +658,8 @@ mod tests {
             output: output.clone(),
             headers: Some(Headers::DepFile(output.with_extension("d"))),
             reads: vec![source],
+            searched: Vec::new(),
+            looked_for: Vec::new(),
             ..step("clang", &[])
         };
         let spawner = Compiles {
@@ -668,7 +672,7 @@ mod tests {
     }
 
     fn build(root: &Path, graph: &Graph, spawner: &Compiles) -> Result<(), Failed> {
-        let records = Records::new([OsStr::new("v1")]);
+        let records = Records::new([OsStr::new("v1")], &[], cuno_core::NameCase::Insensitive);
         execute(
             graph,
             &Env::default(),

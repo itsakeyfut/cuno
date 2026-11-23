@@ -61,6 +61,15 @@ pub struct Step {
     /// and its headers: a compile's source, and the libraries of `links`
     /// a link finds in `lib-dirs` (`build.md`, "Deciding what changed").
     pub reads: Vec<PathBuf>,
+    /// The directories cuno tells the tool to search, where a user's file
+    /// can appear: a compile's include directories (cuno's own, then
+    /// `include-dirs`), a link's `lib-dirs` (`build.md`, "Deciding what
+    /// changed").
+    pub searched: Vec<PathBuf>,
+    /// The names a link looks for in `searched`: `<lib>.lib` for every
+    /// entry of `links`, found there or not. Empty for a compile, which
+    /// looks for the files it read.
+    pub looked_for: Vec<PathBuf>,
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -141,6 +150,13 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             echo,
             headers: Some(headers),
             reads: vec![source.path.clone()],
+            searched: settings
+                .include_dirs
+                .iter()
+                .chain(&settings.build.include_dirs)
+                .cloned()
+                .collect(),
+            looked_for: Vec::new(),
         });
         steps.len() - 1
     };
@@ -173,6 +189,14 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             echo: None,
             headers: None,
             reads: libraries(p.link.0),
+            searched: p.link.0.lib_dirs.clone(),
+            looked_for: p
+                .link
+                .0
+                .links
+                .iter()
+                .map(|lib| PathBuf::from(format!("{lib}.lib")))
+                .collect(),
         });
     }
     Graph { steps }
@@ -417,6 +441,60 @@ mod tests {
             libraries(&build),
             [first.join("foo.lib"), second.join("bar.lib")]
         );
+    }
+
+    /// A compile searches cuno's own include directories, then
+    /// `include-dirs`; a link searches `lib-dirs` for every library of
+    /// `links`, found there or not (`build.md`, "Deciding what changed").
+    ///
+    /// Mutation: leave cuno's own directories or `include-dirs` out of a
+    /// compile's search, give a link no `lib-dirs`, or look only for the
+    /// libraries found; this test fails.
+    #[test]
+    fn a_step_says_where_its_tool_searches() {
+        let sources = sources();
+        let layout = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        );
+        let kind = CompilerKind::Msvc;
+        let compile = |lang| {
+            let mut settings = compile_settings(
+                None,
+                kind,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                false,
+                Mode::Compile,
+            );
+            settings.include_dirs = vec!["C:/p/src".into()];
+            settings.build.include_dirs = vec!["C:/p/hdr".into()];
+            settings
+        };
+        let mut link = compile(Lang::Cxx);
+        link.build.lib_dirs = vec!["C:/p/lib".into()];
+        link.build.links = vec!["kernel32".into()];
+        let g = plan(&Plan {
+            package: "app",
+            sources: &sources,
+            layout: &layout,
+            kind,
+            program: Path::new("C:/cl.exe"),
+            mode: Mode::Compile,
+            compile: &compile,
+            link: (&link.build, &link.profile),
+        });
+        let (first, last) = (&g.steps[0], g.steps.last().unwrap());
+        assert_eq!(
+            first.searched,
+            [PathBuf::from("C:/p/src"), PathBuf::from("C:/p/hdr")]
+        );
+        assert!(first.looked_for.is_empty());
+        assert_eq!(last.searched, [PathBuf::from("C:/p/lib")]);
+        assert_eq!(last.looked_for, [PathBuf::from("kernel32.lib")]);
     }
 
     /// In check mode every source is checked, with the check switch and no
