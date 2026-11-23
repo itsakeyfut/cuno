@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 98dd1679630d95807cfe3e428fd22724884651a4 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 7fe264c87569d7e827c08359154a2ad52a224ccf -->
 
 # Commands
 
@@ -295,8 +295,8 @@ Follows cargo.
     - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.
   - They are not translated (cl.exe from a Japanese-language Visual Studio stays in Japanese). Only cuno's own messages are unified in English.
   - Compilers that can produce colored output, such as Clang, are displayed in color. MSVC does not produce color, so its output is shown as is, without color.
-    - Only when cuno colors its output (by the order in "Available for all commands" above) does it pass `-fcolor-diagnostics -fansi-escape-codes` to clang and clang-cl. cuno receives the compiler's output through a pipe, so without them Clang does not color it. On Windows, `-fansi-escape-codes` is also needed so that the colors are written as escape sequences.
-    - These two are kept out of both the command line used to decide what changed ([build.md](build.md#deciding-what-changed)) and `compile_commands.json`. Rationale: changing only the color setting should not recompile everything, and they change only how the compiler's output looks, not what is built.
+    - Only when cuno colors its output (by the order in "Available for all commands" above) does it pass `-fcolor-diagnostics -fansi-escape-codes` to clang and clang-cl. cuno receives the compiler's output through a pipe, so without them Clang does not color it. On Windows, `-fansi-escape-codes` is also needed so that the colors are written as escape sequences. These two are placed first among the arguments, so a `-fno-color-diagnostics` the user writes in `[build.clang] flags` or the like comes later and wins. They are not passed to a link (the linker's output has no color). The command `-v` shows includes them (it shows the command that was run).
+    - These two are kept out of both the command line used to decide what changed ([build.md](build.md#deciding-what-changed)) and `compile_commands.json`. Rationale: changing only the color setting should not recompile everything. The generated code does not change. Clang does record its command line in debug info, though, so in a build with debug info the object files and PDB differ by whether these two were passed (and since nothing is recompiled, the previous build's stay).
 
 ## Exit codes
 

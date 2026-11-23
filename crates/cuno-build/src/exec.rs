@@ -39,8 +39,9 @@ pub struct SystemSpawner;
 impl Spawner for SystemSpawner {
     fn run(&self, step: &Step, env: &Env, cwd: &Path) -> io::Result<Output> {
         let output = Command::new(&step.program)
-            .args(&step.args)
+            // First, so a color flag of the user's own, later, wins.
             .args(&step.color)
+            .args(&step.args)
             .env_clear()
             .envs(env.vars())
             .current_dir(cwd)

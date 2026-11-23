@@ -379,8 +379,9 @@ fn command_line(step: &Step) -> String {
         quoted.push('"');
         quoted
     };
+    // As it runs: the color flags first (`commands.md`, "Format").
     std::iter::once(quote(step.program.as_os_str()))
-        .chain(step.args.iter().map(|a| quote(a)))
+        .chain(step.color.iter().chain(&step.args).map(|a| quote(a)))
         .collect::<Vec<_>>()
         .join(" ")
 }

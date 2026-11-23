@@ -70,9 +70,9 @@ pub struct Step {
     /// entry of `links`, found there or not. Empty for a compile, which
     /// looks for the files it read.
     pub looked_for: Vec<PathBuf>,
-    /// Arguments added only when the step runs, to make the compiler color
-    /// its diagnostics: part of neither the command a step is judged by nor
-    /// `compile_commands.json` (`commands.md`, "Format").
+    /// Arguments put before `args` only when the step runs, to make the
+    /// compiler color its diagnostics: part of neither the command a step
+    /// is judged by nor `compile_commands.json` (`commands.md`, "Format").
     pub color: Vec<OsString>,
 }
 

@@ -1041,7 +1041,8 @@ fn the_build_uses_the_configured_toolchain_paths() {
 /// with color off nothing is (docs/en/specs/commands.md, "Format").
 ///
 /// Mutation: pass Clang no color flags, or only `-fcolor-diagnostics`,
-/// which writes no escape codes through a pipe on Windows; this test fails.
+/// which writes no escape codes through a pipe on Windows, put them after
+/// the arguments, or leave them out of what `-v` shows; this test fails.
 #[test]
 fn clangs_diagnostics_are_colored_when_cunos_output_is() {
     for (name, compiler) in [("clang", Compiler::Clang), ("clang-cl", Compiler::ClangCl)] {
@@ -1060,5 +1061,32 @@ fn clangs_diagnostics_are_colored_when_cunos_output_is() {
         assert!(diagnostic.contains('\x1b'), "{name}: {}", colored.stderr);
         let plain = project.cuno(&["--color", "never", "build", "--compiler", name]);
         assert!(!plain.stderr.contains('\x1b'), "{name}: {}", plain.stderr);
+
+        // `-v` shows the flags as run, first.
+        let shown = project.cuno(&["-v", "--color", "always", "build", "--compiler", name]);
+        let running = shown
+            .stderr
+            .lines()
+            .find(|line| line.contains("Running") && line.contains("main.cpp"))
+            .unwrap_or_default();
+        assert!(
+            running.contains(" -fcolor-diagnostics -fansi-escape-codes "),
+            "{name}: {running}"
+        );
+
+        // A user's own `-fno-color-diagnostics` comes later and wins.
+        let opted_out = Project::new()
+            .file(
+                "cuno.toml",
+                &format!("{MANIFEST}[build.{name}]\nflags = [\"-fno-color-diagnostics\"]\n"),
+            )
+            .file("src/main.cpp", "int main() { return undeclared; }\n")
+            .cuno(&["--color", "always", "build", "--compiler", name]);
+        let diagnostic = opted_out
+            .stderr
+            .lines()
+            .find(|line| line.contains("undeclared"))
+            .unwrap_or_default();
+        assert!(!diagnostic.contains('\x1b'), "{name}: {}", opted_out.stderr);
     }
 }
