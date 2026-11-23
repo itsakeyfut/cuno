@@ -210,8 +210,8 @@ fn one_file_is_one_source_in_any_case() {
 /// Executable names that differ only in case are the same file on Windows,
 /// and a duplicate among `[[bin]]` entries is one too.
 ///
-/// Mutation: compare names with case, or check only auto-detected names;
-/// this test fails.
+/// Mutation: compare names with case, or without case on every host, or
+/// check only auto-detected names; this test fails.
 #[test]
 fn names_that_are_one_file_are_duplicates() {
     let (_d, root, m) = project("c++", "", &["src/main.cpp", "src/bin/APP.cpp"]);
@@ -220,6 +220,9 @@ fn names_that_are_one_file_are_duplicates() {
         error.to_string(),
         "two executables are named `APP`: src/main.cpp and src/bin/APP.cpp"
     );
+    // Elsewhere, `app` and `APP` are two executables.
+    let s = classify(&root, &m, &root.join("target"), HostOs::Other).unwrap();
+    assert_eq!(names(&s), ["app", "APP"]);
     let (_d, root, m) = project(
         "c++",
         "[[bin]]\nname = \"x\"\npath = \"src/a.cpp\"\n[[bin]]\nname = \"x\"\npath = \"src/b.cpp\"\n",
@@ -420,4 +423,34 @@ path = \"src/game.cpp\"
     let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
     assert!(s.body.is_empty(), "{:?}", s.body);
     assert_eq!(s.warnings.len(), 1, "{:?}", s.warnings);
+}
+
+/// A `src/` that is a junction leading out of the project is still the
+/// project's: its sources are found, a `[[bin]] path` into it is inside
+/// (`project-layout.md`, "Source collection and linking").
+///
+/// Mutation: judge `src/` by where it leads like any other directory; this
+/// test fails.
+#[cfg(windows)]
+#[test]
+fn a_src_linked_from_outside_is_the_projects() {
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("main.cpp"), "").unwrap();
+    std::fs::write(outside.path().join("util.cpp"), "").unwrap();
+    let (_d, root, m) = project("c++", "", &[]);
+    junction(&root.join("src"), outside.path());
+    let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+    assert_eq!(names(&s), ["app"]);
+    assert_eq!(body(&root, &s), [("src/util.cpp".to_owned(), Lang::Cxx)]);
+    let (_e, root, m) = project(
+        "c++",
+        "[[bin]]
+name = \"x\"
+path = \"src/main.cpp\"
+",
+        &[],
+    );
+    junction(&root.join("src"), outside.path());
+    let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+    assert_eq!(names(&s), ["x"]);
 }

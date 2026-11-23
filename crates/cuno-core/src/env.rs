@@ -47,6 +47,11 @@ impl NameCase {
 }
 
 impl NameCase {
+    /// `name` as compared: two names are one when these are equal.
+    pub fn fold(self, name: &OsStr) -> OsString {
+        fold(name, self)
+    }
+
     /// Whether `a` and `b` are one name.
     pub fn same(self, a: &str, b: &str) -> bool {
         fold(OsStr::new(a), self) == fold(OsStr::new(b), self)
@@ -142,8 +147,8 @@ mod tests {
         Env::from_pairs(pairs.iter().map(|(n, v)| (n.into(), v.into())), case)
     }
 
-    /// Mutation: make `key` ignore `case`, in either direction; this test
-    /// fails.
+    /// Mutation: make `fold` ignore `case`, in either direction, or have an
+    /// `Env` report another case than it was built with; this test fails.
     #[test]
     fn names_are_compared_as_the_case_says() {
         let windows = env(&[("Path", "C:\\bin")], NameCase::Insensitive);
@@ -152,6 +157,12 @@ mod tests {
         let other = env(&[("Path", "/bin")], NameCase::Sensitive);
         assert_eq!(other.get("Path"), Some(OsStr::new("/bin")));
         assert_eq!(other.get("PATH"), None);
+        assert_eq!(
+            (windows.case(), other.case()),
+            (NameCase::Insensitive, NameCase::Sensitive)
+        );
+        assert!(NameCase::Insensitive.same("Main", "MAIN"));
+        assert!(!NameCase::Sensitive.same("Main", "MAIN"));
     }
 
     /// Mutation: upper-case with `str::to_uppercase` (which turns `ß` into

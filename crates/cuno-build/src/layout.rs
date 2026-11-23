@@ -100,13 +100,18 @@ impl Layout {
     ///
     /// Its directory is compared as where it leads, and the file by where
     /// its name sits, so a source that is itself a link to a file outside
-    /// the project still gets an object here (`docs/en/specs/project-layout.md`,
+    /// the project still gets an object here, as does one in a `src/` that
+    /// is a link leading out of the project (`docs/en/specs/project-layout.md`,
     /// "Source collection and linking").
     fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
         let source = paths::lexical(source);
-        let under = source
-            .parent()
-            .and_then(|dir| paths::relative(dir, &self.root, self.host.name_case()));
+        let case = self.host.name_case();
+        // `src/` is the project's even when it is a link leading out of it.
+        let src = self.root.join("src");
+        let under = source.parent().and_then(|dir| {
+            paths::relative(dir, &self.root, case)
+                .or_else(|| paths::relative(dir, &src, case).map(|r| Path::new("src").join(r)))
+        });
         let (Some(under), Some(file)) = (under, source.file_name()) else {
             panic!(
                 "an object was asked for {}, outside the project {}",
@@ -276,6 +281,33 @@ mod tests {
         let dev = Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows);
         assert_eq!(
             dev.object("app", &alias.join("a.cpp")),
+            root.join("target/debug/obj/app/src/a.cpp.obj")
+        );
+    }
+
+    /// A source in a `src/` that is a junction leading out of the project
+    /// gets its object under `obj/<package>/src`, as before the comparison
+    /// followed links.
+    ///
+    /// Mutation: place by where the directory leads only, without taking
+    /// `src/` as the project's; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_src_linked_from_outside_has_its_objects_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, shared) = (dir.path().join("p"), dir.path().join("shared"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("src"))
+            .arg(&shared)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let dev = Layout::new(&root.join("target"), Profile::Dev, &root, HostOs::Windows);
+        assert_eq!(
+            dev.object("app", &root.join("src").join("a.cpp")),
             root.join("target/debug/obj/app/src/a.cpp.obj")
         );
     }
