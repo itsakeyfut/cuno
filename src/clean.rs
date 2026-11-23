@@ -49,16 +49,16 @@ pub fn clean(
         target_dir: args.target_dir,
         ..CliSettings::default()
     };
-    let loaded = cuno_manifest::resolve(Inputs {
-        cwd,
-        env,
-        cli: &cli,
-    })
-    .map_err(boxed)?;
-    for warning in &loaded.warnings {
-        shell.warning(warning);
-    }
-    let target_dir = loaded.value.target_dir;
+    let target_dir = crate::settings::resolve(
+        Inputs {
+            cwd,
+            env,
+            cli: &cli,
+        },
+        shell,
+    )
+    .map_err(boxed)?
+    .target_dir;
     let removed = if std::fs::symlink_metadata(&target_dir).is_err() {
         0
     } else if !is_claimed(&target_dir) {

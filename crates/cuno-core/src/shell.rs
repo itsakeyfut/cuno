@@ -28,6 +28,12 @@ const BOLD_GREEN: &str = "\x1b[1;32m";
 /// `Shell` instead of printing, so the color decision is made once.
 pub struct Shell {
     out: Box<dyn Write>,
+    /// `--color`, when given.
+    given: Option<ColorChoice>,
+    /// Whether `NO_COLOR` is set, even to nothing.
+    no_color: bool,
+    /// Whether `out` is a terminal.
+    terminal: bool,
     color: bool,
 }
 
@@ -38,21 +44,35 @@ impl Shell {
     ///
     /// With no choice given, `NO_COLOR` (set to anything, including empty)
     /// means no color, and otherwise color follows the terminal. A choice the
-    /// user gave always wins over `NO_COLOR`, including an explicit `auto`, as
-    /// `commands.md` specifies.
+    /// user gave always wins over `NO_COLOR`, including an explicit `auto`.
+    /// [`Shell::configure`] adds `[term] color` once it is read. See
+    /// `docs/en/specs/commands.md`, "Available for all commands".
     pub fn new(
         out: Box<dyn Write>,
         choice: Option<ColorChoice>,
         env: &Env,
         out_is_terminal: bool,
     ) -> Shell {
-        let color = match choice {
+        let mut shell = Shell {
+            out,
+            given: choice,
+            no_color: env.get("NO_COLOR").is_some(),
+            terminal: out_is_terminal,
+            color: false,
+        };
+        shell.configure(None);
+        shell
+    }
+
+    /// Applies `[term] color`, which is read after the shell is made: it
+    /// ranks below `--color` and above `NO_COLOR`.
+    pub fn configure(&mut self, configured: Option<ColorChoice>) {
+        self.color = match self.given.or(configured) {
             Some(ColorChoice::Always) => true,
             Some(ColorChoice::Never) => false,
-            Some(ColorChoice::Auto) => out_is_terminal,
-            None => out_is_terminal && env.get("NO_COLOR").is_none(),
+            Some(ColorChoice::Auto) => self.terminal,
+            None => self.terminal && !self.no_color,
         };
-        Shell { out, color }
     }
 
     /// Whether this shell writes color escape codes.
@@ -215,5 +235,28 @@ mod tests {
         assert!(!on(Some(ColorChoice::Auto), &[], false));
         assert!(on(Some(ColorChoice::Always), no_color, false));
         assert!(!on(Some(ColorChoice::Never), &[], true));
+    }
+
+    /// `[term] color` ranks below `--color` and above `NO_COLOR`
+    /// (`commands.md`, "Available for all commands").
+    ///
+    /// Mutation: let `[term] color` beat `--color`, let `NO_COLOR` beat
+    /// `[term] color`, or ignore what `configure` is given; this test fails.
+    #[test]
+    fn the_configured_choice_ranks_between_the_flag_and_no_color() {
+        let on = |given, configured, env: &[(&str, &str)], terminal| {
+            let mut shell = shell(given, env, terminal).0;
+            shell.configure(configured);
+            shell.uses_color()
+        };
+        let no_color: &[(&str, &str)] = &[("NO_COLOR", "")];
+        let (always, never) = (Some(ColorChoice::Always), Some(ColorChoice::Never));
+        assert!(on(None, always, no_color, false));
+        assert!(!on(None, never, &[], true));
+        assert!(on(None, Some(ColorChoice::Auto), no_color, true));
+        assert!(!on(never, always, &[], true));
+        assert!(on(always, never, &[], false));
+        assert!(!on(None, None, no_color, true));
+        assert!(on(None, None, &[], true));
     }
 }

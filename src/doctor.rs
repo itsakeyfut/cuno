@@ -50,17 +50,16 @@ pub fn doctor(
         compiler: compiler.clone(),
         ..Default::default()
     };
-    let settings = match cuno_manifest::resolve(Inputs {
-        cwd,
-        env,
-        cli: &cli,
-    }) {
-        Ok(loaded) => {
-            for warning in &loaded.warnings {
-                problems.shell.warning(warning);
-            }
-            Some(loaded.value)
-        }
+    let resolved = crate::settings::resolve(
+        Inputs {
+            cwd,
+            env,
+            cli: &cli,
+        },
+        problems.shell,
+    );
+    let settings = match resolved {
+        Ok(settings) => Some(settings),
         Err(error) => {
             problems.report(&error);
             None
