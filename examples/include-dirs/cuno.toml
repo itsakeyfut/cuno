@@ -1,0 +1,6 @@
+[package]
+name = "include-dirs"
+version = "0.1.0"
+
+[build]
+include-dirs = ["include"]
