@@ -1,7 +1,7 @@
 //! Running test executables and reporting their results: each test in a
 //! process of its own, up to `jobs` at once, its output captured and shown
 //! for failures (or always, with `--nocapture`), the report printed as the
-//! tests finish. See `docs/en/specs/testing.md`, "Running" and "Output".
+//! tests finish. See `docs/en/specs/testing.md`, "Execution" and "Output".
 //! Building them is `cuno-build`'s (`docs/en/specs/architecture.md`).
 
 pub mod record;
@@ -21,7 +21,7 @@ use crate::record::{Ending, Report};
 
 /// What a process printed and how it ended.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Finished {
+pub struct ProcessOutput {
     /// Its exit code, or `None` when it was ended by a signal.
     pub code: Option<i32>,
     /// What it wrote to stdout.
@@ -33,14 +33,26 @@ pub struct Finished {
 /// Starts a test executable and waits for it, its output captured.
 pub trait Launcher: Sync {
     /// Runs `exe` with `args` in `cwd`, with exactly the variables of `env`.
-    fn launch(&self, exe: &Path, args: &[OsString], env: &Env, cwd: &Path) -> io::Result<Finished>;
+    fn launch(
+        &self,
+        exe: &Path,
+        args: &[OsString],
+        env: &Env,
+        cwd: &Path,
+    ) -> io::Result<ProcessOutput>;
 }
 
-/// The [`Launcher`] that starts real processes.
+/// The [`Launcher`] that starts real processes, with no standard input.
 pub struct SystemLauncher;
 
 impl Launcher for SystemLauncher {
-    fn launch(&self, exe: &Path, args: &[OsString], env: &Env, cwd: &Path) -> io::Result<Finished> {
+    fn launch(
+        &self,
+        exe: &Path,
+        args: &[OsString],
+        env: &Env,
+        cwd: &Path,
+    ) -> io::Result<ProcessOutput> {
         let output = std::process::Command::new(exe)
             .args(args)
             .env_clear()
@@ -48,7 +60,7 @@ impl Launcher for SystemLauncher {
             .current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .output()?;
-        Ok(Finished {
+        Ok(ProcessOutput {
             code: output.status.code(),
             stdout: output.stdout,
             stderr: output.stderr,
@@ -58,30 +70,32 @@ impl Launcher for SystemLauncher {
 
 /// A test executable to run.
 #[derive(Clone, Debug)]
-pub struct Executable {
+pub struct TestExecutable {
     /// Where it is.
     pub path: PathBuf,
-    /// Whether it is made from a file under `tests/`, and so runs only the
-    /// tests placed there (`testing.md`, "Running").
-    pub from_tests: bool,
+    /// Whether it is made from an integration test (a file under `tests/`),
+    /// and so runs only the tests placed there (`testing.md`, "Execution").
+    pub integration: bool,
 }
 
 /// One run of a package's tests.
-pub struct Run<'a> {
+pub struct TestRun<'a> {
     /// The executables, in the order to run them.
-    pub executables: &'a [Executable],
+    pub executables: &'a [TestExecutable],
     /// Run only the tests whose names contain this.
     pub filter: Option<&'a str>,
     /// Show every test's output, not only a failed one's.
     pub nocapture: bool,
-    /// How many tests run at once; at least one.
+    /// How many tests run at once; zero is taken as one.
     pub jobs: usize,
-    /// The project's root: where tests run, what places are shown relative
+    /// The project's root: where tests run, what paths are shown relative
     /// to, and where `tests/` is.
     pub root: &'a Path,
     /// The environment the tests get, as cuno was given it.
     pub env: &'a Env,
-    /// A directory of cuno's for the result files.
+    /// A directory of cuno's in which the run makes a directory of its own
+    /// for the result files, removed when it ends, so two runs sharing it
+    /// never read each other's results.
     pub scratch: &'a Path,
     /// How the host compares names.
     pub case: NameCase,
@@ -103,7 +117,8 @@ pub struct Summary {
 }
 
 impl Summary {
-    /// Whether everything that was to run ran and passed.
+    /// Whether everything that was to run ran and passed: what `cuno test`
+    /// turns into exit code 0 (`commands.md`, "`cuno test`").
     pub fn succeeded(&self) -> bool {
         self.failed == 0 && self.unlisted == 0
     }
@@ -112,83 +127,182 @@ impl Summary {
 /// The verdict on one test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Verdict {
+    /// It ran to its end with no failed check, and its process succeeded.
     Passed,
+    /// It skipped itself with no failed check before, for this reason.
     Skipped(String),
+    /// Anything else: a failed check, a crash or an early exit, a result
+    /// cuno cannot read, or a process that failed after reporting success.
     Failed,
 }
 
 /// What became of one test.
 struct Outcome {
+    /// The test's name.
     name: String,
-    finished: Finished,
+    /// What its process printed and how it ended.
+    output: ProcessOutput,
+    /// What its result file said.
     report: Report,
+    /// The verdict on it.
     verdict: Verdict,
     /// Why it failed, when its report does not say: it did not finish, or
     /// its file could not be read.
     note: Option<String>,
 }
 
+/// Why an executable's tests could not be listed.
+struct ListFailure {
+    /// The `error:` line.
+    message: String,
+    /// The `help:` line, when there is one.
+    help: Option<&'static str>,
+    /// What the executable printed, when it ran.
+    output: Option<ProcessOutput>,
+}
+
+impl ListFailure {
+    fn new(message: String) -> ListFailure {
+        ListFailure {
+            message,
+            help: None,
+            output: None,
+        }
+    }
+}
+
 /// Runs every executable's tests, printing what `testing.md`, "Output",
 /// shows, and returns how it went.
-pub fn run(r: &Run<'_>, shell: &mut Shell) -> Summary {
+pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
     let mut summary = Summary::default();
+    let results = match own_directory(r.scratch) {
+        Ok(dir) => dir,
+        Err(e) => {
+            shell.error(format!(
+                "cannot make a directory for the test results in {}: {e}",
+                r.scratch.display()
+            ));
+            summary.unlisted = r.executables.len();
+            return summary;
+        }
+    };
     for (index, exe) in r.executables.iter().enumerate() {
-        let shown = exe.path.strip_prefix(r.root).unwrap_or(&exe.path);
-        shell.status("Running", format!("`{}`", shown.display()));
-        match list(r, index, exe) {
-            Ok(names) => run_one(r, index, &names, shell, &mut summary),
-            Err((message, help, finished)) => {
+        shell.status(
+            "Running",
+            format!("`{}`", shown(&exe.path, r.root).display()),
+        );
+        match list(r, &results, index, exe) {
+            Ok(names) => run_executable(r, &results, index, &names, shell, &mut summary),
+            Err(failure) => {
                 summary.unlisted += 1;
-                if let Some(finished) = finished {
-                    shell.raw(&finished.stdout);
-                    shell.raw(&finished.stderr);
+                if let Some(output) = &failure.output {
+                    raw_lines(shell, &output.stdout);
+                    raw_lines(shell, &output.stderr);
                 }
-                shell.error(message);
-                if let Some(help) = help {
+                shell.error(failure.message);
+                if let Some(help) = failure.help {
                     shell.help(help);
                 }
             }
         }
     }
+    let _ = std::fs::remove_dir_all(&results);
     summary
 }
 
-/// Why an executable's tests could not be listed: the message, a help, and
-/// what it printed when that is part of the story.
-type Unlisted = (String, Option<&'static str>, Option<Finished>);
+/// A new directory in `scratch` that no other run uses.
+fn own_directory(scratch: &Path) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(scratch)?;
+    for n in 0.. {
+        let dir = scratch.join(format!("run-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("the counter runs out first")
+}
+
+/// `path` relative to `root` when it lies there, as the report shows paths.
+fn shown<'a>(path: &'a Path, root: &Path) -> &'a Path {
+    path.strip_prefix(root).unwrap_or(path)
+}
+
+/// An exit code as a person reads it: a Windows crash code, which comes out
+/// negative, in hexadecimal (`0xC0000005`) as it is documented and searched
+/// for (`testing.md`, "Output").
+fn exit_code(code: Option<i32>) -> String {
+    match code {
+        None => "no exit code".to_owned(),
+        Some(c) if c < 0 => format!("exit code 0x{:08X}", c as u32),
+        Some(c) => format!("exit code {c}"),
+    }
+}
+
+/// A process's output, ended with a line break if it did not end with one,
+/// so the report's next line starts on a line of its own.
+fn raw_lines(shell: &mut Shell, bytes: &[u8]) {
+    shell.raw(bytes);
+    if bytes.last().is_some_and(|&b| b != b'\n') {
+        shell.raw(b"\n");
+    }
+}
 
 /// The names of `exe`'s tests to run.
-fn list(r: &Run<'_>, index: usize, exe: &Executable) -> Result<Vec<String>, Unlisted> {
-    let file = r.scratch.join(format!("list-{index}.txt"));
-    let _ = std::fs::remove_file(&file);
+fn list(
+    r: &TestRun<'_>,
+    results: &Path,
+    index: usize,
+    exe: &TestExecutable,
+) -> Result<Vec<String>, ListFailure> {
+    let file = results.join(format!("list-{index}.txt"));
     let env = r
         .env
         .with("CUNO_TEST_RESULT", file.clone().into_os_string());
-    let shown = exe.path.display();
-    let finished = r
+    let path = shown(&exe.path, r.root).display();
+    let output = r
         .launcher
         .launch(&exe.path, &[OsString::from("--list")], &env, r.root)
-        .map_err(|e| (format!("cannot run {shown}: {e}"), None, None))?;
-    if finished.code != Some(0) {
-        let code = finished
-            .code
-            .map_or("no exit code".to_owned(), |c| format!("exit code {c}"));
-        return Err((
-            format!("{shown} ended with {code} listing its tests"),
-            None,
-            Some(finished),
-        ));
+        .map_err(|e| ListFailure::new(format!("cannot run {path}: {e}")))?;
+    if output.code != Some(0) {
+        return Err(ListFailure {
+            message: format!(
+                "{path} ended with {} listing its tests",
+                exit_code(output.code)
+            ),
+            help: None,
+            output: Some(output),
+        });
     }
-    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    // A list that is not there is not an empty list: taking it as one
+    // would report success for tests that never ran.
+    let text = std::fs::read_to_string(&file).map_err(|e| ListFailure {
+        message: format!("{path} wrote no list of its tests that cuno can read: {e}"),
+        help: None,
+        output: Some(output.clone()),
+    })?;
     let registrations =
-        record::registrations(&text).map_err(|e| (format!("{shown}: {e}"), None, None))?;
-    select::tests_to_run(&registrations, exe.from_tests, r.filter, r.root, r.case)
-        .map_err(|e| (e.to_string(), Some(e.help()), None))
+        record::registrations(&text).map_err(|e| ListFailure::new(format!("{path}: {e}")))?;
+    select::tests_to_run(&registrations, exe.integration, r.filter, r.root, r.case).map_err(|e| {
+        ListFailure {
+            message: e.to_string(),
+            help: Some(e.help()),
+            output: None,
+        }
+    })
 }
 
 /// Runs `names` from executable `index`, up to `r.jobs` at once, printing
 /// each test's line as it finishes, then the failures and the result line.
-fn run_one(r: &Run<'_>, index: usize, names: &[String], shell: &mut Shell, summary: &mut Summary) {
+fn run_executable(
+    r: &TestRun<'_>,
+    results: &Path,
+    index: usize,
+    names: &[String],
+    shell: &mut Shell,
+    summary: &mut Summary,
+) {
     let exe = &r.executables[index];
     let started = Instant::now();
     shell.raw(format!("\nrunning {} tests\n", names.len()).as_bytes());
@@ -196,15 +310,18 @@ fn run_one(r: &Run<'_>, index: usize, names: &[String], shell: &mut Shell, summa
     let (sender, receiver) = mpsc::channel::<Outcome>();
     let mut failures: Vec<Outcome> = Vec::new();
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
+    // At least one worker, and none idle.
+    let workers = r.jobs.max(1).min(names.len().max(1));
     std::thread::scope(|scope| {
-        for _ in 0..r.jobs.max(1).min(names.len().max(1)) {
+        for _ in 0..workers {
             let sender = sender.clone();
             let queue = &queue;
             scope.spawn(move || {
                 loop {
                     let next = queue.lock().unwrap().pop_front();
-                    let Some((at, name)) = next else { break };
-                    let _ = sender.send(one_test(r, exe, index, at, name));
+                    let Some((position, name)) = next else { break };
+                    let file = results.join(format!("result-{index}-{position}.txt"));
+                    let _ = sender.send(run_test(r, exe, &file, name));
                 }
             });
         }
@@ -219,8 +336,8 @@ fn run_one(r: &Run<'_>, index: usize, names: &[String], shell: &mut Shell, summa
             };
             shell.raw(format!("test {} ... {status}\n", outcome.name).as_bytes());
             if r.nocapture {
-                shell.raw(&outcome.finished.stdout);
-                shell.raw(&outcome.finished.stderr);
+                raw_lines(shell, &outcome.output.stdout);
+                raw_lines(shell, &outcome.output.stderr);
             }
             match outcome.verdict {
                 Verdict::Passed => passed += 1,
@@ -246,9 +363,10 @@ fn run_one(r: &Run<'_>, index: usize, names: &[String], shell: &mut Shell, summa
             if let Some(note) = &outcome.note {
                 shell.raw(format!("{note}\n").as_bytes());
             }
+            // Already shown after the test's line under `--nocapture`.
             if !r.nocapture {
-                shell.raw(&outcome.finished.stdout);
-                shell.raw(&outcome.finished.stderr);
+                raw_lines(shell, &outcome.output.stdout);
+                raw_lines(shell, &outcome.output.stderr);
             }
         }
     }
@@ -265,36 +383,42 @@ fn run_one(r: &Run<'_>, index: usize, names: &[String], shell: &mut Shell, summa
     summary.skipped += skipped;
 }
 
-/// Runs test `name`, the `at`th of executable `index`, alone, and judges it
-/// by its result file (`testing.md`, "Contract between cuno and test
-/// executables").
-fn one_test(r: &Run<'_>, exe: &Executable, index: usize, at: usize, name: &str) -> Outcome {
-    let file = r.scratch.join(format!("result-{index}-{at}.txt"));
-    let _ = std::fs::remove_file(&file);
+/// Runs test `name` of `exe` alone, its result in `file`, and judges it by
+/// that file (`testing.md`, "Contract between cuno and test executables").
+fn run_test(r: &TestRun<'_>, exe: &TestExecutable, file: &Path, name: &str) -> Outcome {
     let env = r
         .env
-        .with("CUNO_TEST_RESULT", file.clone().into_os_string());
+        .with("CUNO_TEST_RESULT", file.to_owned().into_os_string());
     let args = [OsString::from("--exact"), OsString::from(name)];
-    let finished = match r.launcher.launch(&exe.path, &args, &env, r.root) {
-        Ok(finished) => finished,
+    let output = match r.launcher.launch(&exe.path, &args, &env, r.root) {
+        Ok(output) => output,
         Err(e) => {
             return Outcome {
                 name: name.to_owned(),
-                finished: Finished::default(),
-                report: empty_report(),
+                output: ProcessOutput::default(),
+                report: no_report(),
                 verdict: Verdict::Failed,
-                note: Some(format!("cannot run {}: {e}", exe.path.display())),
+                note: Some(format!(
+                    "cannot run {}: {e}",
+                    shown(&exe.path, r.root).display()
+                )),
             };
         }
     };
-    let text = std::fs::read_to_string(&file).ok();
-    let (report, note) = match record::report(text.as_deref()) {
-        Ok(report) => (report, None),
-        Err(e) => (empty_report(), Some(e.to_string())),
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => Ok(Some(text)),
+        // No file is a test that did not finish, which the report says.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("cannot read the test's result: {e}")),
     };
-    let code = finished
-        .code
-        .map_or("no exit code".to_owned(), |c| format!("exit code {c}"));
+    let (report, note) = match text {
+        Ok(text) => match record::report(text.as_deref()) {
+            Ok(report) => (report, None),
+            Err(e) => (no_report(), Some(e.to_string())),
+        },
+        Err(note) => (no_report(), Some(note)),
+    };
+    let code = exit_code(output.code);
     let (verdict, note) = match (&report.ending, report.failures.is_empty(), note) {
         (_, _, Some(note)) => (Verdict::Failed, Some(note)),
         (Ending::Unfinished, _, None) => (
@@ -308,7 +432,7 @@ fn one_test(r: &Run<'_>, exe: &Executable, index: usize, at: usize, name: &str) 
         (_, false, None) => (Verdict::Failed, None),
         // Reported as finished, yet its process failed after: a crash on
         // the way out is a failure too.
-        (_, true, None) if finished.code != Some(0) => (
+        (_, true, None) if output.code != Some(0) => (
             Verdict::Failed,
             Some(format!(
                 "the test reported no failure, yet ended with {code}"
@@ -319,14 +443,16 @@ fn one_test(r: &Run<'_>, exe: &Executable, index: usize, at: usize, name: &str) 
     };
     Outcome {
         name: name.to_owned(),
-        finished,
+        output,
         report,
         verdict,
         note,
     }
 }
 
-fn empty_report() -> Report {
+/// The report of a test whose result file said nothing usable: no failed
+/// check, and not finished.
+fn no_report() -> Report {
     Report {
         failures: Vec::new(),
         infos: Vec::new(),
@@ -351,6 +477,8 @@ mod tests {
         code: Option<i32>,
         stdout: &'static str,
         stderr: &'static str,
+        /// Whether `--exact` cannot start the process.
+        cannot_start: bool,
     }
 
     /// A launcher that plays scripts instead of starting processes.
@@ -359,6 +487,10 @@ mod tests {
         /// Per executable path: its `--list` records, or `Err` for an exit
         /// code to end listing with.
         lists: HashMap<PathBuf, Result<String, i32>>,
+        /// Executables that list with exit code 0 and write no file.
+        no_list_file: Vec<PathBuf>,
+        /// Executables that cannot be started.
+        unstartable: Vec<PathBuf>,
         /// Per test name.
         tests: HashMap<String, Script>,
         running: AtomicUsize,
@@ -373,21 +505,30 @@ mod tests {
             args: &[OsString],
             env: &Env,
             _cwd: &Path,
-        ) -> io::Result<Finished> {
+        ) -> io::Result<ProcessOutput> {
             let result = PathBuf::from(env.get("CUNO_TEST_RESULT").unwrap());
+            if self.unstartable.iter().any(|u| u == exe) {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "not there"));
+            }
+            if args[0] == "--list" && self.no_list_file.iter().any(|u| u == exe) {
+                return Ok(ProcessOutput {
+                    code: Some(0),
+                    ..ProcessOutput::default()
+                });
+            }
             if args[0] == "--list" {
                 return match &self.lists[exe] {
                     Ok(records) => {
                         std::fs::write(result, records)?;
-                        Ok(Finished {
+                        Ok(ProcessOutput {
                             code: Some(0),
-                            ..Finished::default()
+                            ..ProcessOutput::default()
                         })
                     }
-                    Err(code) => Ok(Finished {
+                    Err(code) => Ok(ProcessOutput {
                         code: Some(*code),
                         stderr: b"static init failed\n".to_vec(),
-                        ..Finished::default()
+                        ..ProcessOutput::default()
                     }),
                 };
             }
@@ -396,10 +537,13 @@ mod tests {
             std::thread::sleep(self.hold);
             self.running.fetch_sub(1, Ordering::SeqCst);
             let script = self.tests[args[1].to_str().unwrap()].clone();
+            if script.cannot_start {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "gone"));
+            }
             if let Some(records) = script.records {
                 std::fs::write(result, records)?;
             }
-            Ok(Finished {
+            Ok(ProcessOutput {
                 code: script.code,
                 stdout: script.stdout.as_bytes().to_vec(),
                 stderr: script.stderr.as_bytes().to_vec(),
@@ -443,24 +587,36 @@ mod tests {
     /// the timing replaced with `T`.
     fn run_with(
         fake: &Fake,
-        exes: &[Executable],
+        exes: &[TestExecutable],
         jobs: usize,
         nocapture: bool,
         filter: Option<&str>,
     ) -> (Summary, String) {
         let scratch = tempfile::tempdir().unwrap();
+        run_in(fake, exes, jobs, nocapture, filter, scratch.path())
+    }
+
+    /// [`run_with`] in the scratch directory `scratch`.
+    fn run_in(
+        fake: &Fake,
+        exes: &[TestExecutable],
+        jobs: usize,
+        nocapture: bool,
+        filter: Option<&str>,
+        scratch: &Path,
+    ) -> (Summary, String) {
         let env = Env::from_pairs([], NameCase::Insensitive);
         let out = Captured::default();
         let mut shell = Shell::new(Box::new(out.clone()), None, &env, false);
         let summary = run(
-            &Run {
+            &TestRun {
                 executables: exes,
                 filter,
                 nocapture,
                 jobs,
                 root: Path::new(ROOT),
                 env: &env,
-                scratch: scratch.path(),
+                scratch,
                 case: NameCase::Insensitive,
                 launcher: fake,
             },
@@ -478,10 +634,10 @@ mod tests {
         (summary, timed)
     }
 
-    fn exe(path: &str) -> Executable {
-        Executable {
+    fn exe(path: &str) -> TestExecutable {
+        TestExecutable {
             path: PathBuf::from(path),
-            from_tests: false,
+            integration: false,
         }
     }
 
@@ -516,6 +672,7 @@ mod tests {
                 code: Some(1),
                 stdout: "parsing\n",
                 stderr: "",
+                cannot_start: false,
             },
         );
         fake.tests.insert(
@@ -697,9 +854,9 @@ mod tests {
         fake.tests.insert("adds two".into(), passing());
         let exes = [
             exe("C:/p/broken.exe"),
-            Executable {
+            TestExecutable {
                 path: PathBuf::from("C:/p/tests-a.exe"),
-                from_tests: true,
+                integration: true,
             },
         ];
         let (summary, text) = run_with(&fake, &exes, 1, false, Some("one"));
@@ -713,7 +870,9 @@ mod tests {
             }
         );
         assert!(
-            text.contains("static init failed\nerror: C:/p/broken.exe ended with exit code 3 listing its tests\n"),
+            text.contains(
+                "static init failed\nerror: broken.exe ended with exit code 3 listing its tests\n"
+            ),
             "{text}"
         );
         assert!(
@@ -740,6 +899,7 @@ mod tests {
                 code: Some(1),
                 stdout: "said once\n",
                 stderr: "",
+                cannot_start: false,
             },
         );
         let (_, text) = run_with(&fake, &[exe("C:/p/app.exe")], 1, true, None);
@@ -770,5 +930,223 @@ mod tests {
             text.contains("---- odd ----\na result record cuno cannot read: `pass`\n"),
             "{text}"
         );
+    }
+
+    /// An executable that lists with no file, or cannot be started, is an
+    /// error naming it as the report shows it, and is counted; the help of
+    /// a list cuno refuses is printed; the totals add up across every
+    /// executable, and a run with every test passing ends `ok`.
+    ///
+    /// Mutation: take a missing list as an empty one (zero tests, success),
+    /// drop the help, assign rather than add a count, or print `FAILED` for
+    /// a passing run; this test fails.
+    #[test]
+    fn every_executable_counts() {
+        let mut fake = Fake::default();
+        for (exe, names) in [("C:/p/one.exe", ["a", "b"]), ("C:/p/two.exe", ["c", "d"])] {
+            fake.lists.insert(PathBuf::from(exe), Ok(listing(&names)));
+            for name in names {
+                fake.tests.insert(name.into(), passing());
+            }
+        }
+        fake.no_list_file.push(PathBuf::from("C:/p/silent.exe"));
+        fake.unstartable.push(PathBuf::from("C:/p/gone.exe"));
+        fake.lists.insert(
+            PathBuf::from("C:/p/clash.exe"),
+            Ok("test\tx\tC:/p/src/a.cpp\t1\tmodern\ntest\tx\tC:/p/src/b.cpp\t2\tmodern\n".into()),
+        );
+        let exes = [
+            exe("C:/p/one.exe"),
+            exe("C:/p/silent.exe"),
+            exe("C:/p/gone.exe"),
+            exe("C:/p/clash.exe"),
+            exe("C:/p/two.exe"),
+        ];
+        let (summary, text) = run_with(&fake, &exes, 2, false, None);
+        assert_eq!(
+            summary,
+            Summary {
+                passed: 4,
+                failed: 0,
+                skipped: 0,
+                unlisted: 3,
+            },
+            "{text}"
+        );
+        assert!(
+            text.contains("error: silent.exe wrote no list of its tests that cuno can read: "),
+            "{text}"
+        );
+        assert!(
+            text.contains("error: cannot run gone.exe: not there\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("error: two tests are named `x`: src/a.cpp:1 and src/b.cpp:2\nhelp: give one of them another name\n"),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("\ntest result: ok. 2 passed; 0 failed; 0 skipped; finished in T")
+                .count(),
+            2,
+            "{text}"
+        );
+    }
+
+    /// Results go in a directory of the run's own, removed after it: a run
+    /// in a scratch directory another run used never reads that run's
+    /// results, so a test that reports nothing fails rather than passing on
+    /// a result left behind.
+    ///
+    /// Mutation: write results straight into the scratch directory, or
+    /// leave the run's directory behind; this test fails.
+    #[test]
+    fn a_run_reads_only_its_own_results() {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut fake = Fake::default();
+        fake.lists
+            .insert(PathBuf::from("C:/p/app.exe"), Ok(listing(&["t"])));
+        fake.tests.insert("t".into(), passing());
+        let (first, _) = run_in(
+            &fake,
+            &[exe("C:/p/app.exe")],
+            1,
+            false,
+            None,
+            scratch.path(),
+        );
+        assert_eq!(first.passed, 1);
+        // Results left where a shared scratch directory would hold them.
+        std::fs::write(scratch.path().join("result-0-0.txt"), "done\n").unwrap();
+        fake.tests.insert(
+            "t".into(),
+            Script {
+                records: None,
+                code: Some(0),
+                ..Script::default()
+            },
+        );
+        let (second, text) = run_in(
+            &fake,
+            &[exe("C:/p/app.exe")],
+            1,
+            false,
+            None,
+            scratch.path(),
+        );
+        assert_eq!(second.failed, 1, "{text}");
+        let left: Vec<_> = std::fs::read_dir(scratch.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("result-0-0.txt")]);
+    }
+
+    /// Output that does not end with a line break is ended with one, so the
+    /// report's next line starts on its own; a Windows crash code is shown
+    /// in hexadecimal; a test that cannot be started fails saying so; a
+    /// skip with no reason reads `skipped`; zero jobs runs one at a time.
+    ///
+    /// Mutation: print output as it came, show a crash code in decimal,
+    /// drop the note of a test that cannot start, print `skipped ()`, or
+    /// start no worker for zero jobs; this test fails.
+    #[test]
+    fn the_report_stays_readable() {
+        let mut fake = Fake::default();
+        fake.lists.insert(
+            PathBuf::from("C:/p/app.exe"),
+            Ok(listing(&["mid line", "crash", "quiet skip"])),
+        );
+        fake.tests.insert(
+            "mid line".into(),
+            Script {
+                records: Some("fail\ta.c\t1\tx failed\ndone\n"),
+                code: Some(1),
+                stdout: "no newline",
+                stderr: "",
+                cannot_start: false,
+            },
+        );
+        fake.tests.insert(
+            "crash".into(),
+            Script {
+                records: None,
+                code: Some(-1_073_741_819),
+                ..Script::default()
+            },
+        );
+        fake.tests.insert(
+            "quiet skip".into(),
+            Script {
+                records: Some("skip\t\n"),
+                code: Some(0),
+                ..Script::default()
+            },
+        );
+        let (summary, text) = run_with(&fake, &[exe("C:/p/app.exe")], 0, false, None);
+        assert_eq!((summary.failed, summary.skipped), (2, 1), "{text}");
+        assert!(text.contains("no newline\n---- crash ----\n"), "{text}");
+        assert!(
+            text.contains("the test ended without reporting a result (exit code 0xC0000005)"),
+            "{text}"
+        );
+        assert!(text.contains("test quiet skip ... skipped\n"), "{text}");
+
+        let mut fake = Fake::default();
+        fake.lists
+            .insert(PathBuf::from("C:/p/app.exe"), Ok(listing(&["t"])));
+        fake.tests.insert(
+            "t".into(),
+            Script {
+                cannot_start: true,
+                ..passing()
+            },
+        );
+        let (summary, text) = run_with(&fake, &[exe("C:/p/app.exe")], 1, false, None);
+        assert_eq!(summary.failed, 1, "{text}");
+        assert!(
+            text.contains("---- t ----\ncannot run app.exe: gone\n"),
+            "{text}"
+        );
+    }
+
+    /// The system launcher gives a process exactly the environment it is
+    /// handed and the directory it is told, and reports its exit code and
+    /// both streams.
+    ///
+    /// Mutation: let the process inherit cuno's environment, run it
+    /// elsewhere, or drop its exit code or stderr; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn the_system_launcher_runs_as_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let comspec =
+            std::env::var_os("ComSpec").unwrap_or_else(|| "C:\\Windows\\System32\\cmd.exe".into());
+        let mut pairs = vec![(OsString::from("CUNO_PROBE"), OsString::from("given"))];
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            pairs.push((OsString::from("SystemRoot"), root));
+        }
+        let env = Env::from_pairs(pairs, NameCase::Insensitive);
+        let args: Vec<OsString> = [
+            "/D",
+            "/C",
+            "echo %CUNO_PROBE% %PATH%& cd& echo to stderr 1>&2& exit 3",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        let out = SystemLauncher
+            .launch(Path::new(&comspec), &args, &env, dir.path())
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+        let mut lines = stdout.lines();
+        assert_eq!(lines.next(), Some("given %PATH%"), "{stdout}");
+        let cwd = PathBuf::from(lines.next().unwrap());
+        assert!(
+            cuno_core::paths::same(&cwd, dir.path(), NameCase::Insensitive),
+            "{stdout}"
+        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("to stderr"));
+        assert_eq!(out.code, Some(3));
     }
 }

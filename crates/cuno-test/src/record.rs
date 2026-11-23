@@ -16,7 +16,7 @@ pub struct Registration {
     /// Its line.
     pub line: u32,
     /// Whether it came through the macro API (`cuno/test.h`).
-    pub from_macro: bool,
+    pub macro_api: bool,
 }
 
 /// A failed check.
@@ -69,7 +69,8 @@ fn fields(line: &str) -> Vec<String> {
     line.split('\t').map(unescape).collect()
 }
 
-/// `\\`, `\t`, `\r` and `\n` back to what they stand for.
+/// `\\`, `\t`, `\r` and `\n` back to what they stand for. Any other escaped
+/// character stands for itself, as nothing the runtime writes needs more.
 fn unescape(field: &str) -> String {
     let mut out = String::with_capacity(field.len());
     let mut chars = field.chars();
@@ -98,7 +99,7 @@ pub fn registrations(text: &str) -> Result<Vec<Registration>, BadRecord> {
             match f.as_slice() {
                 [kind, name, file, number, api] if kind == "test" => {
                     let line_number = number.parse().map_err(|_| BadRecord(line.to_owned()))?;
-                    let from_macro = match api.as_str() {
+                    let macro_api = match api.as_str() {
                         "macro" => true,
                         "modern" => false,
                         _ => return Err(BadRecord(line.to_owned())),
@@ -107,7 +108,7 @@ pub fn registrations(text: &str) -> Result<Vec<Registration>, BadRecord> {
                         name: name.clone(),
                         file: file.clone(),
                         line: line_number,
-                        from_macro,
+                        macro_api,
                     })
                 }
                 _ => Err(BadRecord(line.to_owned())),
@@ -161,13 +162,13 @@ mod tests {
                     name: "add works".into(),
                     file: "C:\\p\\src\\a.cpp".into(),
                     line: 3,
-                    from_macro: false,
+                    macro_api: false,
                 },
                 Registration {
                     name: "tab\there".into(),
                     file: "b.c".into(),
                     line: 12,
-                    from_macro: true,
+                    macro_api: true,
                 },
             ]
         );
@@ -218,5 +219,25 @@ mod tests {
             Ending::Unfinished
         );
         assert_eq!(report(None).unwrap().ending, Ending::Unfinished);
+    }
+
+    /// Every escape is undone, every failure and info is kept in order,
+    /// blank lines are nothing, and a failure with no line number is a
+    /// record cuno cannot read.
+    ///
+    /// Mutation: undo `\r` as anything else, keep only the last failure or
+    /// info or reverse them, refuse a blank line, or accept a failure's bad
+    /// line number; this test fails.
+    #[test]
+    fn records_are_read_whole_and_in_order() {
+        let r = report(Some(
+            "\nfail\ta.c\t1\tfirst\\r\nfail\ta.c\t2\tsecond\ninfo\tone\ninfo\ttwo\ndone\n",
+        ))
+        .unwrap();
+        let messages: Vec<&str> = r.failures.iter().map(|f| f.message.as_str()).collect();
+        assert_eq!(messages, ["first\r", "second"]);
+        assert_eq!(r.infos, ["one", "two"]);
+        assert_eq!(registrations("\n").unwrap(), []);
+        assert!(report(Some("fail\ta.c\tx\tm\n")).is_err());
     }
 }

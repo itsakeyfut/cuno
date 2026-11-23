@@ -54,7 +54,7 @@ pub enum Goal<'a> {
         bin: Option<&'a str>,
     },
     /// `cuno test`'s build: the test executables, every source compiled
-    /// with `CUNO_TEST` (`docs/en/specs/testing.md`, "Running").
+    /// with `CUNO_TEST` (`docs/en/specs/testing.md`, "Execution").
     Test,
 }
 

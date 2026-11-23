@@ -139,7 +139,7 @@ impl std::io::Write for Captured {
 /// The names `exe --list` reports whose place is under `tests/`, the ones
 /// cuno runs from an executable made from `tests/`, or (with `in_tests`
 /// false) the others, the ones it runs from the in-source tests'
-/// (`testing.md`, "Running").
+/// (`testing.md`, "Execution").
 fn listed_where(p: &Project, exe: &Path, in_tests: bool) -> Vec<String> {
     let tests = p.path().join("tests");
     listed_with_files(p, exe)
@@ -332,7 +332,7 @@ fn a_main_under_tests_does_not_replace_the_runner() {
 /// The runner over what the build made, on every compiler: each test runs
 /// alone and is judged by what it reported, a crash fails that test only,
 /// an in-source test runs once though every executable holds it, and the
-/// counts add up (`testing.md`, "Running").
+/// counts add up (`testing.md`, "Execution").
 ///
 /// Mutations, each failing this test: run every listed test from a
 /// `tests/` executable (the in-source test counts three times); trust the
@@ -359,11 +359,11 @@ fn the_runner_judges_what_the_build_made() {
             )
             .file("tests/common/helper.cpp", HELPER);
         let tests = build_tests(&p, name);
-        let executables: Vec<cuno_test::Executable> = tests
+        let executables: Vec<cuno_test::TestExecutable> = tests
             .iter()
-            .map(|t| cuno_test::Executable {
+            .map(|t| cuno_test::TestExecutable {
                 path: t.path.clone(),
-                from_tests: t.file.is_some(),
+                integration: t.file.is_some(),
             })
             .collect();
         let scratch = tempfile::tempdir().unwrap();
@@ -371,7 +371,7 @@ fn the_runner_judges_what_the_build_made() {
         let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut shell = Shell::new(Box::new(Captured(output.clone())), None, &env, false);
         let summary = cuno_test::run(
-            &cuno_test::Run {
+            &cuno_test::TestRun {
                 executables: &executables,
                 filter: None,
                 nocapture: false,

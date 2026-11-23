@@ -2,7 +2,7 @@
 //! name and place, the place compared by the file system rather than by how
 //! the compiler spelled it; in an executable made from `tests/`, only those
 //! placed under `tests/`; and only those the filter names. See
-//! `docs/en/specs/testing.md`, "Common rules" and "Running".
+//! `docs/en/specs/testing.md`, "Common rules" and "Execution".
 
 use std::fmt;
 use std::path::Path;
@@ -77,7 +77,7 @@ pub fn shown(file: &str, root: &Path, case: NameCase) -> String {
 /// under `root`'s `tests/`) whose name contains `filter`.
 pub fn tests_to_run(
     registrations: &[Registration],
-    from_tests: bool,
+    integration: bool,
     filter: Option<&str>,
     root: &Path,
     case: NameCase,
@@ -99,7 +99,10 @@ pub fn tests_to_run(
                 places: [at(first), at(r)],
             });
         }
-        if first.from_macro || r.from_macro {
+        // One place twice is one test for `test.hpp`, which is how a test in
+        // a header is meant to be written; the macro API does not support
+        // that, and says so (`testing.md`, "Common rules").
+        if first.macro_api || r.macro_api {
             return Err(ListError::InHeader {
                 name: r.name.clone(),
                 place: at(r),
@@ -113,7 +116,7 @@ pub fn tests_to_run(
                 .iter()
                 .find(|r| &r.name == name)
                 .expect("a name comes from a registration");
-            !from_tests || Place::of(Path::new(&r.file), case).within(&tests_dir)
+            !integration || Place::of(Path::new(&r.file), case).within(&tests_dir)
         })
         .filter(|name| filter.is_none_or(|f| name.contains(f)))
         .collect())
@@ -123,12 +126,12 @@ pub fn tests_to_run(
 mod tests {
     use super::*;
 
-    fn registration(name: &str, file: &str, line: u32, from_macro: bool) -> Registration {
+    fn registration(name: &str, file: &str, line: u32, macro_api: bool) -> Registration {
         Registration {
             name: name.into(),
             file: file.into(),
             line,
-            from_macro,
+            macro_api,
         }
     }
 
@@ -188,7 +191,7 @@ mod tests {
 
     /// An executable made from `tests/` runs only the tests placed under
     /// `tests/`, so the in-source tests it also holds run once, from the
-    /// in-source tests' executable (`testing.md`, "Running").
+    /// in-source tests' executable (`testing.md`, "Execution").
     ///
     /// Mutation: run every registration from a `tests/` executable, or
     /// compare the place as spelled; this test fails.
@@ -223,5 +226,56 @@ mod tests {
             tests_to_run(&list, false, Some("add"), Path::new(ROOT), CASE).unwrap(),
             ["add works"]
         );
+    }
+
+    /// A place is a file and a line: the same name in the same file at
+    /// another line, or at the same line of another file, is two tests; a
+    /// pair of which only one came through the macro API is still refused
+    /// as compiled twice, with the whole of its help.
+    ///
+    /// Mutation: compare files only or lines only, require both
+    /// registrations to be macro ones, or cut the help short; this test
+    /// fails.
+    #[test]
+    fn a_place_is_a_file_and_a_line() {
+        let root = Path::new(ROOT);
+        let lines = [
+            registration("x", "C:/p/src/a.cpp", 1, false),
+            registration("x", "C:/p/src/a.cpp", 2, false),
+        ];
+        assert!(matches!(
+            tests_to_run(&lines, false, None, root, CASE),
+            Err(ListError::SameName { .. })
+        ));
+        let files = [
+            registration("x", "C:/p/src/a.cpp", 1, false),
+            registration("x", "C:/p/src/b.cpp", 1, false),
+        ];
+        assert!(matches!(
+            tests_to_run(&files, false, None, root, CASE),
+            Err(ListError::SameName { .. })
+        ));
+        let mixed = [
+            registration("x", "C:/p/src/h.h", 1, false),
+            registration("x", "C:/p/src/h.h", 1, true),
+        ];
+        let err = tests_to_run(&mixed, false, None, root, CASE).unwrap_err();
+        assert_eq!(
+            err.help(),
+            "cuno_test does not support tests in headers; move it into a source file, or use cuno/test.hpp"
+        );
+    }
+
+    /// A place outside the root is shown as the compiler spelled it.
+    ///
+    /// Mutation: show nothing, or a path relative to somewhere else; this
+    /// test fails.
+    #[test]
+    fn a_place_outside_the_root_is_shown_as_spelled() {
+        assert_eq!(
+            shown("D:/other/x.cpp", Path::new(ROOT), CASE),
+            "D:/other/x.cpp"
+        );
+        assert_eq!(shown("C:/p/src/x.cpp", Path::new(ROOT), CASE), "src/x.cpp");
     }
 }
