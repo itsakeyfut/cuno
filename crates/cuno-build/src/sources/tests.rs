@@ -401,3 +401,23 @@ fn the_target_directory_through_a_junction_is_not_a_source() {
     let s = classify(&root, &m, &root.join("alias"), HostOs::Windows).unwrap();
     assert!(s.body.is_empty(), "{:?}", s.body);
 }
+
+/// On Windows, `src/Main.cpp` is a `main` entry file too: with `[[bin]]`
+/// written and not listing it, it is warned about rather than put in the
+/// body (`project-layout.md`, "Source collection and linking").
+///
+/// Mutation: compare the entry file's name with case; this test fails.
+#[test]
+fn an_unlisted_main_in_another_case_is_warned_about() {
+    let (_d, root, m) = project(
+        "c++",
+        "[[bin]]
+name = \"game\"
+path = \"src/game.cpp\"
+",
+        &["src/Main.cpp", "src/game.cpp"],
+    );
+    let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+    assert!(s.body.is_empty(), "{:?}", s.body);
+    assert_eq!(s.warnings.len(), 1, "{:?}", s.warnings);
+}
