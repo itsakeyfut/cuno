@@ -138,14 +138,23 @@ fn color_before_parsing(args: &[OsString]) -> Option<ColorChoice> {
     let mut found = None;
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
+        // `Some(None)` is a `--color` whose value is missing or not
+        // Unicode, which counts as none like any other invalid value.
         let value = match arg.to_str() {
             Some("--") => break,
-            Some("--color") => args.next().and_then(|v| v.to_str()),
-            Some(arg) => arg.strip_prefix("--color="),
-            None => continue,
+            Some("--color") => Some(args.next().and_then(|v| v.to_str())),
+            Some(arg) => arg.strip_prefix("--color=").map(Some),
+            None => arg
+                .as_encoded_bytes()
+                .starts_with(b"--color=")
+                .then_some(None),
         };
         if let Some(value) = value {
-            found = Some(Color::from_str(value, false).ok().map(ColorChoice::from));
+            found = Some(
+                value
+                    .and_then(|v| Color::from_str(v, false).ok())
+                    .map(ColorChoice::from),
+            );
         }
     }
     found.flatten()
@@ -204,7 +213,10 @@ fn main() {
     // again with stdout's color.
     let parse = |color| Cli::command().color(color).try_get_matches_from(&args);
     let cli = match parse(to_stderr) {
-        Ok(matches) => Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+        // Formatted against the command, as `Cli::parse` does, so such an
+        // error would carry the usage line too.
+        Ok(matches) => Cli::from_arg_matches(&matches)
+            .unwrap_or_else(|e| e.format(&mut Cli::command().color(to_stderr)).exit()),
         Err(error) => match error.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
                 parse(to_stdout).err().unwrap_or(error).exit()
@@ -391,8 +403,9 @@ mod tests {
     }
 
     /// Mutation: read only one of the two spellings, take the first
-    /// `--color` instead of the last, read past `--`, or keep an invalid
-    /// value; this test fails.
+    /// `--color` instead of the last, read past `--`, or keep an earlier
+    /// value past an invalid one, a missing one or one that is not Unicode;
+    /// this test fails.
     #[test]
     fn the_color_is_read_before_parsing() {
         assert_eq!(
@@ -411,6 +424,22 @@ mod tests {
         assert_eq!(given(&["--color", "bogus"]), None);
         assert_eq!(given(&["--color=never", "--color=bogus"]), None);
         assert_eq!(given(&["build"]), None);
+        assert_eq!(given(&["--color=always", "--color"]), None);
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let lone = OsString::from_wide(&[0xD800]);
+            let mut equals = OsString::from("--color=");
+            equals.push(&lone);
+            for bad in [vec![OsString::from("--color"), lone], vec![equals]] {
+                let args: Vec<OsString> = ["cuno", "--color", "always"]
+                    .into_iter()
+                    .map(OsString::from)
+                    .chain(bad)
+                    .collect();
+                assert_eq!(color_before_parsing(&args), None, "{args:?}");
+            }
+        }
     }
 
     /// Mutation: hand clap its own `Auto`, let NO_COLOR beat a choice given,
