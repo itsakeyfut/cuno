@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use cuno_core::{ColorChoice, CunoError, Env, cuno_home};
+use cuno_core::{ColorChoice, CunoError, Env, NameCase, cuno_home, paths};
 use cuno_toolchain::flags::{BuildSettings, ProfileSettings};
 use cuno_toolchain::llvm::ExplicitPaths;
 use cuno_toolchain::select::{Choices, Constraints, ProjectChoices};
@@ -88,6 +88,7 @@ impl Settings {
 /// user-level file's.
 pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let Inputs { cwd, env, cli } = inputs;
+    let case = env.case();
     let home = cuno_home(env).map_err(|e| ConfigError {
         message: e.to_string(),
         location: None,
@@ -112,7 +113,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     // project's.
     let same_file = project
         .as_ref()
-        .is_some_and(|(p, _, _)| same_path(&p.config(), &user_file));
+        .is_some_and(|(p, _, _)| paths::same(&p.config(), &user_file, case));
     let user = if same_file {
         Config::default()
     } else {
@@ -156,7 +157,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         }
         let resolved = resolve_path(&dir, cwd)
             .map_err(|_| invalid("which depends on the current drive".to_owned()))?;
-        check_output_dir(&resolved, name, None, guarded, project.is_some())?;
+        check_output_dir(&resolved, name, None, guarded, project.is_some(), case)?;
         layers.push((resolved, name.to_owned()));
     }
     let project_files = project.as_ref().map(|(p, m, c)| {
@@ -186,11 +187,12 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
             Some(&dir.location),
             guarded,
             project.is_some(),
+            case,
         )?;
         // A file a cloned project carries must not make `cuno clean`
         // delete what lies outside it (build.md, "Output directory"). The
         // user's own config, the environment and the command line may.
-        if carried_by_project && !holds(guarded, &dir.path) {
+        if carried_by_project && !paths::within(&dir.path, guarded, case) {
             return Err(ConfigError {
                 message: format!(
                     "{source} points outside the project: {}",
@@ -256,8 +258,9 @@ fn check_output_dir(
     location: Option<&Location>,
     guarded: &Path,
     has_project: bool,
+    case: NameCase,
 ) -> Result<(), ConfigError> {
-    if !holds(dir, guarded) {
+    if !paths::within(guarded, dir, case) {
         return Ok(());
     }
     Err(ConfigError {
@@ -271,56 +274,6 @@ fn check_output_dir(
             "choose a directory inside the project, such as `target`; `cuno clean` deletes the output directory".to_owned(),
         ),
     })
-}
-
-/// Whether `outer` is `inner` or one of its ancestors, as the file system
-/// sees them: see [`real`].
-fn holds(outer: &Path, inner: &Path) -> bool {
-    real(inner).starts_with(real(outer))
-}
-
-/// `path` as the file system names it, whether or not it exists yet: `.`
-/// and `..` resolved, and its longest existing part canonicalized, so a
-/// path spelled in another case on Windows, or through a link, compares
-/// as the directory it is. The part that does not exist yet is kept as
-/// written.
-fn real(path: &Path) -> PathBuf {
-    let path = lexical(path);
-    let mut existing = path.as_path();
-    let mut rest = Vec::new();
-    loop {
-        if let Ok(canonical) = std::fs::canonicalize(existing) {
-            return rest.iter().rev().fold(canonical, |p, part| p.join(part));
-        }
-        match (existing.parent(), existing.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                existing = parent;
-            }
-            _ => return path,
-        }
-    }
-}
-
-fn same_path(a: &Path, b: &Path) -> bool {
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| lexical(p));
-    canonical(a) == canonical(b)
-}
-
-/// `path` with `.` dropped and each `..` taking the part before it away.
-fn lexical(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 impl Manifest {

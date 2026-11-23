@@ -375,3 +375,29 @@ fn layout_errors_exit_3_with_help() {
     }
     assert_eq!(errors[5].to_string(), "cannot read src: denied");
 }
+
+/// Makes `link` a junction to `target`, which needs no privilege on Windows.
+#[cfg(windows)]
+fn junction(link: &Path, target: &Path) {
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+}
+
+/// The target directory named through a junction to it is still not read
+/// as sources.
+///
+/// Mutation: compare the directories walked with the target directory as
+/// written, without following links; this test fails.
+#[cfg(windows)]
+#[test]
+fn the_target_directory_through_a_junction_is_not_a_source() {
+    let (_d, root, m) = project("c++", "", &["src/main.cpp", "src/out/stale.cpp"]);
+    junction(&root.join("alias"), &root.join("src").join("out"));
+    let s = classify(&root, &m, &root.join("alias"), HostOs::Windows).unwrap();
+    assert!(s.body.is_empty(), "{:?}", s.body);
+}

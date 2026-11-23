@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
+use cuno_core::paths;
+
 use crate::{HostOs, ToolchainError, Version};
 
 pub use crate::compiler::CompilerKind;
@@ -244,7 +246,7 @@ pub fn select(
     // even for Clang.
     let newest_toolset = match host {
         HostOs::Windows => {
-            let toolsets = usable_toolsets(found)?;
+            let toolsets = usable_toolsets(found, host)?;
             first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned()
         }
         HostOs::Other => None,
@@ -291,7 +293,7 @@ pub fn copy_of(
                 return Err(ToolchainError::NoVisualStudio);
             }
             candidates.extend(
-                usable_toolsets(found)?
+                usable_toolsets(found, host)?
                     .into_iter()
                     .map(|t| (t.cl(), t.cl_version, Some(t))),
             );
@@ -372,12 +374,16 @@ fn first_newest<T>(items: impl Iterator<Item = (T, Version)>) -> Option<T> {
 
 /// The toolsets of the complete, non-preview installations (only the one in
 /// `[toolchain.paths] msvc`, when written).
-fn usable_toolsets(found: Found<'_>) -> Result<Vec<MsvcToolset>, ToolchainError> {
+fn usable_toolsets(found: Found<'_>, host: HostOs) -> Result<Vec<MsvcToolset>, ToolchainError> {
     let installs: Vec<&VsInstallation> = found
         .installs
         .iter()
         .filter(|i| i.complete && !i.prerelease)
-        .filter(|i| found.explicit_msvc.is_none_or(|dir| same_dir(dir, &i.path)))
+        .filter(|i| {
+            found
+                .explicit_msvc
+                .is_none_or(|dir| paths::same(dir, &i.path, host.name_case()))
+        })
         .collect();
     if installs.is_empty() {
         return Err(match found.explicit_msvc {
@@ -391,11 +397,6 @@ fn usable_toolsets(found: Found<'_>) -> Result<Vec<MsvcToolset>, ToolchainError>
         .into_iter()
         .flat_map(|i| i.toolsets.iter().cloned())
         .collect())
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
-    canonical(a) == canonical(b)
 }
 
 /// The version of a tool that ran and is a release, or why it is not one.
