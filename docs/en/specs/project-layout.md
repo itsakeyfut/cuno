@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 0f2829c294c68a44d4d7691be57a8e0f54da1e64 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 799c2ca81f80c517f0e87619329ac2d230b37566 -->
 
 # Project Kinds and Layout
 
@@ -78,10 +78,10 @@ sources = ["Private"]
   - The part that exists in the file system is compared as the file system spells it. On Windows, only the part that does not exist yet is compared without regard to case.
     - Rationale: the characters a file system treats as the same do not match any case table cuno could hold (on NTFS, `σ` and `ς` are two files). Comparing by a table would treat two files as one.
   - Paths passed to compilers and paths displayed stay as written. Where they lead is used only for comparing.
-  - When `src/` itself is a link, `src/` and everything in it are treated as inside the project even if it leads outside (classifying sources, where object files go, checking a `[[bin]]` `path`). A link to a directory inside `src/` is still not read, as below.
+  - When `src/` itself is a link, `src/` and everything in it are treated as inside the project even if it leads outside (classifying sources, where object files go, checking a `[[bin]]` `path`). A link to a directory inside `src/` is still not read, as below. The same holds for `tests/`.
     - Rationale: so that a setup that links shared sources in as `src/` builds as it is.
   - An object file's place is decided by where the source's directory leads and where the source file's name sits. A source file that is itself a link pointing outside the project is still compiled as a source in `src/`. A `[[bin]]` `path` naming a link to a file outside the project, on the other hand, is an error, since the entry file is outside the project.
-- A link to a directory inside `src/` (a symbolic link or a junction) is not read, and cuno warns about it.
+- A link to a directory inside `src/` or `tests/` (a symbolic link or a junction) is not read, and cuno warns about it.
   - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
 
 ### Where the package's code lives
@@ -105,17 +105,17 @@ The following are excluded:
 | Artifact | What is linked |
 |---|---|
 | Executable | Its entry file + package body |
-| In-source test executable | Test runner + package body (compiled with `CUNO_TEST` defined; entry files are not included) |
-| Integration test executable in `tests/` (one per file) | Test runner + package body (compiled without `CUNO_TEST`) + that test file + the files in subdirectories of `tests/` |
+| In-source test executable | Test runner + package body (entry files are not included) |
+| Integration test executable in `tests/` (one per file) | Test runner + package body + that test file + the files in subdirectories of `tests/` |
 
 - **Entry files are not included in test builds**, to avoid a collision between the test runner's `main` and the user's `main`.
   - Other approaches considered and why they were rejected:
     - Renaming the user's `main` in test builds (`/Dmain=...`): SDL3 itself does `#define main SDL_main`, which collides. Fatal for game development.
     - Replacing the entry point via linker settings: entangled with C runtime initialization, and fragile across compilers.
   - If tests are written in an entry file, cuno warns that they will not be run.
-- **Executables in `tests/` link the package body compiled without `CUNO_TEST`** (the same objects as a normal build). In-source tests go only into the in-source test executable.
-  - Rationale: linking the body compiled with `CUNO_TEST` would register the in-source tests in every executable in `tests/` as well, running the same tests once per executable.
-  - Cost: the body is compiled two ways (with `CUNO_TEST` and without); the one without is shared with `cuno build`, so it adds nothing once already built. Helper functions written inside `#ifdef CUNO_TEST` cannot be used from files in `tests/`.
+- **Every file of the test build is compiled with `CUNO_TEST` defined, and the package body is compiled once and shared by every test executable.** The in-source tests are therefore registered in the executables in `tests/` as well, but cuno does not run them there ("Execution" in [testing.md](testing.md)).
+  - Rationale: compiling the files in `tests/` and the body with different definitions makes a type or inline function whose shape changes under `#ifdef CUNO_TEST` exist two ways in one program, so tests of correct code fail or tests of wrong code pass. No compiler or linker detects this.
+  - Helper functions written inside `#ifdef CUNO_TEST` can be used from files in `tests/` as well.
 - The library kind (static / shared / header-only) is specified with `[lib] kind` in `cuno.toml`.
 
 ## Open questions
