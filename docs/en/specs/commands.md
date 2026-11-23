@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 61beaf8c3543cf3857c6b3acb69ee4d6e1eef1cc -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob a456a2eca9bf07daefd952b4e1007dee4d99f914 -->
 
 # Commands
 
@@ -80,9 +80,9 @@ Values of `--color`:
   3. The `NO_COLOR` environment variable. If it is set, it is treated as `never`, even when its value is empty
   4. The default `auto`
   - Reason: under the NO_COLOR convention, a setting the user gave explicitly in arguments or a configuration file takes precedence over NO_COLOR. You can keep `NO_COLOR` set for the whole environment and still color cuno alone.
-- cuno's own output (errors, warnings, progress) does not read the `CLICOLOR` / `CLICOLOR_FORCE` environment variables. To color output that is not a terminal, use `--color always` or `[term] color = "always"`.
+- The `CLICOLOR` / `CLICOLOR_FORCE` environment variables are not read. To color output that is not a terminal, use `--color always` or `[term] color = "always"`.
   - Reason: there are already two ways to always color, and this avoids adding more environment variables to read and more precedence rules.
-- Exception: `--help`, `cuno` with no command, and usage errors (exit code 2) do not follow the order above. The library that parses the arguments decides their color by its own rules, from whether the output is a terminal and the environment variables (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`); neither `--color` nor `[term] color` applies.
+- `--help`, `cuno` with no command, and usage errors (exit code 2) are printed before the configuration files are read, so `[term] color` does not apply; they follow `--color`, `NO_COLOR` and the default `auto`, in that order. When the value of `--color` itself is invalid, the color of that usage error is decided as if `--color` were absent.
 - Errors shown before the configuration files have been read (such as errors in a configuration file itself) are colored as decided by `--color` and `NO_COLOR` alone.
 
 ### Without a command (`--version` / `--help` / no arguments)
