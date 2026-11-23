@@ -280,6 +280,7 @@ fn diagnose(
         Profile::Dev,
         cwd,
         host,
+        // Not written by doctor, which only looks: see `toolchain::ready`.
         &bundled::include_dir(&home),
     ) else {
         return diagnosed;

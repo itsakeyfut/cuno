@@ -124,7 +124,8 @@ mod tests {
         assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), old);
     }
 
-    /// Mutation: map the error to another exit class; this test fails.
+    /// Mutation: map the error to another exit class, or drop its help;
+    /// this test fails.
     #[test]
     fn an_unwritable_home_is_a_setup_problem() {
         let home = tempfile::tempdir().unwrap();
@@ -133,5 +134,9 @@ mod tests {
         let err = expand(home.path()).unwrap_err();
         assert_eq!(err.exit_class(), ExitClass::Setup);
         assert!(err.to_string().starts_with("cannot write `"), "{err}");
+        assert_eq!(
+            err.help().as_deref(),
+            Some("make the cuno home writable, or set CUNO_HOME to a directory that is")
+        );
     }
 }

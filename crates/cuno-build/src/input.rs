@@ -125,7 +125,8 @@ pub(crate) mod tests {
     use super::*;
     use cuno_toolchain::flags::compile_flags;
 
-    /// Where the tests say the bundled headers are.
+    /// A bundled include directory for the tests' settings. Only compared,
+    /// never looked at on disk.
     pub(crate) const BUNDLED: &str = "C:/home/include/0.0.0";
 
     fn manifest(toml: &str) -> Manifest {
