@@ -1,0 +1,12 @@
+[package]
+name = "per-compiler-flags"
+version = "0.1.0"
+
+[build.msvc]
+flags = ["/DBUILT_BY=1"]
+
+[build.clang]
+flags = ["-DBUILT_BY=2"]
+
+[build.clang-cl]
+flags = ["/DBUILT_BY=3"]

@@ -1,0 +1,7 @@
+[package]
+name = "edition-release-cpp"
+version = "0.1.0"
+edition = "c++23"
+
+[profile.release.build]
+defines = ["EXAMPLE_RELEASE"]

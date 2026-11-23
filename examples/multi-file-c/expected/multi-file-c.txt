@@ -1,0 +1,1 @@
+square 3: 9, rectangle 2x5: 10
