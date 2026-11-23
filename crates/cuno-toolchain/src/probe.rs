@@ -559,4 +559,31 @@ mod tests {
         assert!(args.iter().any(|a| a == "/clang:-std=c++23"), "{args:?}");
         assert!(!args.iter().any(|a| a == "/std:c++23"), "{args:?}");
     }
+
+    /// With MSVC selected and `lto` on, clang-tidy is not given `/GL`,
+    /// which clang-cl reports as unused when it only analyses.
+    ///
+    /// Mutation: keep `/GL` in the clang-cl reading; this test fails.
+    #[test]
+    fn clang_tidy_is_not_given_link_time_optimization() {
+        let root = tempfile::tempdir().unwrap();
+        let mut settings = no_rtti();
+        settings.1.lto = true;
+        let compile = input(CompilerKind::Msvc, &settings, Mode::Check);
+        let built = strings(compile_args(&compile, Path::new("x.cpp"), None));
+        assert!(built.iter().any(|a| a == "/GL"), "{built:?}");
+        let run = answers(true, "", "");
+        let tidy = LlvmChoice {
+            path: "clang-tidy".into(),
+            version: v(22, 1, 8),
+        };
+        let inputs = ProbeInputs {
+            scratch: root.path(),
+            input: &compile,
+            cwd: root.path(),
+        };
+        check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+        let args = run.args.borrow().clone();
+        assert!(!args.iter().any(|a| a == "/GL"), "{args:?}");
+    }
 }

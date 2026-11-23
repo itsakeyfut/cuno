@@ -230,7 +230,9 @@ pub fn dependency_args(kind: CompilerKind, file: &Path) -> Vec<OsString> {
 /// - `/c` is written `-c`, which cl takes too: clang-cl warns that `/c` is
 ///   unused when it only analyses, and `/WX` makes that an error;
 /// - for cl, a standard switch clang-cl does not know (`/std:c++23`,
-///   `/std:clatest`) is written as clang-cl's own for the same standard.
+///   `/std:clatest`) is written as clang-cl's own for the same standard;
+/// - for cl, `/GL` (from `lto`) is left out: link-time optimization means
+///   nothing to an analysis, and clang-cl warns that it is unused.
 pub fn for_clang_tools(kind: CompilerKind, args: &[OsString]) -> Vec<OsString> {
     let mut out = args.to_vec();
     match kind.syntax() {
@@ -245,6 +247,7 @@ pub fn for_clang_tools(kind: CompilerKind, args: &[OsString]) -> Vec<OsString> {
     }
     match kind {
         CompilerKind::Msvc => {
+            out.retain(|arg| arg != "/GL");
             for arg in &mut out {
                 let same = Edition::ALL
                     .iter()
