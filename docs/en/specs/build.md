@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 7eb8d4724ebf20a364930789c0b73932474bb429 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob a89e60283b0498443465a83a2eb9fd3086b1887d -->
 
 # Build
 
@@ -204,6 +204,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - Test builds: `target/<profile name>/test/<package name>/`. Kept separate so that objects built with `CUNO_TEST` defined do not mix with normal build objects. The package name is included for the same reason as for intermediate files. As with intermediate files, objects are placed by the source's position in the project (`target/debug/test/<package name>/src/calc.cpp.obj`).
     - Test executables go in `test/<package name>/bin/`: `<package name>` for in-source tests, and `tests-foo` for `tests/foo.cpp` (each with the platform's executable suffix; `.exe` on Windows).
     - Objects of the bundled runtime ([testing.md](testing.md)) go in `test/<package name>/cuno/`.
+    - The files through which `cuno test` receives test results go in a directory made for each run under `test/`, and are removed when the run ends. This keeps two `cuno test` running at the same time from reading each other's results.
     - Reason: so that the executables do not overlap with where objects go (`src/`, `tests/`).
     - When two test executables would have the same name (`tests/foo.c` and `tests/foo.cpp`, or a package named `tests-foo` and `tests/foo.cpp`, etc.), it is an error (exit code 3) that names both files (`` error: two test executables are named `tests-foo`: src/ and tests/foo.cpp ``; in-source tests are shown as `src/`). Names are compared the same way as for duplicate executable names ([project-layout.md](project-layout.md)): case-insensitively on Windows.
       - Reason: building them under the same name would let one link overwrite the other, and that test would never run while the run is still reported as a success.
