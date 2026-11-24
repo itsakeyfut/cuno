@@ -149,7 +149,8 @@ macro_rules! choices {
                 match self { $($name::$variant => $text),+ }
             }
 
-            fn parse(text: &str) -> Option<$name> {
+            /// The value written as `text`, if any.
+            pub fn parse(text: &str) -> Option<$name> {
                 Self::ALL.iter().find(|(_, t)| *t == text).map(|(v, _)| *v)
             }
         }
