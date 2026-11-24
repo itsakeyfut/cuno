@@ -128,6 +128,19 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 - 空の `tests/` / `examples/` / `benches/` は作らない。
 
+#### 表示とエラー
+
+- 作り終えたら ``     Created `<名前>` package`` を表示する（`-q` では出さない）。
+- 下の表のエラーは終了コード 2。ファイルやディレクトリを作れない場合は終了コード 3。
+
+| 場合 | メッセージ |
+|---|---|
+| 名前が規則に合わない | `` error: `<名前>` is not a valid package name `` と `help: a package name starts with a letter and has only letters, digits, - and _`。名前がディレクトリ名から来た場合は `help: name the package with --name` も出す |
+| 作成先がある | `` error: `<パス>` already exists `` |
+| `--edition` が `--lang` と合わない | `` error: `<規格>` is not a standard of <言語> `` と `help: use --lang <規格の言語>, or an edition of <言語>: <その言語の規格の一覧>` |
+
+- git が見つからない場合は `warning: git was not found; the package is not under version control` を出す。`git init` が失敗した場合も、`warning: git init failed: <git の出力>` の警告にとどめる（ファイルは作り終えているため、作ったものは消さない）。
+
 ### `cuno run`
 
 | オプション | 説明 |
