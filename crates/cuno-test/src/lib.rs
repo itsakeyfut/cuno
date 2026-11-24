@@ -94,8 +94,6 @@ pub struct TestRun<'a> {
     /// The current directory, which executables' paths are shown relative
     /// to, as `cuno run` shows its executable (`commands.md`, "`cuno test`").
     pub cwd: &'a Path,
-    /// `-q`: leave out the `Running` lines.
-    pub quiet: bool,
     /// The environment the tests get, as cuno was given it.
     pub env: &'a Env,
     /// A directory of cuno's in which the run makes a directory of its own
@@ -192,12 +190,10 @@ pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
         }
     };
     for (index, exe) in r.executables.iter().enumerate() {
-        if !r.quiet {
-            shell.status(
-                "Running",
-                format!("`{}`", shown(&exe.path, r.cwd).display()),
-            );
-        }
+        shell.status(
+            "Running",
+            format!("`{}`", shown(&exe.path, r.cwd).display()),
+        );
         match list(r, &results, index, exe) {
             Ok(names) => run_executable(r, &results, index, &names, shell, &mut summary),
             Err(failure) => {
@@ -624,7 +620,6 @@ mod tests {
                 jobs,
                 root: Path::new(ROOT),
                 cwd: Path::new(ROOT),
-                quiet: false,
                 env: &env,
                 scratch,
                 case: NameCase::Insensitive,

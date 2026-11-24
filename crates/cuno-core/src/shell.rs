@@ -35,6 +35,8 @@ pub struct Shell {
     /// Whether `out` is a terminal.
     terminal: bool,
     color: bool,
+    /// `-q`: status lines are left out.
+    quiet: bool,
 }
 
 impl Shell {
@@ -59,6 +61,7 @@ impl Shell {
             no_color: env.get("NO_COLOR").is_some(),
             terminal: out_is_terminal,
             color: false,
+            quiet: false,
         };
         shell.configure(None);
         shell
@@ -73,6 +76,16 @@ impl Shell {
             Some(ColorChoice::Auto) => self.terminal,
             None => self.terminal && !self.no_color,
         };
+    }
+
+    /// Applies `-q`: from now on [`Shell::status`] writes nothing, and errors,
+    /// warnings, help and other programs' output are written as before.
+    /// Called once, before anything is written. What each command leaves out
+    /// under `-q` is in `docs/en/specs/commands.md`, under each command (for
+    /// example "`cuno build` / `cuno check`" and "What `cuno doctor`
+    /// prints"); every line it leaves out is a status line.
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.quiet = quiet;
     }
 
     /// Whether this shell writes color escape codes.
@@ -96,8 +109,12 @@ impl Shell {
     }
 
     /// A status line: `verb` right-aligned in 12 columns, then `message`, as
-    /// in `   Compiling mygame v0.1.0`.
+    /// in `   Compiling mygame v0.1.0`. Nothing under `-q`
+    /// ([`Shell::set_quiet`]).
     pub fn status(&mut self, verb: &str, message: impl Display) {
+        if self.quiet {
+            return;
+        }
         let verb = self.paint(BOLD_GREEN, &format!("{verb:>12}"));
         self.write(format_args!("{verb} {message}"));
     }
@@ -169,6 +186,33 @@ mod tests {
             Shell::new(Box::new(out.clone()), choice, &env, terminal),
             out,
         )
+    }
+
+    /// Under `-q` a status line is left out, and everything else is still
+    /// written.
+    ///
+    /// Mutation: ignore `quiet` in `status`, or return early from `error`,
+    /// `warning`, `help` or `raw` too; this test fails.
+    #[test]
+    fn quiet_leaves_out_status_lines_only() {
+        let (mut sh, out) = shell(Some(ColorChoice::Never), &[], false);
+        sh.set_quiet(true);
+        sh.status("Compiling", "mygame v0.1.0");
+        sh.error("no compiler found");
+        sh.help("install Build Tools");
+        sh.warning("unused key");
+        sh.raw(
+            b"main.cpp(1): note
+",
+        );
+        assert_eq!(
+            out.text(),
+            "error: no compiler found
+help: install Build Tools
+warning: unused key
+main.cpp(1): note
+"
+        );
     }
 
     /// Mutation: change a label in `error`, `warning`, `help` or `status`,

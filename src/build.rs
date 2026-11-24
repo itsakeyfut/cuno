@@ -39,8 +39,6 @@ pub struct BuildArgs {
 pub struct Verbosity {
     /// `-v`: the command of each step.
     pub verbose: bool,
-    /// `-q`: errors, warnings and the compilers' output only.
-    pub quiet: bool,
 }
 
 /// What a build command does once the project is built.
@@ -155,7 +153,6 @@ pub fn build(
         bundled: &bundled,
         jobs,
         verbose,
-        quiet: verbosity.quiet,
         started,
         toolchain: Toolchain {
             kind: selected.kind,
@@ -192,7 +189,6 @@ pub fn build(
                 jobs,
                 root,
                 cwd,
-                quiet: verbosity.quiet,
                 // The environment cuno was given, as `cuno run` passes it.
                 env,
                 scratch: &scratch,
@@ -208,10 +204,8 @@ pub fn build(
     let (Some(exe), Some(args)) = (built.exe, run) else {
         return Ok(0);
     };
-    if !verbosity.quiet {
-        let shown = exe.strip_prefix(cwd).unwrap_or(&exe);
-        shell.status("Running", format!("`{}`", shown.display()));
-    }
+    let shown = exe.strip_prefix(cwd).unwrap_or(&exe);
+    shell.status("Running", format!("`{}`", shown.display()));
     // The environment cuno was given, not the compiler's; the standard
     // streams are left connected (commands.md, "`cuno run`").
     let status = std::process::Command::new(&exe)

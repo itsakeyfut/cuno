@@ -20,21 +20,19 @@ use crate::scratch;
 use crate::toolchain::{self, ProbeCompile};
 
 /// Prints `error:` and `help:` and counts problems, and prints the
-/// findings that are not problems unless `-q` was given.
+/// findings that are not problems as status lines, which the shell leaves
+/// out under `-q` (`commands.md`, "What `cuno doctor` prints").
 struct Problems<'a> {
     shell: &'a mut Shell,
     count: usize,
-    /// `-q`: only warnings and problems are shown (`commands.md`, "What
-    /// `cuno doctor` prints").
-    quiet: bool,
 }
 
 impl Problems<'_> {
-    /// A finding that is not a problem, such as `Selected` or `Info`.
+    /// A finding that is not a problem, such as `Selected` or `Info`: a
+    /// status line, so `-q` leaves it out. Kept beside [`Problems::report`]
+    /// so each finding says which of the two it is.
     fn status(&mut self, verb: &str, message: impl std::fmt::Display) {
-        if !self.quiet {
-            self.shell.status(verb, message);
-        }
+        self.shell.status(verb, message);
     }
 
     fn report(&mut self, error: &dyn CunoError) {
@@ -53,14 +51,9 @@ pub fn doctor(
     env: &Env,
     cwd: &Path,
     host: HostOs,
-    quiet: bool,
     shell: &mut Shell,
 ) -> usize {
-    let mut problems = Problems {
-        shell,
-        count: 0,
-        quiet,
-    };
+    let mut problems = Problems { shell, count: 0 };
     let runner = SystemRunner::new();
 
     let cli = CliSettings {
