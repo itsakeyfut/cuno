@@ -226,3 +226,48 @@ impl CunoError for ScratchError {
         Some("set TEMP to a directory that exists and can be written".to_owned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scratch directory is made under the temporary directory the
+    /// caller gives, named for the command, and removed afterwards.
+    ///
+    /// Mutation: make it under `std::env::temp_dir()` instead of `temp`, or
+    /// leave it behind; this test fails.
+    #[test]
+    fn the_scratch_directory_is_made_under_the_given_temporary_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut seen = None;
+        in_scratch(temp.path(), "build", "clang", |dir| {
+            assert!(dir.is_dir(), "{}", dir.display());
+            seen = Some(dir.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let seen = seen.unwrap();
+        assert_eq!(seen.parent(), Some(temp.path()));
+        let name = seen.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("cuno-build-"), "{name}");
+        assert!(!seen.exists(), "the scratch directory was left behind");
+    }
+
+    /// A temporary directory that does not exist is a setup problem naming
+    /// the check, and the check does not run.
+    ///
+    /// Mutation: create the directory with its parents, or run the check
+    /// anyway; this test fails.
+    #[test]
+    fn a_missing_temporary_directory_is_a_setup_problem() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let err = in_scratch(&missing, "doctor", "clang-tidy", |_| {
+            panic!("the check ran without a scratch directory")
+        })
+        .unwrap_err();
+        assert_eq!(err.exit_class(), ExitClass::Setup);
+        assert!(err.to_string().contains(" to check clang-tidy: "), "{err}");
+        assert!(!missing.exists());
+    }
+}
