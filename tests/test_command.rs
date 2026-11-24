@@ -1,6 +1,10 @@
 //! `cuno test` on every compiler here: it builds a package's tests, runs
 //! them, shows the report, and exits 0 only when every test passed. See
 //! docs/en/specs/commands.md, "`cuno test`", and docs/en/specs/testing.md.
+//!
+//! The expected paths (`target\debug\...\calc.exe`) and the crash code
+//! (`0xC0000005`, an access violation) are Windows', where these compilers
+//! run; another host will need its own.
 
 mod support;
 
@@ -20,7 +24,8 @@ fn here(compiler: Compiler) -> bool {
 const MANIFEST: &str = "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n";
 const MAIN: &str = "int add(int a, int b);\nint main() { return add(1, 2) == 3 ? 0 : 1; }\n";
 
-/// `src/calc.cpp` holding in-source tests: `extra` is added to them.
+/// `src/calc.cpp` holding in-source tests: `extra` is added to them, from
+/// line 8, which the failure places asserted below count on.
 fn calc(extra: &str) -> String {
     format!(
         "#include <cstdio>\n\
@@ -155,6 +160,112 @@ fn a_failed_build_exits_1() {
             "{name}:\n{}",
             run.stderr
         );
-        assert!(!run.stderr.contains("running"), "{name}:\n{}", run.stderr);
+        // No executable listed: nothing ran.
+        assert!(!run.stderr.contains("running "), "{name}:\n{}", run.stderr);
+    }
+}
+
+/// An executable whose tests cannot be listed (here, one name at two
+/// places) makes `cuno test` exit 1 although no test failed
+/// (`commands.md`, "`cuno test`").
+///
+/// Mutation: exit by failed tests alone, ignoring executables that could
+/// not be listed; this test fails.
+#[test]
+fn an_unlisted_executable_exits_1() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let p = project("").file(
+            "src/more.cpp",
+            "#ifdef CUNO_TEST\n#include <cuno/test.hpp>\n\
+             static cuno::test::suite s = [] { cuno::test::test(\"add works\", [] {}); };\n#endif\n",
+        );
+        let run = p.cuno(&["test", "--compiler", name]);
+        assert_eq!(run.code, Some(1), "{name}:\n{}", run.stderr);
+        assert!(
+            run.stderr
+                .contains("error: two tests are named `add works`: "),
+            "{name}:\n{}",
+            run.stderr
+        );
+    }
+}
+
+/// Run from a subdirectory with `--release` and `-q`: the release build's
+/// tests run in the project root with the environment cuno was given, no
+/// `Running` line is shown, and no directory of results is left behind;
+/// without `-q`, the `Running` path is absolute, the executable not being
+/// under the current directory (`commands.md`, "`cuno test`"; `build.md`,
+/// "Output directory").
+///
+/// Mutation: run the tests elsewhere than the root, hand them another
+/// environment, build `dev` whatever the profile, show `Running` under
+/// `-q` or relative to the root, or leave the run's directory; this test
+/// fails.
+#[test]
+fn a_release_run_from_a_subdirectory() {
+    let probe = "test(\"sees its world\", [] {\n\
+                 const char *v = std::getenv(\"CALC_PROBE\");\n\
+                 require(v != nullptr);\n\
+                 expect(eq(std::string(v), std::string(\"given\")));\n\
+                 std::FILE *f = std::fopen(\"cuno.toml\", \"r\");\n\
+                 expect(f != nullptr);\n\
+                 if (f) std::fclose(f);\n\
+                 });\n";
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let p = project(probe).file(
+            "src/calc_headers.h",
+            "#include <cstdlib>\n#include <string>\n",
+        );
+        let source = std::fs::read_to_string(p.path().join("src/calc.cpp")).unwrap();
+        std::fs::write(
+            p.path().join("src/calc.cpp"),
+            format!("#include \"calc_headers.h\"\n{source}"),
+        )
+        .unwrap();
+        let run_in_src = |args: &[&str]| {
+            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+            cmd.args(args).current_dir(p.path().join("src"));
+            p.run_command_with(cmd, &[("CALC_PROBE", "given")])
+        };
+        let quiet = run_in_src(&["-q", "test", "--release", "--compiler", name]);
+        assert_eq!(quiet.code, Some(0), "{name}:\n{}", quiet.stderr);
+        assert!(
+            !quiet.stderr.contains("Running"),
+            "{name}:\n{}",
+            quiet.stderr
+        );
+        assert!(
+            quiet.stderr.contains("test sees its world ... ok"),
+            "{name}:\n{}",
+            quiet.stderr
+        );
+        let left: Vec<_> = std::fs::read_dir(p.path().join("target/release/test"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("calc")], "{name}");
+
+        let shown = run_in_src(&["test", "--release", "--compiler", name]);
+        let exe = p
+            .path()
+            .join("target")
+            .join("release")
+            .join("test")
+            .join("calc")
+            .join("bin")
+            .join("calc.exe");
+        assert!(
+            shown
+                .stderr
+                .contains(&format!("Running `{}`", exe.display())),
+            "{name}:\n{}",
+            shown.stderr
+        );
     }
 }

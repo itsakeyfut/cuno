@@ -88,9 +88,14 @@ pub struct TestRun<'a> {
     pub nocapture: bool,
     /// How many tests run at once; zero is taken as one.
     pub jobs: usize,
-    /// The project's root: where tests run, what paths are shown relative
-    /// to, and where `tests/` is.
+    /// The project's root: where tests run, what places in failures are
+    /// shown relative to, and where `tests/` is.
     pub root: &'a Path,
+    /// The current directory, which executables' paths are shown relative
+    /// to, as `cuno run` shows its executable (`commands.md`, "`cuno test`").
+    pub cwd: &'a Path,
+    /// `-q`: leave out the `Running` lines.
+    pub quiet: bool,
     /// The environment the tests get, as cuno was given it.
     pub env: &'a Env,
     /// A directory of cuno's in which the run makes a directory of its own
@@ -187,10 +192,12 @@ pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
         }
     };
     for (index, exe) in r.executables.iter().enumerate() {
-        shell.status(
-            "Running",
-            format!("`{}`", shown(&exe.path, r.root).display()),
-        );
+        if !r.quiet {
+            shell.status(
+                "Running",
+                format!("`{}`", shown(&exe.path, r.cwd).display()),
+            );
+        }
         match list(r, &results, index, exe) {
             Ok(names) => run_executable(r, &results, index, &names, shell, &mut summary),
             Err(failure) => {
@@ -224,9 +231,10 @@ fn own_directory(scratch: &Path) -> io::Result<PathBuf> {
     unreachable!("the counter runs out first")
 }
 
-/// `path` relative to `root` when it lies there, as the report shows paths.
-fn shown<'a>(path: &'a Path, root: &Path) -> &'a Path {
-    path.strip_prefix(root).unwrap_or(path)
+/// `path` relative to `dir` when it lies there, and as it is otherwise, as
+/// the report shows executables' paths.
+fn shown<'a>(path: &'a Path, dir: &Path) -> &'a Path {
+    path.strip_prefix(dir).unwrap_or(path)
 }
 
 /// An exit code as a person reads it: a Windows crash code, which comes out
@@ -260,7 +268,7 @@ fn list(
     let env = r
         .env
         .with("CUNO_TEST_RESULT", file.clone().into_os_string());
-    let path = shown(&exe.path, r.root).display();
+    let path = shown(&exe.path, r.cwd).display();
     let output = r
         .launcher
         .launch(&exe.path, &[OsString::from("--list")], &env, r.root)
@@ -400,7 +408,7 @@ fn run_test(r: &TestRun<'_>, exe: &TestExecutable, file: &Path, name: &str) -> O
                 verdict: Verdict::Failed,
                 note: Some(format!(
                     "cannot run {}: {e}",
-                    shown(&exe.path, r.root).display()
+                    shown(&exe.path, r.cwd).display()
                 )),
             };
         }
@@ -615,6 +623,8 @@ mod tests {
                 nocapture,
                 jobs,
                 root: Path::new(ROOT),
+                cwd: Path::new(ROOT),
+                quiet: false,
                 env: &env,
                 scratch,
                 case: NameCase::Insensitive,

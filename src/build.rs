@@ -69,7 +69,9 @@ pub enum Goal {
 }
 
 /// Carries out `goal` for the project around `cwd` and returns the exit
-/// code: 0, or for `cuno run` the program's.
+/// code: 0; for `cuno run` the program's; for `cuno test`, 1 when a test
+/// failed or an executable's tests could not be listed. A failed build is
+/// an error, which exits 1 too.
 pub fn build(
     goal: Goal,
     args: BuildArgs,
@@ -128,8 +130,10 @@ pub fn build(
         .jobs
         .map(|n| n.get() as usize)
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
-    let command = &goal;
-    let (goal, run) = match command {
+    // `goal` is the command's; the pipeline gets its own, and the command's
+    // is still read after the build, for what `cuno run` and `cuno test` do
+    // with what was built.
+    let (pipeline_goal, run) = match &goal {
         Goal::Build => (pipeline::Goal::Build, None),
         Goal::Check => (pipeline::Goal::Check, None),
         Goal::Run { bin, args } => (
@@ -146,7 +150,7 @@ pub fn build(
         manifest,
         target_dir: &settings.target_dir,
         profile,
-        goal,
+        goal: pipeline_goal,
         host,
         bundled: &bundled,
         jobs,
@@ -164,7 +168,7 @@ pub fn build(
         spawner: &SystemSpawner,
     };
     let built = pipeline::build(&request, shell).map_err(boxed)?;
-    if let Goal::Test { filter, nocapture } = command {
+    if let Goal::Test { filter, nocapture } = &goal {
         let executables: Vec<cuno_test::TestExecutable> = built
             .test_executables
             .into_iter()
@@ -173,8 +177,9 @@ pub fn build(
                 integration: test.file.is_some(),
             })
             .collect();
-        // Beside the test build's own output; each run makes a directory
-        // of its own there (`cuno_test::TestRun::scratch`).
+        // Beside the test build's own output, so `cuno clean` removes
+        // whatever an interrupted run leaves; each run makes a directory of
+        // its own there (`build.md`, "Output directory").
         let scratch = settings
             .target_dir
             .join(cuno_build::layout::profile_dir_name(profile))
@@ -186,6 +191,8 @@ pub fn build(
                 nocapture: *nocapture,
                 jobs,
                 root,
+                cwd,
+                quiet: verbosity.quiet,
                 // The environment cuno was given, as `cuno run` passes it.
                 env,
                 scratch: &scratch,
