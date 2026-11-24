@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob a2a08d5d10574deebd351fef6481d34d4ab1a0f1 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob df0a96a47c3a33849b61fca27d967db8fef4a5cd -->
 
 # Internal Structure of cuno Itself
 
@@ -8,7 +8,8 @@ A Rust workspace, with crates split by role.
 
 | Crate | Role | Timeline |
 |---|---|---|
-| `cuno` | CLI. Interprets commands and calls each crate. The main body of the single binary | MVP |
+| `cuno` | The main body of the single binary. Collects input from the process, calls `cuno-cli`, and exits with the exit code it returns (`src/main.rs` only) | MVP |
+| `cuno-cli` | The CLI. Interprets command-line arguments, resolves settings, dispatches to each command, displays errors and decides the exit code. A module per command combines the crates ([What goes in `src/` and `cuno-cli`](#what-goes-in-src-and-cuno-cli)) | MVP |
 | `cuno-core` | Only the five things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), resolving the cuno home, the list of environment variables, and path identity | MVP |
 | `cuno-manifest` | Loading and validating `cuno.toml` / `config.toml` ([manifest.md](manifest.md)) | MVP |
 | `cuno-toolchain` | Compiler abstraction (interface), detection, per-compiler implementations, flag translation ([toolchain.md](toolchain.md)) | MVP |
@@ -28,14 +29,39 @@ Only the following five. To add anything else, change this specification first.
 
 | Item | Contents |
 |---|---|
-| Error classification | The classification of exit codes (1: a problem with the user's code or build artifacts, 2: incorrect usage, 3: a configuration or environment problem, 101: an internal cuno error; [commands.md](commands.md#exit-codes)), and a common trait that every crate's error type implements (returning the classification and an optional `help:`). Displaying the error and exiting is done in one place, in the cuno binary |
+| Error classification | The classification of exit codes (1: a problem with the user's code or build artifacts, 2: incorrect usage, 3: a configuration or environment problem, 101: an internal cuno error; [commands.md](commands.md#exit-codes)), and a common trait that every crate's error type implements (returning the classification and an optional `help:`). Displaying the error is done in one place, in `cuno-cli`, and exiting the process in one place, in the cuno binary |
 | Output | Cargo-style progress lines (`Compiling` / `Finished` / `Running`), warnings and errors, color and verbosity (`[term]`, `NO_COLOR`). Crates do not print directly; they write through this |
 | cuno home | Deciding where the cuno home is (as in [distribution.md](distribution.md#cuno-home-directory)) |
 | List of environment variables | The type through which the environment variables the cuno binary collected are passed to libraries as a value. On Windows, names are looked up without distinguishing upper and lower case |
 | Path identity | The one way of judging whether two paths are the same place, or whether one is inside the other ([project-layout.md](project-layout.md#source-collection-and-linking)). Classifying sources, checking the output directory, and matching Visual Studio locations use it. Rationale: the same question had several answers that compared spellings in different ways, and each new place that used it had the same kind of mistake fixed separately |
 
 - Reason for the list of environment variables: compiler detection, cuno home resolution and reading the configuration all need environment variables, and libraries receive them as values ([Dependencies between crates](#dependencies-between-crates)). It keeps the case-insensitive lookup on Windows from being written again in each crate.
-- Rationale: library crates cannot depend on the cuno binary. Without a shared place, either each crate decides exit codes and display on its own, or the binary must know every crate's errors and map them to exit codes. In the latter case, an error whose mapping was forgotten silently becomes exit code 1.
+- Rationale: library crates cannot depend on the cuno binary. Without a shared place, either each crate decides exit codes and display on its own, or `cuno-cli` must know every crate's errors and map them to exit codes. In the latter case, an error whose mapping was forgotten silently becomes exit code 1.
+
+### What goes in `src/` and `cuno-cli`
+
+`src/` holds only `main.rs`. `main.rs` collects what only the process can provide (the command-line arguments, the environment variables, the current directory, the host, the location of the temporary directory, standard output and standard error and whether each is a terminal), passes them to `cuno-cli`, and ends the process with the exit code it returns. Only `main.rs` ends the process.
+
+`cuno-cli` holds only the following.
+
+- `lib.rs`: interpreting command-line arguments (the values it receives are parsed with clap, and help and errors are written to the output it receives), resolving settings, dispatching to each command, displaying errors and deciding the exit code.
+- Command modules, limited to those in the table below.
+  - A command module only combines and calls the crates (including choosing the real implementations and passing them in) and displays the result. It holds no rule that a crate could answer if given the values (naming rules, diagnostic judgements, how paths are decided, and so on).
+  - Data used only by that command (the templates of `cuno new`) may be embedded.
+
+Anything several commands use is not put in `cuno-cli`, but in the crate listed in [Owners of shared rules](#owners-of-shared-rules).
+
+The command modules are limited to those in the following table. `tests/architecture.rs` reads this table and fails if the modules of `cuno-cli` do not match it. To add a command, add a row to this table (`fmt` and `lint` become modules that call `cuno-tools`).
+
+| Module | Commands |
+|---|---|
+| `build` | `build`, `check`, `run`, `test` |
+| `clean` | `clean` |
+| `doctor` | `doctor` |
+| `new` | `new` |
+
+- `build` holds four commands because they share one build flow, as in [commands.md](commands.md#available-for-build-commands-build--run--check--test).
+- Rationale: when there is a place to put processing that several commands share, processing accumulates there without anyone asking which crate should answer, and rules get duplicated (the toolchain preparation shared by the build and doctor, and doctor holding a copy of the compiler selection order). Removing the shared place forces the decision of where something belongs at the time it is written. Also, because only `main.rs` reads the process, commands can be called with values alone.
 
 ## Dependencies between crates
 
@@ -53,7 +79,8 @@ The allowed directions of dependency are limited to the following. `tests/archit
 | `cuno-tools` | `cuno-core`, `cuno-manifest`, `cuno-toolchain` |
 | `cuno-deps` (later) | `cuno-core`, `cuno-manifest`, `cuno-toolchain` |
 | `cuno-script` (later) | `cuno-core`, `cuno-build` |
-| `cuno` (the binary) | all |
+| `cuno-cli` | all |
+| `cuno` (the binary) | `cuno-cli`, `cuno-core` |
 
 - **`cuno-manifest` depends on `cuno-toolchain`, not the reverse.** `cuno-toolchain` defines the kinds of compiler and the types of the settings that flag translation receives, and `cuno-manifest` reads TOML into those types (`[build.<compiler>]` is also looked up by the kind of compiler).
   - Every decision that branches on the kind of compiler (how its command line is written, whether it is of the MSVC or the LLVM family, which LLVM tool it is) is answered in one place in `cuno-toolchain`, covering every kind. Other code does not compare kinds but uses those answers, so a new compiler does not compile while any decision is unanswered for it.
@@ -61,9 +88,9 @@ The allowed directions of dependency are limited to the following. `tests/archit
   - Rationale: to keep the structure of TOML out of the compiler abstraction. Adding a compiler then takes a change to `cuno-toolchain` alone (design principle 5 in [concept.md](../concept.md)).
 - `cuno-test` holds only running tests and displaying their results. Building tests is one mode of `cuno-build`.
   - Rationale: it only runs the executables it is given and collects the results, so it needs no knowledge of settings or compilers.
-- `cuno-tools` is given the list of target files the cuno binary built from "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. What lint acts on is decided by the list; compile_commands.json only supplies each source's command. It does not depend on `cuno-build`.
-- `cuno-build` does not depend on `cuno-deps` / `cuno-script`. Resolved dependencies and script results are passed by the cuno binary as data.
-- **Library crates do not read the process's environment variables or command-line arguments directly.** The cuno binary collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
+- `cuno-tools` is given the list of target files `cuno-cli` built from "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. What lint acts on is decided by the list; compile_commands.json only supplies each source's command. It does not depend on `cuno-build`.
+- `cuno-build` does not depend on `cuno-deps` / `cuno-script`. Resolved dependencies and script results are passed by `cuno-cli` as data.
+- **Library crates do not read the process's environment variables, command-line arguments, current directory or the location of the temporary directory directly.** The cuno binary (`main.rs`) collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
   - Likewise, the OS cuno runs on (the host) is received as a value rather than decided directly with `cfg!` and the like. The OS being built for (the target) is distinguished from the host, as in [manifest.md](manifest.md). In the MVP, the binary passes target = host.
   - Rationale: so that tests can construct any environment, and the behavior of a library does not depend on the environment of whatever process it happens to run in. Making the host a value lets branches for other OSes be tested on Windows CI as well.
 
@@ -73,11 +100,12 @@ A rule used by several commands is held in one place, by the crate below. Each c
 
 | Rule | Owner |
 |---|---|
-| Interpreting command-line arguments, calling each part, displaying errors and deciding the exit code | `cuno` (using `cuno-core`'s classification) |
+| Interpreting command-line arguments, resolving settings, dispatching to each command, displaying errors and deciding the exit code | `cuno-cli` (using `cuno-core`'s classification) |
+| Collecting input from the process, and ending the process | `cuno` |
 | Error classification, output, cuno home, list of environment variables, path identity | `cuno-core` |
 | Finding the project, resolving paths the user wrote (in configuration files and command-line arguments), reading and validating `cuno.toml` and the configuration files, the precedence of each value, layering the settings for the selected compiler, target and profile | `cuno-manifest` |
 | Kinds of compiler, detection, selection precedence, environment resolution on Windows, version conditions, flag translation, how the target and the host are represented | `cuno-toolchain` |
-| Classifying sources (entry files, package body, tests), the output paths cuno decides, the build graph, building tests, compile_commands.json, bundled headers | `cuno-build` |
+| Classifying sources (entry files, package body, tests), the output paths cuno decides, the build graph, building tests, compile_commands.json, bundled headers, preparing the compiler used for the build (connecting `cuno-toolchain`'s detection, selection and environment resolution with the check of the standard library against the build settings) | `cuno-build` |
 | Running tests and displaying results | `cuno-test` |
 | fmt / lint, generating `.clang-format` / `.clang-tidy` | `cuno-tools` |
 
@@ -90,8 +118,8 @@ A rule used by several commands is held in one place, by the crate below. Each c
 ```
 cuno/
 ├── Cargo.toml        # the workspace, and also the cuno package (binary)
-├── src/main.rs       # the cuno binary
-├── crates/           # the crates above other than cuno (libraries)
+├── src/main.rs       # the cuno binary (the only file in src/)
+├── crates/           # the crates above other than cuno (libraries, including cuno-cli)
 ├── headers/cuno/     # bundled headers (test.hpp / test.h). Embedded into the binary at build time
 ├── templates/        # samples generated by cuno new
 ├── tests/            # integration tests for cuno itself (actually invoke compilers)
