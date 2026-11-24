@@ -34,13 +34,6 @@ pub struct BuildArgs {
     pub jobs: Option<NonZeroU32>,
 }
 
-/// How much to show (`commands.md`, "Available for all commands").
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Verbosity {
-    /// `-v`: the command of each step.
-    pub verbose: bool,
-}
-
 /// What a build command does once the project is built.
 #[derive(Debug)]
 pub enum Goal {
@@ -75,7 +68,6 @@ pub enum Goal {
 pub fn build(
     goal: Goal,
     args: BuildArgs,
-    verbosity: Verbosity,
     env: &Env,
     cwd: &Path,
     host: HostOs,
@@ -101,7 +93,6 @@ pub fn build(
         shell,
     )
     .map_err(boxed)?;
-    let verbose = verbosity.verbose || settings.verbose;
     let Some((project, manifest)) = &settings.project else {
         return Err(Box::new(CommandError::NoProject {
             cwd: cwd.to_owned(),
@@ -157,7 +148,6 @@ pub fn build(
         host,
         bundled: &bundled,
         jobs,
-        verbose,
         started,
         toolchain: Toolchain {
             kind: selected.kind,

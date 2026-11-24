@@ -94,7 +94,6 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
         host,
         bundled: &bundled,
         jobs: 4,
-        verbose: false,
         started: Instant::now(),
         toolchain: Toolchain {
             kind: selected.kind,
@@ -112,7 +111,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
     };
     let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut shell = Shell::new(Box::new(Captured(output.clone())), None, &env, false);
-    shell.set_quiet(true);
+    shell.set_verbosity(cuno_core::Verbosity::Quiet);
     pipeline::build(&request, &mut shell)
         .map(|built| built.test_executables)
         .map_err(|e| {
