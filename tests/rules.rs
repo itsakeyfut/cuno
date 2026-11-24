@@ -191,8 +191,9 @@ fn outside_a_project_the_missing_project_is_the_error() {
 /// project root, and every command that uses the output directory refuses
 /// it (`docs/en/specs/build.md`, "Output directory").
 ///
-/// Mutation: compare the output directory as written, in any one of these
-/// commands; this test fails, naming the command.
+/// Mutation: compare the output directory with the project root as
+/// written (`dir.starts_with(guarded)` in `check_output_dir`); this test
+/// fails, naming the command.
 #[cfg(windows)]
 #[test]
 fn the_output_directory_is_judged_as_the_file_system_names_it() {
@@ -221,8 +222,9 @@ fn the_output_directory_is_judged_as_the_file_system_names_it() {
 /// (`docs/en/specs/toolchain.md`, "A tool whose path is written in
 /// `[toolchain.paths]`").
 ///
-/// Mutation: check the configured copies only for the selected compiler,
-/// in any one of these commands; this test fails, naming the command.
+/// Mutation: skip the check that a configured copy is a file
+/// (`ConfiguredToolMissing` in `llvm::detect`); this test fails, naming
+/// the command.
 #[test]
 fn a_configured_copy_is_checked_by_every_command_that_runs_a_tool() {
     for (command, row) in CONFIGURED_COPY {
