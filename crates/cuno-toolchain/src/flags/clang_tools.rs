@@ -71,9 +71,10 @@ impl ToolCommand {
 /// them to analyse what the compiler builds: `/c` written `-c`, and for cl
 /// a standard switch clang-cl does not know written as its own and `/GL`
 /// left out, as clang-cl reads a cl command; then `INCLUDE` after the
-/// tool's own headers (`/imsvc`, or `-idirafter` for clang) and the MSVC
-/// version, so a tool run anywhere sees what the build saw. Why each is
-/// written so is in `docs/en/specs/build.md`, "Output".
+/// tool's own headers (`/imsvc`, or for clang `-nostdlibinc` and then
+/// `-idirafter`, as clang would otherwise search the environment's headers
+/// first) and the MSVC version, so a tool run anywhere sees what the build
+/// saw. Why each is written so is in `docs/en/specs/build.md`, "Output".
 pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolCommand {
     let kind = context.kind;
     let mut out = args.to_vec();
@@ -100,6 +101,10 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
             }
         }
         CompilerKind::ClangCl | CompilerKind::Clang => {}
+    }
+    match kind.syntax() {
+        Syntax::Gnu if !context.include.is_empty() => out.push("-nostdlibinc".into()),
+        Syntax::Gnu | Syntax::Cl => {}
     }
     for dir in context.include {
         match kind.syntax() {
@@ -148,12 +153,15 @@ mod tests {
     }
 
     /// The include directories come after the tool's own headers, in the
-    /// form each driver reads, then the MSVC version when there is a
-    /// toolset (`docs/en/specs/build.md`, "Output").
+    /// form each driver reads, clang's alone with `-nostdlibinc` so the
+    /// environment's are not searched first, then the MSVC version when
+    /// there is a toolset (`docs/en/specs/build.md`, "Output").
     ///
     /// Mutation: give clang `/imsvc` or `-isystem`, give a cl-style driver
-    /// `-idirafter`, drop a directory, change their order, or leave out the
-    /// version or add one without a toolset; this test fails.
+    /// `-idirafter` or `-nostdlibinc`, leave `-nostdlibinc` out for clang or
+    /// give it without include directories, drop a directory, change their
+    /// order, or leave out the version or add one without a toolset; this
+    /// test fails.
     #[test]
     fn include_and_version_follow_the_driver() {
         let include = [
@@ -185,11 +193,21 @@ mod tests {
             [
                 "-c",
                 "a.cpp",
+                "-nostdlibinc",
                 "-idirafter",
                 "C:/sdk/ucrt",
                 "-idirafter",
                 "C:/msvc/include"
             ]
+        );
+        let none = ToolContext {
+            kind: CompilerKind::Clang,
+            include: &[],
+            msvc: None,
+        };
+        assert_eq!(
+            strings(for_clang_tools(none, &args).args()),
+            ["-c", "a.cpp"]
         );
     }
 

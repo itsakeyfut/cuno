@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob a89e60283b0498443465a83a2eb9fd3086b1887d -->
+<!-- translated-from: docs/ja/specs/build.md @ blob df77272ed80bd2137c8329af9d231cf3c4b15975 -->
 
 # Build
 
@@ -186,6 +186,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   - **Generation is independent of compilation**: cuno generates it from the build graph (the compile commands scheduled to run). Regardless of whether compilation succeeds, running any of `build` / `run` / `check` / `test` / `lint` updates it to the latest content. `fmt` does not generate it (because it works without a compiler; [dev-tools.md](dev-tools.md#target-files)). `cuno lint` works even if nothing has been built yet.
   - **Self-contained content**: the MSVC / Windows SDK include paths and the MSVC version in use (`-fms-compatibility-version=<cl version>`) are written explicitly, so that clangd running outside a Developer Command Prompt can still find the standard headers and Windows headers, and analyze with the same `_MSC_VER` as the build.
     - The include paths are written so that they are searched after the tool's own built-in headers (`/imsvc` in cl style, `-idirafter` for clang), because in the build, too, `INCLUDE` is searched after the built-in headers. With `-isystem`, the Windows SDK's `stddef.h` and the like would be found before clang's own, and a program different from the build's would be analyzed.
+    - The clang form also gets `-nostdlibinc`. clang searches the headers of the `INCLUDE` environment variable (or, when it is absent, of the Visual Studio it finds itself) before `-idirafter`, so without it a tool would analyze another toolset's standard headers, depending on the environment it runs in. `-nostdlibinc` keeps clang's own built-in headers and drops only the other standard locations. The cl form's `/imsvc` is searched before `INCLUDE`, so it needs none.
   - **Written in the form clang-based tools read**: the file is read by clangd and clang-tidy, which read cl commands as clang-cl too. So only the following three points are rewritten, to keep the meaning the same as in the build.
     - `/c` is written `-c` (cl accepts it too), because when only analyzing, clang-cl warns that `/c` is an unused argument, and under `warnings-as-errors` that warning becomes an error.
     - MSVC standard switches that clang-cl does not know (`/std:c++23`, `/std:clatest`) are rewritten to clang-cl's switch for the same standard (the clang-cl column of the [Compiling](#compiling) table). Left as they are, clang-cl would ignore them and analyze with an older standard.

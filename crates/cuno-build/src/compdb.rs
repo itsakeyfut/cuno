@@ -161,7 +161,13 @@ mod tests {
             (
                 CompilerKind::Clang,
                 "/c",
-                vec!["-idirafter", "C:/sdk/ucrt", "-idirafter", "C:/msvc/include"],
+                vec![
+                    "-nostdlibinc",
+                    "-idirafter",
+                    "C:/sdk/ucrt",
+                    "-idirafter",
+                    "C:/msvc/include",
+                ],
             ),
         ] {
             let mut link = compile(kind, "src/main.cpp", &[]);
