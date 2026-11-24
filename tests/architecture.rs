@@ -1,5 +1,6 @@
 //! The allowed dependencies between cuno's crates, checked against what Cargo
-//! actually resolves for every crate under `crates/`.
+//! actually resolves for every crate under `crates/` and for the binary; and
+//! what `src/` and `cuno-cli` hold.
 //!
 //! Cargo rejects only cycles, so a dependency in a direction the design does
 //! not allow would otherwise build without complaint. The allowed directions
@@ -46,7 +47,8 @@ fn backticked(cell: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every crate under `crates/` and the `cuno-*` packages it depends on, as
+/// Every crate under `crates/`, the binary, and the `cuno-*` packages each
+/// depends on, as
 /// Cargo resolves them: every form of declaring a dependency (inline, table,
 /// `.workspace = true`, renamed with `package =`, target-specific) and both
 /// normal and build dependencies. Dev-dependencies are left out, since
@@ -62,13 +64,8 @@ fn workspace_crates() -> BTreeMap<String, Vec<String>> {
     let metadata: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("cargo metadata prints JSON");
 
-    let crates_dir = root.join("crates");
     let mut found = BTreeMap::new();
     for package in metadata["packages"].as_array().unwrap() {
-        let manifest = Path::new(package["manifest_path"].as_str().unwrap());
-        if !manifest.starts_with(&crates_dir) {
-            continue; // the root `cuno` package, which may depend on all
-        }
         let mut deps: Vec<String> = package["dependencies"]
             .as_array()
             .unwrap()
@@ -92,7 +89,8 @@ fn spec() -> String {
 /// `crates/cuno-toolchain/Cargo.toml` under `[dependencies]`, under
 /// `[target.'cfg(windows)'.dependencies]`, under `[build-dependencies]`, as
 /// `[dependencies.cuno-manifest]`, or renamed (`m = { path = ..., package =
-/// "cuno-manifest" }`); this test fails each time.
+/// "cuno-manifest" }`); or give the root `Cargo.toml` a `[dependencies]`
+/// entry for `cuno-build`; this test fails each time.
 #[test]
 fn crate_dependencies_follow_architecture() {
     let allowed = allowed_from_spec(&spec());
@@ -152,4 +150,73 @@ fn the_spec_table_is_read_as_written() {
     );
     assert_eq!(table["cuno-deps"], expect(&["cuno-core"]));
     assert_eq!(table["cuno"], None);
+}
+
+/// The names in the first column of the table under `heading` in `spec`, up
+/// to the next heading.
+fn first_column(spec: &str, heading: &str) -> Vec<String> {
+    let section = spec
+        .split_once(heading)
+        .unwrap_or_else(|| panic!("{SPEC} has no {heading:?} section"))
+        .1;
+    let section = section.split("\n#").next().unwrap();
+    section
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .map(|row| backticked(row.trim_matches('|').split('|').next().unwrap()).remove(0))
+        .collect()
+}
+
+/// The modules directly under `dir`: each `.rs` file but `lib.rs` and
+/// `main.rs`, and each directory, by name.
+fn modules(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir() || path.extension().is_some_and(|e| e == "rs"))
+        .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
+        .filter(|name| name != "lib" && name != "main")
+        .collect();
+    found.sort();
+    found
+}
+
+/// The binary only collects the process and calls `cuno-cli`, so `src/`
+/// holds `main.rs` and nothing else (`architecture.md`, "What goes in
+/// `src/` and `cuno-cli`").
+///
+/// Mutation: add any other `.rs` file or a directory under `src/`; this test
+/// fails.
+#[test]
+fn src_holds_only_main() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found: Vec<String> = std::fs::read_dir(&src)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    assert_eq!(found, ["main.rs"], "src/ holds more than main.rs");
+}
+
+/// `cuno-cli` holds `lib.rs` and the command modules its table in the spec
+/// lists, and no other: what several commands share belongs to another
+/// crate (`architecture.md`, "What goes in `src/` and `cuno-cli`").
+///
+/// Mutation: add a module to `crates/cuno-cli/src/` that the table does not
+/// list, or a row to the table with no module; this test fails.
+#[test]
+fn cli_modules_follow_architecture() {
+    const HEADING: &str = "### What goes in `src/` and `cuno-cli`";
+    let mut listed = first_column(&spec(), HEADING);
+    listed.sort();
+    assert!(
+        !listed.is_empty(),
+        "no modules read from {HEADING:?} in {SPEC}"
+    );
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/cuno-cli/src");
+    assert_eq!(
+        modules(&dir),
+        listed,
+        "the modules of cuno-cli differ from {SPEC}, {HEADING:?}"
+    );
 }
