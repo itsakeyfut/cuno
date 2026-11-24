@@ -16,7 +16,7 @@ pub use cuno_toolchain::flags::{
 pub use diagnostic::{ConfigError, ConfigWarning, Location, shown_path};
 pub use manifest::{
     Bin, BuildTable, CompilerName, Framework, Loaded, Manifest, Os, Package, Profile, ProfileTable,
-    Test, load_manifest, parse_manifest,
+    Test, load_manifest, parse_manifest, valid_package_name,
 };
 pub use project::{Project, find_project, resolve_path};
 pub use settings::{CliSettings, Inputs, Settings, Term, resolve, resolve_user};

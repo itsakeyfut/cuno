@@ -5,6 +5,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use cuno_core::{CunoError, ExitClass, Shell};
+use cuno_manifest::valid_package_name;
 use cuno_toolchain::flags::{Edition, Lang};
 
 /// The options of `cuno new`.
@@ -144,14 +145,6 @@ impl CunoError for NewError {
     }
 }
 
-/// Whether `name` is a package name: a letter first, then letters, digits,
-/// `-` and `_`.
-pub fn valid_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 /// Whether `name` is one Windows keeps for devices, in any case, which
 /// cannot name a file or directory there (`commands.md`, "`cuno new
 /// <path>`").
@@ -253,7 +246,7 @@ pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError>
             true,
         ),
     };
-    if !valid_name(&name) {
+    if !valid_package_name(&name) {
         return Err(NewError::InvalidName {
             name,
             from_directory,
@@ -314,18 +307,6 @@ pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Mutation: allow a leading digit, `-` or `_`, another character, or
-    /// an empty name; or refuse `-` or `_` after the first; this test fails.
-    #[test]
-    fn a_package_name_follows_the_rule() {
-        for good in ["app", "my-game", "a_1", "A"] {
-            assert!(valid_name(good), "{good}");
-        }
-        for bad in ["", "1app", "-app", "_app", "my game", "app.x", "日本"] {
-            assert!(!valid_name(bad), "{bad}");
-        }
-    }
 
     /// The language decides the edition, an edition alone decides the
     /// language, and two that disagree are an error saying what to do.

@@ -561,7 +561,7 @@ impl Check<'_> {
             )
         };
         let name = raw.name.ok_or_else(|| missing("name"))?;
-        if !valid_name(&name) {
+        if !valid_package_name(&name) {
             return Err(self.doc.error(
                 "package.name",
                 format!(
@@ -751,7 +751,7 @@ impl Check<'_> {
         let name = raw.name.unwrap_or_else(|| package.name.clone());
         // The name becomes a file in the output directory, so it is held to
         // the package name's rule: no separators, no `..`, no drive.
-        if !valid_name(&name) {
+        if !valid_package_name(&name) {
             return Err(self.doc.error(
                 &format!("{prefix}.name"),
                 format!(
@@ -779,9 +779,11 @@ impl Check<'_> {
     }
 }
 
-/// The package name rule `cuno new` applies (`commands.md`): ASCII letters,
-/// digits, `-` and `_`, starting with a letter.
-fn valid_name(name: &str) -> bool {
+/// Whether `name` is a package name (`docs/en/specs/commands.md`, "`cuno
+/// new <path>`"): ASCII letters, digits, `-` and `_`, starting with a
+/// letter. `cuno new` and `cuno.toml` are held to this one rule, so a
+/// package `cuno new` makes is one `cuno build` reads.
+pub fn valid_package_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_alphabetic())
         && name
             .chars()
@@ -792,6 +794,18 @@ fn valid_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use cuno_core::ExitClass;
+
+    /// Mutation: allow a leading digit, `-` or `_`, another character, or
+    /// an empty name; or refuse `-` or `_` after the first; this test fails.
+    #[test]
+    fn a_package_name_follows_the_rule() {
+        for good in ["app", "my-game", "a_1", "A"] {
+            assert!(valid_package_name(good), "{good}");
+        }
+        for bad in ["", "1app", "-app", "_app", "my game", "app.x", "日本"] {
+            assert!(!valid_package_name(bad), "{bad}");
+        }
+    }
 
     /// Every compiler kind maps to the name of its own `[build.<compiler>]`
     /// table, which is also the kind's own name.
