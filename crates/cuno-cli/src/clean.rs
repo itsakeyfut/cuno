@@ -9,7 +9,7 @@ use cuno_build::layout::{is_claimed, profile_dir_name};
 use cuno_core::{CunoError, ExitClass, Shell};
 use cuno_manifest::{ConfigError, Settings};
 
-use crate::build::{CommandError, boxed, profile_named};
+use crate::build::{in_project, profile_named};
 
 /// The options of `cuno clean`.
 #[derive(Debug, Default)]
@@ -36,14 +36,7 @@ pub fn clean(
         (false, None) => None,
         (release, name) => Some(profile_named(release, name.as_deref())?),
     };
-    // Outside a project the error says so, rather than judging an output
-    // directory there is nothing to clean in.
-    if cuno_manifest::find_project(cwd).is_none() {
-        return Err(Box::new(CommandError::NoProject {
-            cwd: cwd.to_owned(),
-        }));
-    }
-    let target_dir = resolved.map_err(boxed)?.target_dir;
+    let target_dir = in_project(resolved, cwd)?.target_dir;
     let removed = if std::fs::symlink_metadata(&target_dir).is_err() {
         0
     } else if !is_claimed(&target_dir) {

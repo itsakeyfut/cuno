@@ -264,3 +264,27 @@ fn what_clap_prints_follows_the_color_order() {
         assert_eq!(out.contains('\x1b'), colored, "{args:?} {vars:?}: {out}");
     }
 }
+
+/// Outside a project every command that needs one reports the missing
+/// project, and nothing the settings say: here the output directory, which
+/// `CUNO_TARGET_DIR=.` puts on the current directory (`commands.md`,
+/// "`cuno build` / `cuno check`").
+///
+/// Mutation: report the settings' error first, in any one of these
+/// commands; this test fails.
+#[test]
+fn outside_a_project_the_missing_project_is_the_error() {
+    let p = Project::new();
+    for command in ["build", "check", "run", "test", "clean"] {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.arg(command).current_dir(p.path());
+        let run = p.run_command_with(cmd, &[("CUNO_TARGET_DIR", ".")]);
+        assert_eq!(run.code, Some(3), "{command}: {}", run.stderr);
+        assert!(
+            run.stderr
+                .starts_with("error: could not find cuno.toml in "),
+            "{command}: {}",
+            run.stderr
+        );
+    }
+}
