@@ -194,8 +194,9 @@ mod tests {
                 entries[0]["output"],
                 "C:/p/target/debug/obj/app/src/main.cpp.obj"
             );
-            let mut expected = vec!["C:/bin/cc.exe", mode, "C:/p/src/main.cpp"];
+            let mut expected = vec!["C:/bin/cc.exe"];
             expected.extend(system);
+            expected.extend([mode, "C:/p/src/main.cpp"]);
             expected.push("-fms-compatibility-version=19.52.37029");
             assert_eq!(arguments(&entries[0]), expected, "{kind:?}");
         }
