@@ -252,3 +252,50 @@ fn failures_are_said_and_left_to_see() {
         blocked.stderr
     );
 }
+
+/// Writes the user's `<cuno home>/config.toml`.
+fn user_config(p: &Project, contents: &str) {
+    std::fs::write(p.home().join("config.toml"), contents).unwrap();
+}
+
+/// `cuno new` follows the user's `[term] color`, as every command does
+/// (`commands.md`, "Available for all commands").
+///
+/// Mutation: dispatch `new` without reading the user's settings; this test
+/// fails.
+#[test]
+fn the_users_term_color_applies() {
+    let p = Project::new();
+    user_config(&p, "[term]\ncolor = \"always\"\n");
+    let run = p.cuno(&["new", "app", "--vcs", "none"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(run.stderr.contains("\u{1b}["), "{:?}", run.stderr);
+}
+
+/// `cuno new` reads no project: inside one whose `cuno.toml` is broken it
+/// still creates the package.
+///
+/// Mutation: resolve every layer for `new`, the surrounding project
+/// included; this test fails.
+#[test]
+fn a_surrounding_project_is_not_read() {
+    let p = Project::new().file("cuno.toml", "[package\n");
+    let run = p.cuno(&["new", "app", "--vcs", "none"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(p.path().join("app").join("cuno.toml").is_file());
+}
+
+/// A user `config.toml` that cannot be read stops `cuno new` with exit 3,
+/// before anything is created.
+///
+/// Mutation: let `new` go on when the user's settings fail; this test
+/// fails.
+#[test]
+fn a_broken_user_config_stops_it() {
+    let p = Project::new();
+    user_config(&p, "[term\n");
+    let run = p.cuno(&["new", "app", "--vcs", "none"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(run.stderr.contains("config.toml"), "{}", run.stderr);
+    assert!(!p.path().join("app").exists());
+}
