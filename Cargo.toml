@@ -16,10 +16,10 @@ clap.workspace = true
 cuno-build.workspace = true
 cuno-core.workspace = true
 cuno-manifest.workspace = true
+cuno-test.workspace = true
 cuno-toolchain.workspace = true
 
 [dev-dependencies]
-cuno-test.workspace = true
 cuno-toolchain.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

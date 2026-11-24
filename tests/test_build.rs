@@ -377,6 +377,8 @@ fn the_runner_judges_what_the_build_made() {
                 nocapture: false,
                 jobs: 4,
                 root: p.path(),
+                cwd: p.path(),
+                quiet: false,
                 env: &env,
                 scratch: scratch.path(),
                 case: NameCase::host(),
