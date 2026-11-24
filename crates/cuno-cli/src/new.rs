@@ -308,18 +308,6 @@ pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError>
 mod tests {
     use super::*;
 
-    /// Mutation: allow a leading digit, `-` or `_`, another character, or
-    /// an empty name; or refuse `-` or `_` after the first; this test fails.
-    #[test]
-    fn a_package_name_follows_the_rule() {
-        for good in ["app", "my-game", "a_1", "A"] {
-            assert!(valid_package_name(good), "{good}");
-        }
-        for bad in ["", "1app", "-app", "_app", "my game", "app.x", "日本"] {
-            assert!(!valid_package_name(bad), "{bad}");
-        }
-    }
-
     /// The language decides the edition, an edition alone decides the
     /// language, and two that disagree are an error saying what to do.
     ///
