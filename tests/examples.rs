@@ -1,5 +1,7 @@
 //! Every project under `examples/` builds, checks and runs on every compiler
-//! here, and each executable prints what its `expected/` file says.
+//! here, and each executable prints what its `expected/` file says. An
+//! example with tests also passes `cuno test`, with the results its
+//! `expected/test.txt` says.
 //!
 //! An example is any directory under `examples/` holding a `cuno.toml`, so a
 //! new one is tested without editing this file. Each is copied into a fresh
@@ -87,6 +89,34 @@ fn expected(example: &Path, bin: &str, compiler: &str, profile: &str) -> Option<
     .find_map(|name| std::fs::read_to_string(example.join("expected").join(name)).ok())
 }
 
+/// The `test result:` lines `cuno test` printed, one per test executable,
+/// each without its `; finished in ...` time, which changes from run to run.
+fn test_results(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| line.starts_with("test result:"))
+        .map(|line| {
+            line.split_once("; finished in ")
+                .map_or(line, |(kept, _)| kept)
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// Whether `example` has tests: a `tests/` directory, or a source that
+/// includes a bundled test header. Such an example must say its results in
+/// `expected/test.txt`, so one forgotten is an error rather than tests that
+/// never run here.
+fn has_tests(example: &Path) -> bool {
+    let mut names = Vec::new();
+    files(example, example, &mut names);
+    names.iter().any(|name| {
+        name.starts_with("tests/")
+            || std::fs::read_to_string(example.join(name))
+                .is_ok_and(|text| text.contains("<cuno/test.h"))
+    })
+}
+
 /// The executables a build left in `dir`.
 fn executables(dir: &Path) -> Vec<String> {
     let mut found: Vec<String> = std::fs::read_dir(dir)
@@ -100,14 +130,20 @@ fn executables(dir: &Path) -> Vec<String> {
 }
 
 /// Mutation: make an example's source not compile, change what one prints,
-/// or remove one of its expected files; this test fails, naming the
-/// example, the compiler and the profile.
+/// remove one of its expected files, break a test in an example, or change
+/// what `cuno test` counts; this test fails, naming the example, the
+/// compiler and the profile or `test`.
 #[test]
 fn every_example_builds_checks_and_runs() {
     let examples = examples();
     assert!(!examples.is_empty(), "no examples found");
     for example in &examples {
         let name = example.file_name().unwrap().to_string_lossy();
+        let tests = std::fs::read_to_string(example.join("expected").join("test.txt")).ok();
+        assert!(
+            tests.is_some() || !has_tests(example),
+            "{name} has tests and no expected/test.txt"
+        );
         for (compiler, kind) in COMPILERS {
             if !here(kind) {
                 continue;
@@ -117,6 +153,17 @@ fn every_example_builds_checks_and_runs() {
             for command in ["build", "check"] {
                 let run = project.cuno(&[command, "--compiler", compiler]);
                 assert_eq!(run.code, Some(0), "{}: {}", at(command), run.stderr);
+            }
+            if let Some(want) = &tests {
+                let run = project.cuno(&["-q", "test", "--compiler", compiler]);
+                let err = run.stderr.replace("\r\n", "\n");
+                assert_eq!(run.code, Some(0), "{}:\n{err}", at("test"));
+                assert_eq!(
+                    &test_results(&err),
+                    want,
+                    "{} reported other results:\n{err}",
+                    at("test")
+                );
             }
             for (profile, flags, dir) in PROFILES {
                 let built = project.cuno(&[&["build", "--compiler", compiler][..], flags].concat());
