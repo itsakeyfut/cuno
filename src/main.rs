@@ -5,6 +5,8 @@
 
 use std::io::IsTerminal;
 
+use anstream::AutoStream;
+
 fn main() {
     let code = cuno_cli::run(cuno_cli::Process {
         args: std::env::args_os().collect(),
@@ -13,9 +15,13 @@ fn main() {
         host: cuno_cli::HostOs::current(),
         temp: std::env::temp_dir(),
         stdout_is_terminal: std::io::stdout().is_terminal(),
-        stdout: Box::new(std::io::stdout()),
         stderr_is_terminal: std::io::stderr().is_terminal(),
-        stderr: Box::new(std::io::stderr()),
+        // cuno decides whether to color and writes escape codes itself. On a
+        // Windows console these turn on its support for them, or are turned
+        // into console calls where it has none; through a pipe they pass
+        // unchanged.
+        stdout: Box::new(AutoStream::always(std::io::stdout())),
+        stderr: Box::new(AutoStream::always(std::io::stderr())),
     });
     if code != 0 {
         std::process::exit(code);
