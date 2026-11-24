@@ -2,7 +2,7 @@
 //! compiler: a package with in-source tests and tests under `tests/` builds
 //! into test executables that list and run their own tests, and leaves the
 //! program alone. `cuno test` will run the same build from the command
-//! line; until it exists the pipeline is driven here as the binary drives it.
+//! line; until it exists the pipeline is driven here as cuno-cli drives it.
 //! See docs/en/specs/testing.md and docs/en/specs/build.md.
 
 mod support;

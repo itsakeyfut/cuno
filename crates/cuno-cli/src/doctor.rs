@@ -60,7 +60,7 @@ pub fn doctor(
         compiler: compiler.clone(),
         ..Default::default()
     };
-    let resolved = crate::settings::resolve(
+    let resolved = crate::resolve_settings(
         Inputs {
             cwd,
             env,

@@ -1,0 +1,25 @@
+[package]
+name = "cuno-cli"
+# Also the first line of `cuno --help`: this crate's lib.rs reads it through
+# `about`. The root package's description says the same for its own metadata.
+description = "One comfortable tool for C/C++ development."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+cuno-build.workspace = true
+cuno-core.workspace = true
+cuno-manifest.workspace = true
+cuno-test.workspace = true
+cuno-toolchain.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

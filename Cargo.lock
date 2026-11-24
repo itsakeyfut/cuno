@@ -114,8 +114,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "cuno"
 version = "0.0.0"
 dependencies = [
- "clap",
+ "anstream",
  "cuno-build",
+ "cuno-cli",
  "cuno-core",
  "cuno-manifest",
  "cuno-test",
@@ -132,6 +133,19 @@ dependencies = [
  "cuno-manifest",
  "cuno-toolchain",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "cuno-cli"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "cuno-build",
+ "cuno-core",
+ "cuno-manifest",
+ "cuno-test",
+ "cuno-toolchain",
  "tempfile",
 ]
 
