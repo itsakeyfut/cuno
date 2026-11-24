@@ -169,10 +169,9 @@ pub fn build(
         // Beside the test build's own output, so `cuno clean` removes
         // whatever an interrupted run leaves; each run makes a directory of
         // its own there (`build.md`, "Output directory").
-        let scratch = settings
-            .target_dir
-            .join(cuno_build::layout::profile_dir_name(profile))
-            .join("test");
+        let scratch = cuno_build::layout::Layout::new(&settings.target_dir, profile, root, host)
+            .for_tests()
+            .test_dir();
         let summary = cuno_test::run(
             &cuno_test::TestRun {
                 executables: &executables,
