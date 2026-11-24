@@ -135,6 +135,7 @@ jobs:
             ~/.cargo/git/db
             target
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-      # The clang the compiler tests use; see .github/actions/llvm.
-      - uses: ./.github/actions/llvm
-      - run: cargo test --workspace --no-fail-fast
+      # The MSRV is a promise about building, so every target is compiled
+      # here and nothing is run: the integration tests, which start the
+      # compilers, run once, in the test job.
+      - run: cargo check --workspace --all-targets

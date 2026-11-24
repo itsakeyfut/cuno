@@ -22,9 +22,18 @@ inputs:
 runs:
   using: composite
   steps:
+    # The installed release, keyed on its version and hash, so a run after
+    # the first restores it instead of downloading and installing it, and a
+    # new version or hash installs afresh.
+    - id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/llvm-${{ inputs.version }}
+        key: llvm-${{ inputs.version }}-${{ inputs.sha256 }}
     # PowerShell rather than bash: Git Bash would rewrite the installer's
     # `/S` and `/D=` switches into paths.
-    - shell: pwsh
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
       env:
         LLVM_VERSION: ${{ inputs.version }}
         LLVM_SHA256: ${{ inputs.sha256 }}
@@ -42,6 +51,12 @@ runs:
         # /D= must come last and must not be quoted (NSIS).
         $p = Start-Process -FilePath $installer -ArgumentList "/S", "/D=$dir" -Wait -PassThru
         if ($p.ExitCode -ne 0) { throw "$name exited with $($p.ExitCode)" }
-        $bin = Join-Path $dir "bin"
+    # Installed or restored, the same directory is what the tests use.
+    - shell: pwsh
+      env:
+        LLVM_VERSION: ${{ inputs.version }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $bin = Join-Path $env:RUNNER_TEMP "llvm-$env:LLVM_VERSION\bin"
         & (Join-Path $bin "clang.exe") --version
         "CUNO_TEST_LLVM_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
