@@ -149,6 +149,7 @@ struct Diagnosed {
     stl: Option<ProbeCompile>,
 }
 
+// Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 fn diagnose(
     settings: Option<&Settings>,

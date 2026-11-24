@@ -70,6 +70,7 @@ pub enum Goal {
 /// code: 0; for `cuno run` the program's; for `cuno test`, 1 when a test
 /// failed or an executable's tests could not be listed. A failed build is
 /// an error, which exits 1 too.
+// Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn build(
     goal: Goal,

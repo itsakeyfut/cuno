@@ -1,7 +1,7 @@
 //! The headers and the test runtime bundled with cuno, embedded in the binary
-//! and written to the cuno home, where every build includes them
-//! (`docs/en/specs/distribution.md`, "cuno home"; `docs/en/specs/build.md`,
-//! "Default include paths").
+//! (through this crate) and written to the cuno home by the build commands,
+//! where every build includes them (`docs/en/specs/distribution.md`, "cuno
+//! home directory"; `docs/en/specs/build.md`, "Default include paths").
 
 use std::fmt;
 use std::io;
@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use cuno_core::{CunoError, ExitClass};
 
-/// Every bundled file, by its path under the include directory.
+/// Every bundled file, by its path under the include directory. The files
+/// live in the repository's `headers/`, outside this crate's directory, as
+/// the integration tests read them there too.
 const FILES: [(&str, &str); 3] = [
     ("cuno/test.h", include_str!("../../../headers/cuno/test.h")),
     (

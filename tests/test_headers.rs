@@ -18,7 +18,7 @@ use support::{Project, Run};
 const COMPILERS: [Compiler; 3] = [Compiler::Msvc, Compiler::Clang, Compiler::ClangCl];
 
 /// The headers in this repository, which cuno embeds and writes to the cuno
-/// home unchanged (`src/bundled.rs`).
+/// home unchanged (`crates/cuno-build/src/bundled.rs`).
 fn headers() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("headers")
 }

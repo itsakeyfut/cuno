@@ -2,7 +2,11 @@
 //! command that compiles. `cuno build` (and the other build commands) take
 //! the steps in order through [`ready`], stopping at the first problem;
 //! `cuno doctor` calls the same steps one at a time and goes on after one.
-//! The real registry and runner are chosen by the caller and passed in. See
+//!
+//! As a library this reads nothing from the process: the temporary
+//! directory, the environment and the host come in as values, and so do the
+//! real registry and runner, which the caller chooses (`docs/en/specs/
+//! architecture.md`, "Dependencies between crates"). See
 //! `docs/en/specs/toolchain.md`.
 
 use std::path::{Path, PathBuf};
@@ -19,6 +23,10 @@ use cuno_toolchain::{HostOs, Runner, ToolchainError};
 use crate::bundled;
 use crate::input::{CompileSettings, compile_settings};
 
+/// The steps fail with errors of several crates, each a `CunoError`, and
+/// return them as one type. The command code above this crate has a helper
+/// of its own for the same; a crate cannot share one with the code that
+/// depends on it.
 fn boxed(e: impl CunoError + 'static) -> Box<dyn CunoError> {
     Box::new(e)
 }
@@ -84,8 +92,9 @@ pub fn probe_compile(
 }
 
 /// Runs the standard library probe of `selected`, in a scratch directory
-/// under `temp` whose name carries `command` (`build`, `doctor`). Ok for a compiler it
-/// does not apply to (`cuno_toolchain::probe::check` decides), so a caller need not ask
+/// under `temp`, the temporary directory, whose name carries `command`
+/// (`build`, `doctor`). Ok for a compiler it does not apply to
+/// (`cuno_toolchain::probe::check` decides), so a caller need not ask
 /// first; doctor still does, to print `Accepted` only for one it checked.
 pub fn probe(
     selected: &Selected,
@@ -121,7 +130,8 @@ pub struct Ready {
 /// variable left out of the environment is warned about here, as the build
 /// prepares it; the first problem is returned for the caller to report,
 /// and no later step runs. The probe's scratch directory is made under
-/// `temp`.
+/// `temp`, and the environment is resolved through `registry`.
+// Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn ready(
     settings: &Settings,
@@ -170,10 +180,10 @@ pub fn ready(
     Ok(Ready { selected, prepared })
 }
 
-/// Runs the check of `what` for `command` with a scratch directory of this
-/// process's own under `temp`, the temporary directory, removed afterwards.
-/// Shared by the standard library probe and `cuno doctor`'s clang-tidy
-/// check.
+/// Runs the check of `what` with a scratch directory of this process's own
+/// under `temp`, the temporary directory, removed afterwards. `command`
+/// names the directory, so a reader of the temporary directory can tell
+/// which cuno command left one behind.
 pub fn in_scratch(
     temp: &Path,
     command: &str,
@@ -182,17 +192,19 @@ pub fn in_scratch(
 ) -> Result<(), Box<dyn CunoError>> {
     // `create_dir`, not `create_dir_all`: a temporary directory that does not
     // exist is a problem to report, not a tree to make.
+    // The process id keeps two cuno processes apart. It is the process's
+    // identity, not its environment, so a library may ask for it.
     let scratch = temp.join(format!("cuno-{command}-{}", std::process::id()));
     std::fs::create_dir(&scratch).map_err(|e| {
-        Box::new(ScratchError {
+        boxed(ScratchError {
             what,
             dir: scratch.clone(),
             reason: e.to_string(),
-        }) as Box<dyn CunoError>
+        })
     })?;
     let result = check(&scratch);
     let _ = std::fs::remove_dir_all(&scratch);
-    result.map_err(|e| Box::new(e) as Box<dyn CunoError>)
+    result.map_err(boxed)
 }
 
 /// The probe's scratch directory cannot be made in the temporary
