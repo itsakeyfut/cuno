@@ -23,9 +23,11 @@ pub struct LinkInput<'a> {
 
 /// The file the linker takes `lib` from, for a `links` entry built with
 /// `kind`: `<lib>.lib` for every compiler cuno builds with, as all build for
-/// the MSVC ABI. The link command names it and the build looks for it in
-/// `lib-dirs` to relink when it changes, so both ask here and a compiler
-/// naming libraries otherwise has one place to answer.
+/// the MSVC ABI. The MSVC and clang-cl link commands name it, clang's
+/// `-l<lib>` is found as it by lld, and the build looks for it in
+/// `lib-dirs` to relink when it changes. A compiler naming libraries
+/// otherwise answers here, and its link command must then name the same
+/// file.
 pub fn library_file(kind: CompilerKind, lib: &str) -> String {
     match kind {
         CompilerKind::Msvc | CompilerKind::ClangCl | CompilerKind::Clang => format!("{lib}.lib"),
@@ -148,11 +150,12 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
 mod tests {
     use super::*;
 
-    /// Every compiler cuno builds with names a library `<lib>.lib`, and the
-    /// link command names it so for MSVC and clang-cl.
+    /// Every compiler cuno builds with names a library `<lib>.lib`.
     ///
-    /// Mutation: name it otherwise for one compiler, or write the link
-    /// command's library without `library_file`; this test fails.
+    /// Mutation: name it otherwise for one compiler; this test fails. The
+    /// callers' use of it (the link command, the relink check) cannot be
+    /// told from writing `<lib>.lib` themselves while every compiler
+    /// answers the same, so no test guards that they ask.
     #[test]
     fn a_library_is_its_lib_file() {
         for kind in CompilerKind::ALL {
