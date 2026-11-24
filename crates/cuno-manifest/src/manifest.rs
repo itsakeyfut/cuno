@@ -793,6 +793,7 @@ pub fn valid_package_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuno_core::ExitClass;
 
     /// Mutation: allow a leading digit, `-` or `_`, another character, or
     /// an empty name; or refuse `-` or `_` after the first; this test fails.
@@ -805,7 +806,6 @@ mod tests {
             assert!(!valid_package_name(bad), "{bad}");
         }
     }
-    use cuno_core::ExitClass;
 
     /// Every compiler kind maps to the name of its own `[build.<compiler>]`
     /// table, which is also the kind's own name.
