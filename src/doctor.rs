@@ -15,9 +15,8 @@ use cuno_toolchain::probe::{self, ProbeInputs};
 use cuno_toolchain::select::{self, Choices, Found};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
-use crate::bundled;
-use crate::scratch;
-use crate::toolchain::{self, ProbeCompile};
+use cuno_build::bundled;
+use cuno_build::toolchain::{self, ProbeCompile};
 
 /// Prints `error:` and `help:` and counts problems, and prints the
 /// findings that are not problems as status lines, which the shell leaves
@@ -51,6 +50,7 @@ pub fn doctor(
     env: &Env,
     cwd: &Path,
     host: HostOs,
+    temp: &Path,
     shell: &mut Shell,
 ) -> usize {
     let mut problems = Problems { shell, count: 0 };
@@ -102,13 +102,21 @@ pub fn doctor(
         env,
         cwd,
         host,
+        temp,
         &runner,
         &mut problems,
     );
     // A configured path with no file is already reported; every tool
     // missing after it would only repeat it.
     if !no_llvm {
-        tools(&llvm, diagnosed.stl.as_ref(), host, &runner, &mut problems);
+        tools(
+            &llvm,
+            diagnosed.stl.as_ref(),
+            host,
+            temp,
+            &runner,
+            &mut problems,
+        );
     }
     others(&diagnosed, found, !no_llvm, host, &mut problems);
 
@@ -150,6 +158,7 @@ fn diagnose(
     env: &Env,
     cwd: &Path,
     host: HostOs,
+    temp: &Path,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
 ) -> Diagnosed {
@@ -279,7 +288,7 @@ fn diagnose(
         return diagnosed;
     };
     if borrows_msvc {
-        match toolchain::probe(&selected, &stl, "doctor", runner) {
+        match toolchain::probe(&selected, &stl, temp, "doctor", runner) {
             Ok(()) => problems.status("Accepted", "by the MSVC standard library"),
             Err(error) => problems.report(&*error),
         }
@@ -294,6 +303,7 @@ fn tools(
     llvm: &[cuno_toolchain::llvm::LlvmTool],
     stl: Option<&ProbeCompile>,
     host: HostOs,
+    temp: &Path,
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
 ) {
@@ -308,7 +318,7 @@ fn tools(
         problems.status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
             && let Some(stl) = stl
-            && let Err(error) = scratch::in_scratch("doctor", "clang-tidy", |scratch| {
+            && let Err(error) = toolchain::in_scratch(temp, "doctor", "clang-tidy", |scratch| {
                 probe::check_tidy(
                     &chosen,
                     &stl.env,

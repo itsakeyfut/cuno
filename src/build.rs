@@ -11,11 +11,11 @@ use std::time::Instant;
 
 use cuno_build::exec::SystemSpawner;
 use cuno_build::pipeline::{self, Request, Toolchain};
+use cuno_build::{bundled, toolchain};
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{CliSettings, Inputs, Profile};
+use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::{HostOs, SystemRunner};
-
-use crate::{bundled, toolchain};
 
 /// The options of `cuno build` (`commands.md`, "Build commands").
 #[derive(Debug, Default)]
@@ -70,6 +70,7 @@ pub enum Goal {
 /// code: 0; for `cuno run` the program's; for `cuno test`, 1 when a test
 /// failed or an executable's tests could not be listed. A failed build is
 /// an error, which exits 1 too.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     goal: Goal,
     args: BuildArgs,
@@ -77,6 +78,7 @@ pub fn build(
     env: &Env,
     cwd: &Path,
     host: HostOs,
+    temp: &Path,
     shell: &mut Shell,
 ) -> Result<i32, Box<dyn CunoError>> {
     let started = Instant::now();
@@ -115,7 +117,9 @@ pub fn build(
         profile,
         env,
         host,
+        temp,
         &runner,
+        &SystemRegistry,
         shell,
     )?;
     let version = selected.version.to_string();

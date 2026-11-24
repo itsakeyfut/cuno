@@ -11,17 +11,21 @@ use cuno_core::{CunoError, ExitClass};
 
 /// Every bundled file, by its path under the include directory.
 const FILES: [(&str, &str); 3] = [
-    ("cuno/test.h", include_str!("../headers/cuno/test.h")),
-    ("cuno/test.hpp", include_str!("../headers/cuno/test.hpp")),
+    ("cuno/test.h", include_str!("../../../headers/cuno/test.h")),
+    (
+        "cuno/test.hpp",
+        include_str!("../../../headers/cuno/test.hpp"),
+    ),
     (
         "cuno/test_main.c",
-        include_str!("../headers/cuno/test_main.c"),
+        include_str!("../../../headers/cuno/test_main.c"),
     ),
 ];
 
 /// The include directory of this version of cuno under `home`. Each version
 /// has its own, so updating cuno does not change what an existing project
-/// builds with.
+/// builds with. Every crate takes the workspace's version, so this crate's
+/// version is cuno's.
 pub fn include_dir(home: &Path) -> PathBuf {
     home.join("include").join(env!("CARGO_PKG_VERSION"))
 }

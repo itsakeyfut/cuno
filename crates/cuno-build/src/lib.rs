@@ -3,6 +3,7 @@
 //!
 //! See `docs/en/specs/build.md`.
 
+pub mod bundled;
 pub mod compdb;
 pub mod deps;
 mod error;
@@ -13,5 +14,6 @@ pub mod layout;
 pub mod pipeline;
 pub mod sources;
 pub mod state;
+pub mod toolchain;
 
 pub use error::BuildError;
