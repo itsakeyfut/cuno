@@ -6,8 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use cuno_build::layout::{is_claimed, profile_dir_name};
-use cuno_core::{CunoError, Env, ExitClass, Shell};
-use cuno_manifest::{CliSettings, Inputs};
+use cuno_core::{CunoError, ExitClass, Shell};
+use cuno_manifest::{ConfigError, Settings};
 
 use crate::build::{CommandError, boxed, profile_named};
 
@@ -18,18 +18,17 @@ pub struct CleanArgs {
     pub release: bool,
     /// `--profile`.
     pub profile: Option<String>,
-    /// `--target-dir`.
-    pub target_dir: Option<PathBuf>,
 }
 
 /// Removes the output directory of the project around `cwd`, or with a
 /// profile only that profile's directory in it, and says how many files
 /// went. Nothing is removed unless the settings accept the output
 /// directory and a build marked it as cuno's (`docs/en/specs/commands.md`,
-/// "`cuno clean`").
+/// "`cuno clean`"). `resolved` are the settings read before dispatch;
+/// outside a project their error is not reported.
 pub fn clean(
     args: CleanArgs,
-    env: &Env,
+    resolved: Result<Settings, ConfigError>,
     cwd: &Path,
     shell: &mut Shell,
 ) -> Result<(), Box<dyn CunoError>> {
@@ -37,20 +36,6 @@ pub fn clean(
         (false, None) => None,
         (release, name) => Some(profile_named(release, name.as_deref())?),
     };
-    let cli = CliSettings {
-        target_dir: args.target_dir,
-        ..CliSettings::default()
-    };
-    // Read first, so that outside a project too the error is colored as the
-    // user's configuration says, as `cuno build`'s is.
-    let resolved = crate::resolve_settings(
-        Inputs {
-            cwd,
-            env,
-            cli: &cli,
-        },
-        shell,
-    );
     // Outside a project the error says so, rather than judging an output
     // directory there is nothing to clean in.
     if cuno_manifest::find_project(cwd).is_none() {

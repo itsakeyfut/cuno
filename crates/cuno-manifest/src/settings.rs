@@ -84,17 +84,49 @@ impl Settings {
     }
 }
 
+/// The `[term]` settings, which every command applies before its work.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Term {
+    /// `[term] color`.
+    pub color: Option<ColorChoice>,
+    /// `[term] verbose`.
+    pub verbose: bool,
+}
+
+/// The cuno home, its error as a configuration error.
+fn home_dir(env: &Env) -> Result<PathBuf, ConfigError> {
+    cuno_home(env).map_err(|e| ConfigError {
+        message: e.to_string(),
+        location: None,
+        help: e.help(),
+    })
+}
+
+/// What `cuno new` reads: the `[term]` of the user's
+/// `<cuno home>/config.toml` alone, not any project around `cwd`, which is
+/// not the new package's (`docs/en/specs/commands.md`, "Available for all
+/// commands"). A file that cannot be read is an error, as for every
+/// command; `cwd` only shapes how its path is shown.
+pub fn resolve_user(env: &Env, cwd: &Path) -> Result<Loaded<Term>, ConfigError> {
+    let home = home_dir(env)?;
+    let file = home.join("config.toml");
+    let user = load_config(&file, &shown_path(&file, cwd), &home)?;
+    Ok(Loaded {
+        value: Term {
+            color: user.value.color,
+            verbose: user.value.verbose.unwrap_or(false),
+        },
+        warnings: user.warnings,
+    })
+}
+
 /// Reads every layer and resolves every setting. Warnings from all files
 /// come back together: `cuno.toml`'s, then `.cuno/config.toml`'s, then the
 /// user-level file's.
 pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let Inputs { cwd, env, cli } = inputs;
     let case = env.case();
-    let home = cuno_home(env).map_err(|e| ConfigError {
-        message: e.to_string(),
-        location: None,
-        help: e.help(),
-    })?;
+    let home = home_dir(env)?;
     let mut warnings: Vec<ConfigWarning> = Vec::new();
 
     let project = match find_project(cwd) {
