@@ -21,6 +21,19 @@ pub struct LinkInput<'a> {
     pub subsystem: Subsystem,
 }
 
+/// The file the linker takes `lib` from, for a `links` entry built with
+/// `kind`: `<lib>.lib` for every compiler cuno builds with, as all build for
+/// the MSVC ABI. The MSVC and clang-cl link commands name it, clang's
+/// `-l<lib>` is found as it by lld, and the build looks for it in
+/// `lib-dirs` to relink when it changes. A compiler naming libraries
+/// otherwise answers here, and its link command must then name the same
+/// file.
+pub fn library_file(kind: CompilerKind, lib: &str) -> String {
+    match kind {
+        CompilerKind::Msvc | CompilerKind::ClangCl | CompilerKind::Clang => format!("{lib}.lib"),
+    }
+}
+
 /// The arguments for the driver to link `objects` into `exe`: the driver's
 /// own switches, the objects and the output, then the linker's arguments
 /// (after `/link` for MSVC and clang-cl), with `link-flags` last.
@@ -99,7 +112,7 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
     // Everything after `/link` goes to the linker itself.
     args.push("/link".into());
     for lib in &build.links {
-        args.push(format!("{lib}.lib").into());
+        args.push(library_file(input.kind, lib).into());
     }
     for dir in &build.lib_dirs {
         let mut arg = OsString::from("/LIBPATH:");
@@ -136,6 +149,19 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every compiler cuno builds with names a library `<lib>.lib`.
+    ///
+    /// Mutation: name it otherwise for one compiler; this test fails. The
+    /// callers' use of it (the link command, the relink check) cannot be
+    /// told from writing `<lib>.lib` themselves while every compiler
+    /// answers the same, so no test guards that they ask.
+    #[test]
+    fn a_library_is_its_lib_file() {
+        for kind in CompilerKind::ALL {
+            assert_eq!(library_file(kind, "foo"), "foo.lib", "{kind:?}");
+        }
+    }
     use crate::flags::Runtime;
 
     fn build() -> BuildSettings {
