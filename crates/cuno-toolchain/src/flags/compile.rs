@@ -206,6 +206,21 @@ pub fn compile_args(
     args
 }
 
+/// The arguments that make `kind` color its diagnostics when cuno colors
+/// (`color`), placed first so a user's `-fno-color-diagnostics` in `flags`
+/// comes later and wins: through a pipe Clang colors only when asked, and
+/// on Windows writes color as escape codes only with the second flag. cl
+/// has no such switch, and nothing is given when cuno does not color
+/// (`docs/en/specs/build.md`, "Always-on flags").
+pub fn color_args(kind: CompilerKind, color: bool) -> Vec<OsString> {
+    match (color, kind.family()) {
+        (true, Family::Llvm) => ["-fcolor-diagnostics", "-fansi-escape-codes"]
+            .map(OsString::from)
+            .to_vec(),
+        (false, _) | (true, Family::Msvc) => Vec::new(),
+    }
+}
+
 /// The arguments that make `kind` write the headers a compile read into
 /// `file` (`build.md`, "Settings and flags"). They come after
 /// [`compile_args`], so they follow the user's `flags` and win over a
@@ -297,6 +312,22 @@ impl Flags {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clang is asked to color, and to write color as escape codes, only
+    /// when cuno colors; cl is given nothing either way.
+    ///
+    /// Mutation: give MSVC the flags, give clang or clang-cl none when
+    /// coloring, or some when not, or drop or reorder one; this test fails.
+    #[test]
+    fn color_args_follow_the_family() {
+        let flags = ["-fcolor-diagnostics", "-fansi-escape-codes"];
+        for kind in [CompilerKind::Clang, CompilerKind::ClangCl] {
+            assert_eq!(strings(color_args(kind, true)), flags, "{kind:?}");
+            assert!(color_args(kind, false).is_empty(), "{kind:?}");
+        }
+        assert!(color_args(CompilerKind::Msvc, true).is_empty());
+        assert!(color_args(CompilerKind::Msvc, false).is_empty());
+    }
 
     const DRIVERS: [CompilerKind; 3] = [
         CompilerKind::Msvc,

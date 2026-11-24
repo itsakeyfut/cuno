@@ -86,6 +86,16 @@ impl CompilerKind {
         }
     }
 
+    /// Whether it prints the source's name on stdout for each compile, which
+    /// the build leaves out of what it shows: cl does, the LLVM drivers do
+    /// not.
+    pub fn echoes_source_name(self) -> bool {
+        match self {
+            CompilerKind::Msvc => true,
+            CompilerKind::Clang | CompilerKind::ClangCl => false,
+        }
+    }
+
     /// How it says which headers a compile read.
     pub fn dependencies(self) -> Dependencies {
         match self {
@@ -151,6 +161,15 @@ impl CompilerKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mutation: answer true for clang or clang-cl, or false for MSVC; this
+    /// test fails.
+    #[test]
+    fn only_cl_echoes_the_source_name() {
+        assert!(CompilerKind::Msvc.echoes_source_name());
+        assert!(!CompilerKind::Clang.echoes_source_name());
+        assert!(!CompilerKind::ClangCl.echoes_source_name());
+    }
 
     /// Mutation: leave a compiler out of `ALL`, list it twice, or reorder it;
     /// this test fails. (A new variant does not compile here until this

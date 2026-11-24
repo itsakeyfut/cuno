@@ -6,10 +6,10 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use cuno_toolchain::compiler::{CompilerKind, Dependencies, Family};
+use cuno_toolchain::compiler::{CompilerKind, Dependencies};
 use cuno_toolchain::flags::{
-    BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, compile_args,
-    dependency_args, link_args,
+    BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, color_args, compile_args,
+    dependency_args, library_file, link_args,
 };
 
 use crate::deps::Headers;
@@ -188,13 +188,12 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 p.layout.check_stamp(p.package, &source.path),
             ),
         };
-        let echo = match p.kind.family() {
-            Family::Msvc => source
-                .path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned()),
-            Family::Llvm => None,
-        };
+        let echo = p
+            .kind
+            .echoes_source_name()
+            .then(|| source.path.file_name())
+            .flatten()
+            .map(|name| name.to_string_lossy().into_owned());
         let headers = match p.kind.dependencies() {
             Dependencies::SourceDependencies => Headers::Json(output.with_extension("json")),
             Dependencies::DepFile => Headers::DepFile(output.with_extension("d")),
@@ -217,14 +216,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .cloned()
                 .collect(),
             looked_for: Vec::new(),
-            // Through a pipe Clang colors only when asked, and on Windows
-            // writes color as escape codes only with the second flag.
-            color: match (p.color, p.kind.family()) {
-                (true, Family::Llvm) => ["-fcolor-diagnostics", "-fansi-escape-codes"]
-                    .map(OsString::from)
-                    .to_vec(),
-                (false, _) | (true, Family::Msvc) => Vec::new(),
-            },
+            color: color_args(p.kind, p.color),
         });
         steps.len() - 1
     };
@@ -347,14 +339,14 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             after,
             echo: None,
             headers: None,
-            reads: libraries(p.link.0),
+            reads: libraries(p.kind, p.link.0),
             searched: p.link.0.lib_dirs.clone(),
             looked_for: p
                 .link
                 .0
                 .links
                 .iter()
-                .map(|lib| PathBuf::from(format!("{lib}.lib")))
+                .map(|lib| PathBuf::from(library_file(p.kind, lib)))
                 .collect(),
             color: Vec::new(),
         });
@@ -363,9 +355,10 @@ pub fn plan(p: &Plan<'_>) -> Graph {
 }
 
 /// The libraries of `links` found in `lib-dirs`: for each, the first
-/// `<lib>.lib` searching `lib-dirs` in order, as the linker searches them.
-/// A library found nowhere there is a system one, found through `LIB`.
-fn libraries(build: &BuildSettings) -> Vec<PathBuf> {
+/// [`library_file`] searching `lib-dirs` in order, as the linker searches
+/// them. A library found nowhere there is a system one, found through
+/// `LIB`.
+fn libraries(kind: CompilerKind, build: &BuildSettings) -> Vec<PathBuf> {
     build
         .links
         .iter()
@@ -373,7 +366,7 @@ fn libraries(build: &BuildSettings) -> Vec<PathBuf> {
             build
                 .lib_dirs
                 .iter()
-                .map(|dir| dir.join(format!("{lib}.lib")))
+                .map(|dir| dir.join(library_file(kind, lib)))
                 .find(|path| path.is_file())
         })
         .collect()
@@ -614,7 +607,7 @@ mod tests {
         build.links = vec!["foo".into(), "bar".into(), "kernel32".into()];
         build.lib_dirs = vec![first.clone(), second.clone()];
         assert_eq!(
-            libraries(&build),
+            libraries(CompilerKind::Msvc, &build),
             [first.join("foo.lib"), second.join("bar.lib")]
         );
     }
