@@ -1106,3 +1106,40 @@ fn clangs_diagnostics_are_colored_when_cunos_output_is() {
         assert!(!diagnostic.contains('\x1b'), "{name}: {}", opted_out.stderr);
     }
 }
+
+/// A build whose temporary directory does not exist stops before compiling
+/// with a setup problem naming the directory and the check, as doctor
+/// reports it, and does not create the directory (`toolchain.md`, "Minimum
+/// compiler versions").
+///
+/// Mutation: hand the build another temporary directory than the process's
+/// in `src/main.rs`, or create the missing one with its parents; this test
+/// fails.
+#[test]
+fn a_missing_temporary_directory_stops_the_build() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/main.cpp", "int main() { return 0; }\n");
+    let missing = project.home().join("missing");
+    let temp = missing.join("temp");
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["build", "--compiler", "clang"])
+        .env("TEMP", &temp)
+        .env("TMP", &temp);
+    let run = project.run_command(cmd);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    let error = format!("error: cannot create {}\\cuno-build-", temp.display());
+    assert!(run.stderr.contains(&error), "{}", run.stderr);
+    assert!(run.stderr.contains(" to check clang: "), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("help: set TEMP to a directory that exists and can be written\n"),
+        "{}",
+        run.stderr
+    );
+    assert!(!missing.exists(), "the temporary directory was created");
+    assert!(!project.path().join("target/debug/app.exe").exists());
+}

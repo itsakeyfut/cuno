@@ -246,8 +246,9 @@ mod tests {
     /// The scratch directory is made under the temporary directory the
     /// caller gives, named for the command, and removed afterwards.
     ///
-    /// Mutation: make it under `std::env::temp_dir()` instead of `temp`, or
-    /// leave it behind; this test fails.
+    /// Mutation: make it under `std::env::temp_dir()` instead of `temp`,
+    /// leave the process id out of its name, or leave it behind; this test
+    /// fails.
     #[test]
     fn the_scratch_directory_is_made_under_the_given_temporary_directory() {
         let temp = tempfile::tempdir().unwrap();
@@ -261,7 +262,7 @@ mod tests {
         let seen = seen.unwrap();
         assert_eq!(seen.parent(), Some(temp.path()));
         let name = seen.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with("cuno-build-"), "{name}");
+        assert_eq!(name, format!("cuno-build-{}", std::process::id()));
         assert!(!seen.exists(), "the scratch directory was left behind");
     }
 

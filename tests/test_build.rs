@@ -413,3 +413,67 @@ fn the_runner_judges_what_the_build_made() {
         );
     }
 }
+
+/// The registry a caller hands `cuno_build::toolchain::ready`, counting
+/// what it is asked and answering as the machine's does.
+struct Counting(std::cell::Cell<usize>);
+
+impl cuno_toolchain::msvc::Registry for Counting {
+    fn local_machine_string(&self, key: &str, value: &str) -> Option<OsString> {
+        self.0.set(self.0.get() + 1);
+        SystemRegistry.local_machine_string(key, value)
+    }
+}
+
+/// `ready` resolves the environment through the registry its caller gives,
+/// as the library reads nothing of the machine on its own
+/// (`architecture.md`, "Dependencies between crates").
+///
+/// Mutation: resolve with `SystemRegistry` inside `ready` instead of the
+/// `registry` given; this test fails.
+#[test]
+fn ready_asks_the_registry_it_is_given() {
+    for (name, compiler) in COMPILERS {
+        if require(compiler, Language::C, "x.c", "x.exe").is_none() {
+            continue;
+        }
+        let p = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", "int main() { return 0; }\n");
+        let env = environment(&p);
+        let cli = CliSettings {
+            compiler: Some(name.to_owned()),
+            ..CliSettings::default()
+        };
+        let settings = cuno_manifest::resolve(Inputs {
+            cwd: p.path(),
+            env: &env,
+            cli: &cli,
+        })
+        .expect("the settings")
+        .value;
+        let (project, manifest) = settings.project.as_ref().expect("a project");
+        let registry = Counting(std::cell::Cell::new(0));
+        let mut shell = Shell::new(Box::new(std::io::sink()), None, &env, false);
+        let ready = cuno_build::toolchain::ready(
+            &settings,
+            (&project.root, manifest),
+            Profile::Dev,
+            &env,
+            HostOs::Windows,
+            &std::env::temp_dir(),
+            &SystemRunner::new(),
+            &registry,
+            &mut shell,
+        );
+        assert!(
+            ready.is_ok(),
+            "{name}: {:?}",
+            ready.err().map(|e| e.to_string())
+        );
+        assert!(
+            registry.0.get() > 0,
+            "{name}: the registry given was not asked"
+        );
+    }
+}
