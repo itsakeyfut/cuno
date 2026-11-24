@@ -360,7 +360,6 @@ pub fn test_executables(
     Ok(exes)
 }
 
-/// The default entry file's name for a package in `lang`.
 /// The search of `src/` for sources.
 struct Walk<'a> {
     root: &'a Path,
