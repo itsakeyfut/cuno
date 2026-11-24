@@ -4,13 +4,10 @@
 //! codes, and `docs/en/specs/architecture.md` for how the crates are split.
 
 mod build;
-mod bundled;
 mod clean;
 mod doctor;
 mod new;
-mod scratch;
 mod settings;
-mod toolchain;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -356,6 +353,7 @@ fn run(
                 env,
                 &cwd,
                 cuno_toolchain::HostOs::current(),
+                &std::env::temp_dir(),
                 shell,
             );
             return Ok(if problems == 0 { 0 } else { 1 });
@@ -379,6 +377,7 @@ fn run(
         env,
         &cwd,
         cuno_toolchain::HostOs::current(),
+        &std::env::temp_dir(),
         shell,
     )
 }
