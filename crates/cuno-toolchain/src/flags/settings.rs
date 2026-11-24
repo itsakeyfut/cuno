@@ -79,6 +79,16 @@ pub enum OptLevel {
 }
 
 impl Lang {
+    /// The entry file a package of this language has when `cuno.toml` names
+    /// none, relative to the package root as `cuno.toml` writes paths
+    /// (`docs/en/specs/project-layout.md`).
+    pub fn default_entry(self) -> &'static str {
+        match self {
+            Lang::C => "src/main.c",
+            Lang::Cxx => "src/main.cpp",
+        }
+    }
+
     /// The edition a package of this language gets by default.
     pub fn default_edition(self) -> Edition {
         match self {

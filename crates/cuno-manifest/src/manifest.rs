@@ -747,10 +747,7 @@ impl Check<'_> {
 
     fn bin(&self, index: usize, raw: RawBin, package: &Package) -> Result<Bin, ConfigError> {
         let prefix = format!("bin.{index}");
-        let default_path = match package.lang {
-            Lang::C => "src/main.c",
-            Lang::Cxx => "src/main.cpp",
-        };
+        let default_path = package.lang.default_entry();
         let name = raw.name.unwrap_or_else(|| package.name.clone());
         // The name becomes a file in the output directory, so it is held to
         // the package name's rule: no separators, no `..`, no drive.
