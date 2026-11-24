@@ -43,6 +43,15 @@ fn every_refusal_says_what_to_do() {
         "error: `1app` is not a valid package name\n\
          help: a package name starts with a letter and has only letters, digits, - and _\n",
     );
+    for reserved in ["con", "Com1", "LPT9"] {
+        p.cuno(&["new", "dir", "--name", reserved]).assert(
+            2,
+            "",
+            &format!(
+                "error: `{reserved}` is a reserved name on Windows\nhelp: choose another name\n"
+            ),
+        );
+    }
     p.cuno(&["new", "my game"]).assert(
         2,
         "",
@@ -65,44 +74,55 @@ fn every_refusal_says_what_to_do() {
     assert_eq!(unknown.code, Some(2), "{}", unknown.stderr);
 }
 
-/// A C++20, a C++17 and a C package, as generated, build, pass their tests
-/// and run on every compiler; each sample uses the test entry its standard
-/// selects (`testing.md`, "Recommended split and the `cuno new` sample").
+/// Every edition `cuno new` takes gives a package that builds, passes its
+/// tests and runs on every compiler, and with no warning even at the
+/// strictest settings a user may add (pedantic, warnings as errors, and for
+/// C++ no exceptions or RTTI): the sample is code cuno wrote into their
+/// package. Each sample uses the test entry its standard selects
+/// (`testing.md`, "Recommended split and the `cuno new` sample").
 ///
-/// Mutation: give C++17 the C++20 entry, put the tests in the entry file,
-/// leave `src/calc` out, or have `main` print anything else; this test
-/// fails.
+/// Mutation: give C++17 or C++23 the other entry, put a warning in a
+/// sample, put the tests in the entry file, map an edition to another, or
+/// have `main` print anything else; this test fails.
 #[test]
 fn every_generated_package_builds_tests_and_runs() {
-    for (args, test_line) in [
-        (&["new", "app"][..], "test add adds ... ok"),
-        (
-            &["new", "app", "--edition", "c++17"][..],
-            "test add_adds ... ok",
-        ),
-        (&["new", "app", "--lang", "c"][..], "test add_adds ... ok"),
+    for (edition, test_line) in [
+        ("c++20", "test add adds ... ok"),
+        ("c++23", "test add adds ... ok"),
+        ("c++17", "test add_adds ... ok"),
+        ("c11", "test add_adds ... ok"),
+        ("c17", "test add_adds ... ok"),
+        ("c23", "test add_adds ... ok"),
     ] {
         for (name, compiler) in COMPILERS {
             if require(compiler, Language::C, "x.c", "x.exe").is_none() {
                 continue;
             }
             let p = Project::new();
-            let made = p.cuno(&[args, &["--vcs", "none"]].concat());
-            assert_eq!(made.code, Some(0), "{args:?}: {}", made.stderr);
+            let made = p.cuno(&["new", "app", "--edition", edition, "--vcs", "none"]);
+            assert_eq!(made.code, Some(0), "{edition}: {}", made.stderr);
             let app = p.path().join("app");
-            let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
-            assert_eq!(test.code, Some(0), "{args:?} {name}:\n{}", test.stderr);
+            let manifest = std::fs::read_to_string(app.join("cuno.toml")).unwrap();
             assert!(
-                lf(&test.stderr).contains(test_line),
-                "{args:?} {name}:\n{}",
-                test.stderr
+                manifest.contains(&format!("edition = \"{edition}\"\n")),
+                "{edition}: {manifest}"
             );
+            let strict = if edition.starts_with("c++") {
+                "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\nexceptions = false\nrtti = false\n"
+            } else {
+                "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\n"
+            };
+            std::fs::write(app.join("cuno.toml"), format!("{manifest}{strict}")).unwrap();
+            let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
+            assert_eq!(test.code, Some(0), "{edition} {name}:\n{}", test.stderr);
+            let out = lf(&test.stderr);
+            assert!(out.contains(test_line), "{edition} {name}:\n{out}");
+            assert!(!out.contains("warning"), "{edition} {name}:\n{out}");
             let run = cuno_in(&p, &app, &["-q", "run", "--compiler", name], &[]);
             assert_eq!(
-                (run.code, lf(&run.stdout)),
-                (Some(0), "1 + 2 = 3\n".to_owned()),
-                "{args:?} {name}:\n{}",
-                run.stderr
+                (run.code, lf(&run.stdout), lf(&run.stderr)),
+                (Some(0), "1 + 2 = 3\n".to_owned(), String::new()),
+                "{edition} {name}"
             );
         }
     }
@@ -125,7 +145,9 @@ fn git_is_initialised_where_it_should_be() {
     assert!(p.path().join("fresh/.git").is_dir());
     assert_eq!(
         lf(&std::fs::read_to_string(p.path().join("fresh/.gitignore")).unwrap()),
-        "target/\n.cuno/\ncompile_commands.json\n.clang-format\n.clang-tidy\n"
+        "# What cuno makes, which is not edited by hand: the build's output, its\n\
+         # local settings, and the files it writes for editors, fmt and lint.\n\
+         target/\n.cuno/\ncompile_commands.json\n.clang-format\n.clang-tidy\n"
     );
 
     std::fs::create_dir_all(p.path().join("repo/.git")).unwrap();
@@ -158,4 +180,75 @@ fn quiet_creates_silently() {
     let p = Project::new();
     p.cuno(&["-q", "new", "app", "--vcs", "none"])
         .assert(0, "", "");
+}
+
+/// `--name` names the package whatever the directory is called; the
+/// package's directory is found with `..` resolved, so it is not taken to
+/// be inside a repository it only passes through on the way.
+///
+/// Mutation: write the directory's name into `cuno.toml`, or walk up the
+/// path as written; this test fails.
+#[test]
+fn the_name_and_the_place_are_the_packages() {
+    let p = Project::new();
+    let named = p.cuno(&["new", "dir", "--name", "other", "--vcs", "none"]);
+    assert_eq!(lf(&named.stderr), "     Created `other` package\n");
+    let manifest = std::fs::read_to_string(p.path().join("dir/cuno.toml")).unwrap();
+    assert!(manifest.contains("name = \"other\"\n"), "{manifest}");
+
+    std::fs::create_dir_all(p.path().join("repo/.git")).unwrap();
+    std::fs::create_dir_all(p.path().join("repo/sub")).unwrap();
+    std::fs::create_dir_all(p.path().join("elsewhere")).unwrap();
+    let run = cuno_in(
+        &p,
+        &p.path().join("repo/sub"),
+        &["new", "../../elsewhere/app"],
+        &[],
+    );
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        p.path().join("elsewhere/app/.git").is_dir(),
+        "git init was skipped"
+    );
+}
+
+/// When `git init` fails, a warning carries git's own message and no
+/// `.gitignore` is written; a warning survives `-q`; a file that cannot be
+/// written is exit code 3 naming it (`commands.md`, "`cuno new <path>`").
+///
+/// Mutation: drop the warning of a failed `git init`, write a
+/// `.gitignore` anyway, hide warnings under `-q`, or change the exit code
+/// of a write that fails; this test fails.
+#[test]
+fn failures_are_said_and_left_to_see() {
+    let p = Project::new();
+    std::fs::write(p.path().join("afile"), "").unwrap();
+    let bad_git = p.path().join("afile").join("sub");
+    let failed = cuno_in(
+        &p,
+        p.path(),
+        &["new", "app"],
+        &[("GIT_DIR", bad_git.to_str().unwrap())],
+    );
+    assert_eq!(failed.code, Some(0), "{}", failed.stderr);
+    assert!(
+        lf(&failed.stderr).starts_with("warning: git init failed: fatal: "),
+        "{}",
+        failed.stderr
+    );
+    assert!(!p.path().join("app/.gitignore").exists());
+
+    let quiet = cuno_in(&p, p.path(), &["-q", "new", "quiet"], &[("PATH", "")]);
+    assert_eq!(
+        lf(&quiet.stderr),
+        "warning: git was not found; the package is not under version control\n"
+    );
+
+    let blocked = p.cuno(&["new", "afile/sub"]);
+    assert_eq!(blocked.code, Some(3), "{}", blocked.stderr);
+    assert!(
+        blocked.stderr.starts_with("error: cannot write "),
+        "{}",
+        blocked.stderr
+    );
 }

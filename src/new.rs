@@ -10,15 +10,16 @@ use cuno_toolchain::flags::{Edition, Lang};
 /// The options of `cuno new`.
 #[derive(Debug)]
 pub struct NewArgs {
-    /// Where to make the package.
+    /// Where to make the package, as given: relative to the current
+    /// directory, or absolute.
     pub path: PathBuf,
-    /// `--lang`.
+    /// `--lang`; C++ when neither it nor `--edition` is given.
     pub lang: Option<Lang>,
-    /// `--edition`.
+    /// `--edition`; the language's default when not given.
     pub edition: Option<Edition>,
-    /// `--name`.
+    /// `--name`; the directory's name when not given.
     pub name: Option<String>,
-    /// `--vcs`.
+    /// `--vcs`; Git by default.
     pub vcs: Vcs,
 }
 
@@ -35,6 +36,11 @@ pub enum Vcs {
 /// be written, which is the setup's (`commands.md`, "`cuno new <path>`").
 #[derive(Debug)]
 pub enum NewError {
+    /// A name Windows keeps for devices (`con`, `nul`, ...).
+    ReservedName {
+        /// The name.
+        name: String,
+    },
     /// A package name the rule does not allow.
     InvalidName {
         /// The name.
@@ -44,7 +50,7 @@ pub enum NewError {
     },
     /// The destination is already there.
     Exists {
-        /// It, as given.
+        /// The destination as the user gave it, which the message shows.
         path: PathBuf,
     },
     /// `--edition` is not a standard of `--lang`.
@@ -56,13 +62,15 @@ pub enum NewError {
     },
     /// A file or directory that could not be made.
     Write {
-        /// It.
+        /// The file or directory, in full.
         path: PathBuf,
         /// Why.
         reason: String,
     },
 }
 
+/// The language's name as messages write it (`C++`), where the manifest
+/// writes `c++`.
 fn lang_name(lang: Lang) -> &'static str {
     match lang {
         Lang::C => "C",
@@ -75,6 +83,9 @@ impl fmt::Display for NewError {
         match self {
             NewError::InvalidName { name, .. } => {
                 write!(f, "`{name}` is not a valid package name")
+            }
+            NewError::ReservedName { name } => {
+                write!(f, "`{name}` is a reserved name on Windows")
             }
             NewError::Exists { path } => write!(f, "`{}` already exists", path.display()),
             NewError::EditionMismatch { edition, lang } => write!(
@@ -96,6 +107,7 @@ impl CunoError for NewError {
     fn exit_class(&self) -> ExitClass {
         match self {
             NewError::InvalidName { .. }
+            | NewError::ReservedName { .. }
             | NewError::Exists { .. }
             | NewError::EditionMismatch { .. } => ExitClass::Usage,
             NewError::Write { .. } => ExitClass::Setup,
@@ -126,6 +138,7 @@ impl CunoError for NewError {
                     editions.join(", ")
                 ))
             }
+            NewError::ReservedName { .. } => Some("choose another name".to_owned()),
             NewError::Exists { .. } | NewError::Write { .. } => None,
         }
     }
@@ -137,6 +150,19 @@ pub fn valid_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Whether `name` is one Windows keeps for devices, in any case, which
+/// cannot name a file or directory there (`commands.md`, "`cuno new
+/// <path>`").
+pub fn reserved_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let numbered = |prefix: &str| {
+        lower
+            .strip_prefix(prefix)
+            .is_some_and(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit() && n != "0")
+    };
+    ["con", "prn", "aux", "nul"].contains(&lower.as_str()) || numbered("com") || numbered("lpt")
 }
 
 /// The language and the edition: `--lang` (C++ by default) and its default
@@ -173,9 +199,13 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
     let mut files = vec![("cuno.toml", manifest)];
     match lang {
         Lang::Cxx => {
+            // Every edition named, so a new one has to choose its sample.
             let calc = match edition {
                 Edition::Cxx17 => include_str!("../templates/cxx/calc17.cpp"),
-                _ => include_str!("../templates/cxx/calc.cpp"),
+                Edition::Cxx20 | Edition::Cxx23 => include_str!("../templates/cxx/calc.cpp"),
+                Edition::C11 | Edition::C17 | Edition::C23 => {
+                    unreachable!("a C edition with the C++ language")
+                }
             };
             files.push((
                 "src/main.cpp",
@@ -196,14 +226,16 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
 /// The `.gitignore` of a package under Git.
 const GITIGNORE: &str = include_str!("../templates/gitignore");
 
-/// Makes the package `args` describe, `args.path` taken from `cwd`.
+/// Makes the package `args` describe, `args.path` taken from `cwd`. Every
+/// refusal comes before anything is written; a file that cannot be written
+/// half way stops it there, leaving what was made for the user to see.
 pub fn new(args: NewArgs, cwd: &Path, quiet: bool, shell: &mut Shell) -> Result<(), NewError> {
-    let dir = cwd.join(&args.path);
+    // `..` resolved, so the directories above it are the ones it will be in.
+    let dir = cuno_core::paths::lexical(&cwd.join(&args.path));
     let (name, from_directory) = match &args.name {
         Some(name) => (name.clone(), false),
         None => (
-            cuno_core::paths::lexical(&dir)
-                .file_name()
+            dir.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             true,
@@ -214,6 +246,9 @@ pub fn new(args: NewArgs, cwd: &Path, quiet: bool, shell: &mut Shell) -> Result<
             name,
             from_directory,
         });
+    }
+    if reserved_name(&name) {
+        return Err(NewError::ReservedName { name });
     }
     let (lang, edition) = resolve(args.lang, args.edition)?;
     if dir.exists() {
@@ -236,9 +271,12 @@ pub fn new(args: NewArgs, cwd: &Path, quiet: bool, shell: &mut Shell) -> Result<
     for (relative, content) in files(&name, lang, edition) {
         write(relative, &content)?;
     }
+    // `commands.md`, "`--vcs`": a `.gitignore` goes with a repository, the
+    // package's own or the one it is in; with no repository (no git, or
+    // `git init` failing), neither is made, and a warning says why.
     if args.vcs == Vcs::Git {
         if in_repository {
-            // Part of the repository it is in (`commands.md`, "`--vcs`").
+            // No repository of its own: it is part of the one it is in.
             write(".gitignore", GITIGNORE)?;
         } else {
             match std::process::Command::new("git")
@@ -306,6 +344,12 @@ mod tests {
             Some("use --lang c, or an edition of C++: c++17, c++20, c++23")
         );
         assert_eq!(err.exit_class(), ExitClass::Usage);
+        let c = resolve(Some(Lang::C), Some(Edition::Cxx17)).unwrap_err();
+        assert_eq!(c.to_string(), "`c++17` is not a standard of C");
+        assert_eq!(
+            c.help().as_deref(),
+            Some("use --lang c++, or an edition of C: c11, c17, c23")
+        );
     }
 
     /// The manifest names the package, version 0.1.0, its language and
@@ -348,8 +392,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join(".git")).unwrap();
         assert!(inside_repository(&dir.path().join("a").join("app")));
-        let bare = tempfile::tempdir().unwrap();
-        assert!(!inside_repository(&bare.path().join("app")) || inside_repository(bare.path()));
+    }
+
+    /// Windows' device names are refused in any case; names that only start
+    /// like one are not.
+    ///
+    /// Mutation: compare with case, drop a family, or refuse `com0` or
+    /// `console`; this test fails.
+    #[test]
+    fn device_names_are_reserved() {
+        for name in ["con", "PRN", "Aux", "nul", "com1", "COM9", "lpt5"] {
+            assert!(reserved_name(name), "{name}");
+        }
+        for name in ["console", "com0", "com10", "lpt", "nulls", "auxiliary"] {
+            assert!(!reserved_name(name), "{name}");
+        }
     }
 
     /// Mutation: change any message, help or exit class; this test fails.
@@ -381,10 +438,15 @@ mod tests {
         for e in [named, from_dir, exists] {
             assert_eq!(e.exit_class(), ExitClass::Usage);
         }
+        let reserved = NewError::ReservedName { name: "con".into() };
+        assert_eq!(reserved.to_string(), "`con` is a reserved name on Windows");
+        assert_eq!(reserved.help().as_deref(), Some("choose another name"));
+        assert_eq!(reserved.exit_class(), ExitClass::Usage);
         let write = NewError::Write {
             path: PathBuf::from("x"),
             reason: "denied".into(),
         };
+        assert_eq!(write.to_string(), "cannot write x: denied");
         assert_eq!(write.exit_class(), ExitClass::Setup);
     }
 }

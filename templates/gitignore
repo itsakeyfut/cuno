@@ -1,3 +1,5 @@
+# What cuno makes, which is not edited by hand: the build's output, its
+# local settings, and the files it writes for editors, fmt and lint.
 target/
 .cuno/
 compile_commands.json
