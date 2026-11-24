@@ -13,4 +13,4 @@ mod shell;
 pub use env::{Env, NameCase};
 pub use error::{CunoError, ExitClass};
 pub use home::{HomeError, cuno_home};
-pub use shell::{ColorChoice, Shell};
+pub use shell::{ColorChoice, Shell, colors};

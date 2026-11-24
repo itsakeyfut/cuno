@@ -222,18 +222,12 @@ fn color_before_parsing(args: &[OsString]) -> Option<ColorChoice> {
     found.flatten()
 }
 
-/// Whether what clap makes is written with its colors on a stream: the
-/// choice given, or with none, no color under `NO_COLOR` (set to anything,
-/// even empty), and otherwise whether the stream is a terminal. Never clap's
-/// own `Auto`, which reads `CLICOLOR_FORCE`, a variable cuno does not read.
+/// Whether what clap makes is written with its colors on a stream, by
+/// [`cuno_core::colors`] with no configured choice: clap prints before the
+/// files are read. Never clap's own `Auto`, which reads `CLICOLOR_FORCE`, a
+/// variable cuno does not read.
 fn parser_color(given: Option<ColorChoice>, no_color: bool, terminal: bool) -> clap::ColorChoice {
-    let on = match given {
-        Some(ColorChoice::Always) => true,
-        Some(ColorChoice::Never) => false,
-        Some(ColorChoice::Auto) => terminal,
-        None => terminal && !no_color,
-    };
-    if on {
+    if cuno_core::colors(given, None, no_color, terminal) {
         clap::ColorChoice::Always
     } else {
         clap::ColorChoice::Never
