@@ -242,7 +242,7 @@ impl Records {
     fn command(&self, step: &Step) -> u64 {
         let mut bytes = self.identity.clone();
         framed(&mut bytes, step.program.as_os_str().as_encoded_bytes());
-        for arg in &step.args {
+        for arg in step.run_args() {
             framed(&mut bytes, arg.as_encoded_bytes());
         }
         fnv(&bytes)
@@ -536,6 +536,7 @@ mod tests {
             searched: Vec::new(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency: Vec::new(),
         };
         let records = fresh();
         records
@@ -883,6 +884,7 @@ mod tests {
             searched: searched.iter().map(|dir| root.join(dir)).collect(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency: Vec::new(),
         }
     }
 

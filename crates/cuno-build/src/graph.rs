@@ -75,6 +75,20 @@ pub struct Step {
     /// compiler color its diagnostics: part of neither the command a step
     /// is judged by nor `compile_commands.json` (`commands.md`, "Format").
     pub color: Vec<OsString>,
+    /// Arguments put after `args`, saying where a compile writes the
+    /// headers it read (`dependency_args`): part of the command a step runs
+    /// and is judged by, and not of `compile_commands.json`, since they are
+    /// the build's own bookkeeping rather than what a source means. Empty
+    /// for a link.
+    pub dependency: Vec<OsString>,
+}
+
+impl Step {
+    /// Every argument the step runs with, color aside: `args`, then
+    /// `dependency`.
+    pub fn run_args(&self) -> impl Iterator<Item = &OsString> {
+        self.args.iter().chain(&self.dependency)
+    }
 }
 
 /// Every step of a build, in an order where each comes after those it
@@ -198,8 +212,8 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             Dependencies::SourceDependencies => Headers::Json(output.with_extension("json")),
             Dependencies::DepFile => Headers::DepFile(output.with_extension("d")),
         };
-        let mut args = compile_args(&settings.input(), &source.path, Some(&output));
-        args.extend(dependency_args(p.kind, headers.file()));
+        let args = compile_args(&settings.input(), &source.path, Some(&output));
+        let dependency = dependency_args(p.kind, headers.file());
         steps.push(Step {
             kind,
             program: p.program.to_owned(),
@@ -217,6 +231,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .collect(),
             looked_for: Vec::new(),
             color: color_args(p.kind, p.color),
+            dependency,
         });
         steps.len() - 1
     };
@@ -349,6 +364,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .map(|lib| PathBuf::from(library_file(p.kind, lib)))
                 .collect(),
             color: Vec::new(),
+            dependency: Vec::new(),
         });
     }
     Graph { steps }
@@ -558,8 +574,11 @@ mod tests {
             for step in &g.steps[..4] {
                 let headers = step.headers.as_ref().unwrap();
                 assert_eq!(headers.file().parent(), step.output.parent(), "{kind:?}");
-                let tail = dependency_args(kind, headers.file());
-                assert!(step.args.ends_with(&tail), "{kind:?}: {:?}", step.args);
+                assert_eq!(
+                    step.dependency,
+                    dependency_args(kind, headers.file()),
+                    "{kind:?}"
+                );
                 let StepKind::Compile { source } = &step.kind else {
                     panic!("{kind:?}");
                 };
