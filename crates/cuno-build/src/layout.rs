@@ -104,6 +104,16 @@ impl Layout {
         &self.profile_dir
     }
 
+    /// `<profile dir>/test`, which holds everything of the test build (its
+    /// objects, executables and runtime) and each `cuno test` run's scratch
+    /// directory, so `cuno clean` removes what an interrupted run leaves
+    /// (`docs/en/specs/build.md`, "Output directory"). Only a test layout
+    /// has one.
+    pub fn test_dir(&self) -> PathBuf {
+        assert!(self.is_test(), "the test directory from a program's layout");
+        self.profile_dir.join("test")
+    }
+
     /// The object file for `source` of `package`:
     /// `obj/<package>/<source's path in the project>.obj`, so two sources
     /// of the same name in different directories, or `util.c` beside
@@ -157,14 +167,10 @@ impl Layout {
         let mut name = OsString::from(file);
         name.push(suffix);
         let dir = match self.variant {
-            Variant::Normal => "obj",
-            Variant::Test => "test",
+            Variant::Normal => self.profile_dir.join("obj"),
+            Variant::Test => self.test_dir(),
         };
-        self.profile_dir
-            .join(dir)
-            .join(package)
-            .join(under)
-            .join(name)
+        dir.join(package).join(under).join(name)
     }
 
     /// The program's executable `bin`. A test build makes none: its
@@ -181,8 +187,7 @@ impl Layout {
     /// layout has one; asking another is a bug in cuno.
     pub fn test_exe(&self, package: &str, name: &str) -> PathBuf {
         assert!(self.is_test(), "a test executable from a program's layout");
-        self.profile_dir
-            .join("test")
+        self.test_dir()
             .join(package)
             .join("bin")
             .join(self.executable(name))
@@ -194,8 +199,7 @@ impl Layout {
     /// beside the project's sources. Only a test layout has one.
     pub fn runtime_object(&self, package: &str, file: &str) -> PathBuf {
         assert!(self.is_test(), "a runtime object from a program's layout");
-        self.profile_dir
-            .join("test")
+        self.test_dir()
             .join(package)
             .join("cuno")
             .join(format!("{file}.obj"))
@@ -410,11 +414,12 @@ mod tests {
     /// `tests/` (`build.md`, "Output directory").
     ///
     /// Mutation: put test executables beside the program or the objects,
-    /// drop the package from either path, or the executable's suffix; this
-    /// test fails.
+    /// drop the package from either path, or the executable's suffix, or
+    /// move the test directory; this test fails.
     #[test]
     fn a_test_build_has_its_own_executables_and_runtime_objects() {
         let test = layout(Profile::Dev).for_tests();
+        assert_eq!(test.test_dir(), Path::new("C:/p/target/debug/test"));
         assert_eq!(
             test.test_exe("app", "tests-foo"),
             Path::new("C:/p/target/debug/test/app/bin/tests-foo.exe")
@@ -438,6 +443,14 @@ mod tests {
             other.test_exe("app", "app"),
             Path::new("/p/target/debug/test/app/bin/app")
         );
+    }
+
+    /// Mutation: let a program's layout give the test directory; this test
+    /// fails.
+    #[test]
+    #[should_panic(expected = "the test directory from a program's layout")]
+    fn a_program_layout_has_no_test_directory() {
+        layout(Profile::Dev).test_dir();
     }
 
     /// Mutation: let a test layout give a program's executable; this test
