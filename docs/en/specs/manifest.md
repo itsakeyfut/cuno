@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 970232d5b1a924cfc37e0a80a5d8b0a17b12bc16 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 4e1b7623a11b7562daedc05eee798804b8b5772a -->
 
 # Configuration Files
 
@@ -466,7 +466,7 @@ For cross-compilation. Per target, write the locations of required tools, etc. (
 
 `verbose`:
 
-- `true`: Always shows the same output as with `-v`.
+- `true`: Always shows the same output as with `-v`. When `-q` is given, however, `-q` wins ([commands.md](commands.md#available-for-all-commands)).
 - `false`: Normal output. Default.
 
 #### `[alias]`

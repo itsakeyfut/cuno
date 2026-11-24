@@ -464,7 +464,7 @@ rr = "run --release"
 
 `verbose`:
 
-- `true`: 常に `-v` 付きと同じ表示にする。
+- `true`: 常に `-v` 付きと同じ表示にする。ただし `-q` を指定したときは `-q` に従う（[commands.md](commands.md#全コマンドで使えるもの)）。
 - `false`: 通常の表示。既定値。
 
 #### `[alias]`

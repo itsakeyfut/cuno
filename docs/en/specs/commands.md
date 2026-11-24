@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 34e5ae1857f3a7e97b32fe413156ea8403d73792 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 5cc76c94aca88fdee9ce7d5909fbd74e07e68c2c -->
 
 # Commands
 
@@ -49,6 +49,13 @@ See [dependencies.md](dependencies.md) for the stages of dependency management.
 | `-v, --verbose` | Verbose output. For build commands, also prints the compiler commands that were run |
 | `-q, --quiet` | Minimal output |
 | `--color <when>` | Coloring (auto / always / never) |
+
+- `-q` leaves out only status lines. Status lines are progress and summary lines (`Compiling`, `Running`, `Finished`, `Created`, `Removed`, `cuno doctor`'s `Selected`, `Found` and `Info`, and so on). Errors, warnings, `help:`, a command's results (`cuno test`'s line for each test and its `test result:` line, and so on), and the output of other programs such as the compiler are kept. The note on `-q` in each command's section applies this rule, and new commands follow it too.
+- `-v` and `-q` cannot be given together (a usage error, exit code 2). Between `[term] verbose = true` in a configuration file and `-q`, `-q` wins.
+  - Reason: as with `--color`, a setting given explicitly in command arguments takes precedence over the configuration files.
+- After the arguments are parsed, every command reads the configuration files ([manifest.md](manifest.md)) before it starts its own work, so `[term] color` and `[term] verbose` apply to every command (`--help`, `cuno` with no command, and usage errors are printed before the files are read, as below). A configuration file that cannot be read, or has an error, is an error (exit code 3), and the command's work does not start; `cuno doctor`, however, reports it as a problem and goes on diagnosing ([`cuno doctor`](#cuno-doctor)).
+  - `cuno new` alone reads only the user's `<cuno home>/config.toml`, and does not read the `cuno.toml` and `.cuno/config.toml` of a project around the current directory. When the user's `config.toml` cannot be read or has an error, it is an error (exit code 3) as for other commands, and nothing is created.
+  - Reason: what `cuno new` creates is a new package, and the surrounding project's settings do not belong to that package. Even if that project's settings are broken, that is no reason to stop creating the new package.
 
 ### Available for build commands (`build` / `run` / `check` / `test`)
 
@@ -216,7 +223,8 @@ Values of `--vcs`:
 
 Common options only.
 
-- Run outside a project, it is an error (`error: could not find cuno.toml in <directory> or any parent directory`, exit code 3).
+- Run outside a project, it is an error (`error: could not find cuno.toml in <directory> or any parent directory`, exit code 3). When the settings are also wrong (a wrong output directory setting, a user's `config.toml` that cannot be read or has an error, and so on), only the missing project is reported. `cuno run`, `cuno test` and `cuno clean` do the same.
+  - Reason: outside a project these commands can do nothing. Only the one thing to fix (run inside a project) is reported.
 - Before building, the compiler's selection and its pairing with the standard library are checked ([toolchain.md](toolchain.md#minimum-compiler-versions)); if they fail, nothing is built and it is an error (exit code 3).
 - Output (in the form of [Output](#output)):
 
