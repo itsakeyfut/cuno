@@ -269,3 +269,125 @@ fn a_release_run_from_a_subdirectory() {
         );
     }
 }
+
+/// Two in-source tests in `calc.c`, written with the C header.
+const C_CALC: &str = "#include <cuno/test.h>\n\
+     int add(int a, int b) { return a + b; }\n\
+     cuno_test(adds) { cuno_check_eq(add(1, 2), 3); }\n\
+     cuno_test(adds_zero) { cuno_check_eq(add(0, 0), 0); }\n";
+
+/// Two in-source tests in `calc.cpp`, written with the C++ header.
+const CXX_CALC: &str = "int add(int a, int b) { return a + b; }\n\
+     #ifdef CUNO_TEST\n\
+     #include <cuno/test.hpp>\n\
+     static cuno::test::suite tests = [] {\n\
+     cuno::test::test(\"adds\", [] { cuno::test::expect(cuno::test::eq(add(1, 2), 3)); });\n\
+     cuno::test::test(\"adds zero\", [] { cuno::test::expect(cuno::test::eq(add(0, 0), 0)); });\n\
+     };\n\
+     #endif\n";
+
+/// A package's files, as `(path, contents)`.
+type Files = &'static [(&'static str, &'static str)];
+
+/// The shapes a package's tests come in: its `lang`, and its files, each
+/// with two in-source tests and one under `tests/`.
+const SHAPES: [(&str, &str, Files); 3] = [
+    (
+        "c",
+        "lang = \"c\"\n",
+        &[
+            (
+                "src/main.c",
+                "int add(int a, int b);\nint main(void) { return add(1, 2) == 3 ? 0 : 1; }\n",
+            ),
+            ("src/calc.c", C_CALC),
+            (
+                "tests/adds.c",
+                "#include <cuno/test.h>\nint add(int a, int b);\ncuno_test(adds_from_tests) { cuno_check_eq(add(1, 1), 2); }\n",
+            ),
+        ],
+    ),
+    (
+        "c++",
+        "",
+        &[
+            ("src/main.cpp", MAIN),
+            ("src/calc.cpp", CXX_CALC),
+            ("tests/adds.cpp", INTEGRATION),
+        ],
+    ),
+    (
+        "c in c++",
+        "",
+        &[
+            (
+                "src/main.cpp",
+                "extern \"C\" int add(int a, int b);\nint main() { return add(1, 2) == 3 ? 0 : 1; }\n",
+            ),
+            ("src/calc.c", C_CALC),
+            (
+                "tests/adds.cpp",
+                "#include <cuno/test.hpp>\nextern \"C\" int add(int, int);\n\
+             static cuno::test::suite s = [] { cuno::test::test(\"from tests\", [] {\n\
+             cuno::test::expect(cuno::test::eq(add(1, 1), 2)); }); };\n",
+            ),
+        ],
+    ),
+];
+
+/// The builds tests are run in: the flags `cuno test` is given, and what
+/// the manifest adds.
+const BUILDS: [(&str, &[&str], &str); 3] = [
+    ("dev", &[], ""),
+    ("release", &["--release"], ""),
+    (
+        "release with lto",
+        &["--release"],
+        "[profile.release]\nlto = true\n",
+    ),
+];
+
+/// Every shape of package, in every build, on every compiler: `cuno test`
+/// runs both in-source tests in the package's executable and the one test
+/// in the `tests/` executable, and says so in the `test result:` lines.
+/// The ways tests have been lost before each have a guard of their own;
+/// this one holds the count through cuno's own flags, `lto` included
+/// (`testing.md`, "Execution").
+///
+/// Mutations, each failing this test, naming the shape, build and
+/// compiler: drop the `/include` pragma that keeps a C registration in
+/// `headers/cuno/test.h` (`c, release with lto, msvc`); compile the test
+/// build without `CUNO_TEST`, with the assert in `graph::plan` removed
+/// (every combination); run only the first test executable (the `tests/`
+/// line missing).
+#[test]
+fn no_test_is_lost_in_any_build() {
+    let want = "ok. 2 passed; 0 failed; 0 skipped\nok. 1 passed; 0 failed; 0 skipped\n";
+    for (shape, lang, files) in SHAPES {
+        for (build, flags, profile) in BUILDS {
+            let manifest = format!("{MANIFEST}{lang}{profile}");
+            for (name, compiler) in COMPILERS {
+                if !here(compiler) {
+                    continue;
+                }
+                let p = files.iter().fold(
+                    Project::new().file("cuno.toml", &manifest),
+                    |p, (path, text)| p.file(path, text),
+                );
+                let at = format!("{shape}, {build}, {name}");
+                let run = p.cuno(&[&["-q", "test", "--compiler", name][..], flags].concat());
+                let err = run.stderr.replace("\r\n", "\n");
+                assert_eq!(run.code, Some(0), "{at}:\n{err}");
+                let results: String = err
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("test result: "))
+                    .map(|line| {
+                        let kept = line.split_once("; finished in ").map_or(line, |(k, _)| k);
+                        format!("{kept}\n")
+                    })
+                    .collect();
+                assert_eq!(results, want, "{at}:\n{err}");
+            }
+        }
+    }
+}
