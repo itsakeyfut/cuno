@@ -76,8 +76,6 @@ pub struct Request<'a> {
     pub bundled: &'a Path,
     /// How many steps run at once.
     pub jobs: usize,
-    /// `-v`: show each step's command.
-    pub verbose: bool,
     /// When the command started, for the `Finished` line.
     pub started: Instant,
     /// The compiler.
@@ -248,7 +246,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
                 if let Some(line) = first_status.take() {
                     shell.status(verb, line);
                 }
-                if request.verbose {
+                if shell.verbose() {
                     shell.status("Running", format!("`{}`", command_line(step)));
                 }
             }
@@ -378,6 +376,7 @@ fn command_line(step: &Step) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuno_core::Verbosity;
 
     fn shown(program: &str, args: &[&str]) -> String {
         command_line(&Step {
@@ -558,7 +557,6 @@ mod tests {
             host: HostOs::Windows,
             bundled: Path::new(BUNDLED),
             jobs: options.jobs,
-            verbose: options.verbose,
             started: Instant::now() - options.ago,
             toolchain: Toolchain {
                 kind: CompilerKind::Clang,
@@ -572,7 +570,13 @@ mod tests {
         };
         let out = Captured::default();
         let mut shell = Shell::new(Box::new(out.clone()), None, &env, false);
-        shell.set_quiet(options.quiet);
+        shell.set_verbosity(if options.quiet {
+            Verbosity::Quiet
+        } else if options.verbose {
+            Verbosity::Verbose
+        } else {
+            Verbosity::Normal
+        });
         let result = build(&request, &mut shell);
         (result, out.text())
     }

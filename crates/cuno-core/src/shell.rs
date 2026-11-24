@@ -43,6 +43,21 @@ pub fn colors(
     }
 }
 
+/// How much a command shows: `-q`, nothing given, or `-v` (or
+/// `[term] verbose`, which `-q` still wins over). One value, so quiet and
+/// verbose cannot both be in effect (`docs/en/specs/commands.md`,
+/// "Available for all commands").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Verbosity {
+    /// `-q`: status lines are left out.
+    Quiet,
+    /// What every command shows by default.
+    #[default]
+    Normal,
+    /// `-v` or `[term] verbose`: also each step's command.
+    Verbose,
+}
+
 /// Where cuno's messages go (stderr for the binary). Crates write through a
 /// `Shell` instead of printing, so the color decision is made once.
 pub struct Shell {
@@ -54,8 +69,7 @@ pub struct Shell {
     /// Whether `out` is a terminal.
     terminal: bool,
     color: bool,
-    /// `-q`: status lines are left out.
-    quiet: bool,
+    verbosity: Verbosity,
 }
 
 impl Shell {
@@ -80,26 +94,33 @@ impl Shell {
             no_color: env.get("NO_COLOR").is_some(),
             terminal: out_is_terminal,
             color: false,
-            quiet: false,
+            verbosity: Verbosity::Normal,
         };
-        shell.configure(None);
+        shell.configure(None, false);
         shell
     }
 
-    /// Applies `[term] color`, which is read after the shell is made: it
-    /// ranks below `--color` and above `NO_COLOR`.
-    pub fn configure(&mut self, configured: Option<ColorChoice>) {
+    /// Applies `[term]`, which is read after the shell is made: `color`
+    /// ranks below `--color` and above `NO_COLOR`, and `verbose` makes the
+    /// shell verbose unless `-q` or `-v` already decided.
+    pub fn configure(&mut self, configured: Option<ColorChoice>, verbose: bool) {
         self.color = colors(self.given, configured, self.no_color, self.terminal);
+        if verbose && self.verbosity == Verbosity::Normal {
+            self.verbosity = Verbosity::Verbose;
+        }
     }
 
-    /// Applies `-q`: from now on [`Shell::status`] writes nothing, and errors,
-    /// warnings, help and other programs' output are written as before.
-    /// Called once, before anything is written. What each command leaves out
-    /// under `-q` is in `docs/en/specs/commands.md`, under each command (for
-    /// example "`cuno build` / `cuno check`" and "What `cuno doctor`
-    /// prints"); every line it leaves out is a status line.
-    pub fn set_quiet(&mut self, quiet: bool) {
-        self.quiet = quiet;
+    /// Applies `-q` or `-v`, once, before anything is written. Quiet, a
+    /// [`Shell::status`] line writes nothing, and errors, warnings, help and
+    /// other programs' output are written as before
+    /// (`docs/en/specs/commands.md`, "Available for all commands").
+    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+        self.verbosity = verbosity;
+    }
+
+    /// Whether to show what only `-v` shows, such as each step's command.
+    pub fn verbose(&self) -> bool {
+        self.verbosity == Verbosity::Verbose
     }
 
     /// Whether this shell writes color escape codes.
@@ -124,9 +145,9 @@ impl Shell {
 
     /// A status line: `verb` right-aligned in 12 columns, then `message`, as
     /// in `   Compiling mygame v0.1.0`. Nothing under `-q`
-    /// ([`Shell::set_quiet`]).
+    /// ([`Shell::set_verbosity`]).
     pub fn status(&mut self, verb: &str, message: impl Display) {
-        if self.quiet {
+        if self.verbosity == Verbosity::Quiet {
             return;
         }
         let verb = self.paint(BOLD_GREEN, &format!("{verb:>12}"));
@@ -210,7 +231,7 @@ mod tests {
     #[test]
     fn quiet_leaves_out_status_lines_only() {
         let (mut sh, out) = shell(Some(ColorChoice::Never), &[], false);
-        sh.set_quiet(true);
+        sh.set_verbosity(Verbosity::Quiet);
         sh.status("Compiling", "mygame v0.1.0");
         sh.error("no compiler found");
         sh.help("install Build Tools");
@@ -327,7 +348,7 @@ main.cpp(1): note
     fn the_configured_choice_ranks_between_the_flag_and_no_color() {
         let on = |given, configured, env: &[(&str, &str)], terminal| {
             let mut shell = shell(given, env, terminal).0;
-            shell.configure(configured);
+            shell.configure(configured, false);
             shell.uses_color()
         };
         let no_color: &[(&str, &str)] = &[("NO_COLOR", "")];

@@ -18,7 +18,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
-use cuno_core::{ColorChoice, CunoError, Env, Shell};
+use cuno_core::{ColorChoice, CunoError, Env, Shell, Verbosity};
 use cuno_manifest::{ConfigError, Inputs, Settings};
 
 // So the binary, which may depend only on this crate and `cuno-core`, can
@@ -373,7 +373,7 @@ impl Values<'_> {
 /// `--color` and `NO_COLOR` alone decide.
 fn resolve_settings(inputs: Inputs<'_>, shell: &mut Shell) -> Result<Settings, ConfigError> {
     let loaded = cuno_manifest::resolve(inputs)?;
-    shell.configure(loaded.value.color);
+    shell.configure(loaded.value.color, loaded.value.verbose);
     for warning in &loaded.warnings {
         shell.warning(warning);
     }
@@ -402,7 +402,13 @@ fn dispatch(
     } = cli;
 
     // Before anything is written, so no status line escapes `-q`.
-    shell.set_quiet(quiet);
+    shell.set_verbosity(if quiet {
+        Verbosity::Quiet
+    } else if verbose {
+        Verbosity::Verbose
+    } else {
+        Verbosity::Normal
+    });
 
     #[cfg(debug_assertions)]
     test_trigger::fire(env)?;
@@ -473,16 +479,7 @@ fn dispatch(
         }
     };
     let cwd = given.cwd()?;
-    build::build(
-        goal,
-        opts.into(),
-        build::Verbosity { verbose },
-        env,
-        &cwd,
-        given.host,
-        given.temp,
-        shell,
-    )
+    build::build(goal, opts.into(), env, &cwd, given.host, given.temp, shell)
 }
 
 /// The current directory cannot be read (deleted, or no permission).
