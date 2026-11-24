@@ -79,9 +79,11 @@ impl Shell {
     }
 
     /// Applies `-q`: from now on [`Shell::status`] writes nothing, and errors,
-    /// warnings, help and other programs' output are written as before. Every
-    /// command's status lines are left out here rather than by each command
-    /// (see `docs/en/specs/commands.md`, "Available for all commands").
+    /// warnings, help and other programs' output are written as before.
+    /// Called once, before anything is written. What each command leaves out
+    /// under `-q` is in `docs/en/specs/commands.md`, under each command (for
+    /// example "`cuno build` / `cuno check`" and "What `cuno doctor`
+    /// prints"); every line it leaves out is a status line.
     pub fn set_quiet(&mut self, quiet: bool) {
         self.quiet = quiet;
     }

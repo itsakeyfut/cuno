@@ -290,6 +290,7 @@ fn run(
         command,
     } = cli;
 
+    // Before anything is written, so no status line escapes `-q`.
     shell.set_quiet(quiet);
 
     #[cfg(debug_assertions)]

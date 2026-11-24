@@ -28,7 +28,9 @@ struct Problems<'a> {
 }
 
 impl Problems<'_> {
-    /// A finding that is not a problem, such as `Selected` or `Info`.
+    /// A finding that is not a problem, such as `Selected` or `Info`: a
+    /// status line, so `-q` leaves it out. Kept beside [`Problems::report`]
+    /// so each finding says which of the two it is.
     fn status(&mut self, verb: &str, message: impl std::fmt::Display) {
         self.shell.status(verb, message);
     }
