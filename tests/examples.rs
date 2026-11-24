@@ -3,11 +3,13 @@
 //! example with tests also passes `cuno test`, with the results its
 //! `expected/test.txt` says.
 //!
-//! An example is any directory under `examples/` holding a `cuno.toml`. Each
-//! is a test of its own, so the examples run in parallel, and a new one fails
-//! [`every_example_has_a_test`] until it is added to `examples!`. Each is copied into a fresh
-//! directory per compiler: building in place could find an earlier build's
-//! `target/` and compile nothing.
+//! An example is any directory under `examples/` holding a `cuno.toml`.
+//! Every example is a test of its own, so the examples run in parallel, and
+//! a new one fails [`every_example_has_a_test`] until it is added to
+//! `examples!`.
+//!
+//! An example is copied into a fresh directory per compiler: building in
+//! place could find an earlier build's `target/` and compile nothing.
 
 mod support;
 
