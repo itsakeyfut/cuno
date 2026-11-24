@@ -167,15 +167,16 @@ fn first_column(spec: &str, heading: &str) -> Vec<String> {
         .collect()
 }
 
-/// The modules directly under `dir`: each `.rs` file but `lib.rs` and
-/// `main.rs`, and each directory, by name.
+/// The modules directly under `dir`: each `.rs` file but `lib.rs`, and each
+/// directory, by name. A `main.rs` counts, so a second entry point is
+/// reported like any module the spec does not list.
 fn modules(dir: &Path) -> Vec<String> {
     let mut found: Vec<String> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_dir() || path.extension().is_some_and(|e| e == "rs"))
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
-        .filter(|name| name != "lib" && name != "main")
+        .filter(|name| name != "lib")
         .collect();
     found.sort();
     found
@@ -219,4 +220,21 @@ fn cli_modules_follow_architecture() {
         listed,
         "the modules of cuno-cli differ from {SPEC}, {HEADING:?}"
     );
+}
+
+/// Mutation: read another column than the first, or read past the next
+/// heading; this test fails.
+#[test]
+fn the_module_table_is_read_as_written() {
+    let spec = "### Modules
+
+| Module | Commands |
+|---|---|
+| `a` | `b`, `c` |
+| `d` | `e` |
+
+### Next
+| `ignored` | `ignored` |
+";
+    assert_eq!(first_column(spec, "### Modules"), ["a", "d"]);
 }

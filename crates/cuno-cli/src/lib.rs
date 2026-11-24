@@ -318,13 +318,10 @@ pub fn run(process: Process) -> i32 {
         host,
         temp: &temp,
     };
-    let code = match dispatch(cli, given, &mut shell, stdout_color, &mut stdout) {
+    match dispatch(cli, given, &mut shell, stdout_color, &mut stdout) {
         Ok(code) => code,
         Err(error) => report(&mut shell, &*error),
-    };
-    // A failed flush of a closed stream cannot be reported anywhere better.
-    let _ = stdout.flush();
-    code
+    }
 }
 
 /// What clap made for `--help`, `--version` or a usage error, written where
@@ -568,6 +565,167 @@ mod test_trigger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuno_core::NameCase;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// A stream the test reads back after `run` has written to it. With
+    /// `buffered`, what is written reaches it only when flushed, as through
+    /// a buffered writer.
+    #[derive(Clone, Default)]
+    struct Captured {
+        text: Rc<RefCell<Vec<u8>>>,
+        pending: Rc<RefCell<Vec<u8>>>,
+        buffered: bool,
+    }
+
+    impl Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let to = if self.buffered {
+                &self.pending
+            } else {
+                &self.text
+            };
+            to.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            let pending = std::mem::take(&mut *self.pending.borrow_mut());
+            self.text.borrow_mut().extend(pending);
+            Ok(())
+        }
+    }
+
+    impl Captured {
+        fn text(&self) -> String {
+            String::from_utf8(self.text.borrow().clone()).unwrap()
+        }
+    }
+
+    /// How a run is set up: whether each stream is a terminal, the current
+    /// directory, and whether stdout buffers.
+    struct Setup {
+        stdout_is_terminal: bool,
+        stderr_is_terminal: bool,
+        cwd: Result<PathBuf, String>,
+        buffered: bool,
+    }
+
+    /// `cuno <args>` run with `setup`, in a directory holding no project and
+    /// a cuno home of its own: the exit code, stdout and stderr.
+    fn run_with(args: &[&str], setup: Setup) -> (i32, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env::from_pairs(
+            [("CUNO_HOME".into(), dir.path().join("home").into_os_string())],
+            NameCase::Insensitive,
+        );
+        let stdout = Captured {
+            buffered: setup.buffered,
+            ..Captured::default()
+        };
+        let stderr = Captured::default();
+        let code = run(Process {
+            args: std::iter::once("cuno")
+                .chain(args.iter().copied())
+                .map(OsString::from)
+                .collect(),
+            env,
+            cwd: setup.cwd.map(|_| dir.path().to_owned()),
+            host: HostOs::Windows,
+            temp: dir.path().to_owned(),
+            stdout: Box::new(stdout.clone()),
+            stdout_is_terminal: setup.stdout_is_terminal,
+            stderr: Box::new(stderr.clone()),
+            stderr_is_terminal: setup.stderr_is_terminal,
+        });
+        (code, stdout.text(), stderr.text())
+    }
+
+    fn terminals(stdout_is_terminal: bool, stderr_is_terminal: bool) -> Setup {
+        Setup {
+            stdout_is_terminal,
+            stderr_is_terminal,
+            cwd: Ok(PathBuf::new()),
+            buffered: false,
+        }
+    }
+
+    const ESC: char = '\u{1b}';
+
+    /// Each stream is colored by whether it is the terminal, not the other:
+    /// help and the usage on stdout, a usage error and cuno's own `error:`
+    /// on stderr (`docs/en/specs/commands.md`, "Available for all
+    /// commands").
+    ///
+    /// Mutation: decide a stream's color from the other stream's terminal,
+    /// give the shell stdout's, write clap's message in the other stream's
+    /// color, or color the usage with stderr's; this test fails.
+    #[test]
+    fn each_stream_is_colored_by_its_own_terminal() {
+        for (stdout_tty, stderr_tty) in [(true, false), (false, true)] {
+            let at = format!("stdout terminal {stdout_tty}, stderr terminal {stderr_tty}");
+            let (code, out, _) = run_with(&["--help"], terminals(stdout_tty, stderr_tty));
+            assert_eq!((code, out.contains(ESC)), (0, stdout_tty), "{at}: {out}");
+            let (code, out, _) = run_with(&[], terminals(stdout_tty, stderr_tty));
+            assert_eq!((code, out.contains(ESC)), (0, stdout_tty), "{at}: {out}");
+            let (code, out, err) = run_with(&["bogus"], terminals(stdout_tty, stderr_tty));
+            assert_eq!((code, out.as_str()), (2, ""), "{at}");
+            assert_eq!(err.contains(ESC), stderr_tty, "{at}: {err}");
+            let (code, _, err) = run_with(&["clean"], terminals(stdout_tty, stderr_tty));
+            assert_eq!(code, 3, "{at}: {err}");
+            assert_eq!(err.contains(ESC), stderr_tty, "{at}: {err}");
+        }
+    }
+
+    /// A current directory that cannot be read is reported, exit code 3, by
+    /// every command that needs one, and help still works without one.
+    ///
+    /// Mutation: run a command somewhere else instead, change the message
+    /// or its exit class, or read the directory before `--help`; this test
+    /// fails.
+    #[test]
+    fn an_unreadable_current_directory_is_reported_by_each_command() {
+        let unreadable = || Setup {
+            cwd: Err("gone".to_owned()),
+            ..terminals(false, false)
+        };
+        for args in [
+            &["build"][..],
+            &["check"],
+            &["run"],
+            &["test"],
+            &["clean"],
+            &["doctor"],
+            &["new", "app"],
+        ] {
+            let (code, _, err) = run_with(args, unreadable());
+            assert_eq!(code, 3, "{args:?}: {err}");
+            assert_eq!(
+                err, "error: cannot read the current directory: gone\n",
+                "{args:?}"
+            );
+        }
+        let (code, out, _) = run_with(&["--help"], unreadable());
+        assert_eq!(code, 0);
+        assert!(out.starts_with("One comfortable tool"), "{out}");
+    }
+
+    /// What clap makes is flushed, so it is not lost in a buffered stream
+    /// when the process ends.
+    ///
+    /// Mutation: leave out the flush in `write_styled`; this test fails.
+    #[test]
+    fn help_is_flushed() {
+        let (code, out, _) = run_with(
+            &["--help"],
+            Setup {
+                buffered: true,
+                ..terminals(false, false)
+            },
+        );
+        assert_eq!(code, 0);
+        assert!(out.starts_with("One comfortable tool"), "{out:?}");
+    }
 
     /// Mutation: swap any two arms of `From<Color> for ColorChoice`; this
     /// test fails.
