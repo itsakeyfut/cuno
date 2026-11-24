@@ -22,9 +22,9 @@ pub const FILE: &str = "compile_commands.json";
 /// editor watching it does not analyse everything again after every
 /// build. A write that fails leaves no partial file behind; the caller
 /// warns and the build goes on (`build.md`, "Output").
-pub fn write(root: &Path, graph: &Graph, compiler: ToolContext<'_>) -> io::Result<()> {
+pub fn write(root: &Path, graph: &Graph, context: ToolContext<'_>) -> io::Result<()> {
     let text =
-        serde_json::to_string_pretty(&entries(root, graph, compiler)).map_err(io::Error::other)?;
+        serde_json::to_string_pretty(&entries(root, graph, context)).map_err(io::Error::other)?;
     let path = root.join(FILE);
     if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
         return Ok(());
@@ -38,11 +38,9 @@ pub fn write(root: &Path, graph: &Graph, compiler: ToolContext<'_>) -> io::Resul
 }
 
 /// The entries, apart from writing them, so they can be tested without a
-/// file. Each command is what [`for_clang_tools`] makes of the compile, so
-/// a tool run anywhere sees what the build saw, as `cuno doctor`'s
-/// clang-tidy check sees it.
-fn entries(root: &Path, graph: &Graph, compiler: ToolContext<'_>) -> Value {
-    let kind = compiler.kind;
+/// file. Each command is what [`for_clang_tools`] makes of the compile.
+fn entries(root: &Path, graph: &Graph, context: ToolContext<'_>) -> Value {
+    let kind = context.kind;
     let entries: Vec<Value> = graph
         .steps
         .iter()
@@ -66,7 +64,7 @@ fn entries(root: &Path, graph: &Graph, compiler: ToolContext<'_>) -> Value {
             }
             let arguments: Vec<String> = std::iter::once(step.program.display().to_string())
                 .chain(
-                    for_clang_tools(compiler, &args)
+                    for_clang_tools(context, &args)
                         .args()
                         .iter()
                         .map(|a| a.to_string_lossy().into_owned()),
@@ -176,12 +174,12 @@ mod tests {
                     link,
                 ],
             };
-            let compiler = ToolContext {
+            let context = ToolContext {
                 kind,
                 include: &include,
                 msvc: Some(&version),
             };
-            let value = entries(Path::new("C:/p"), &graph, compiler);
+            let value = entries(Path::new("C:/p"), &graph, context);
             let entries = value.as_array().unwrap();
             assert_eq!(entries.len(), 2, "{kind:?}");
             assert_eq!(entries[0]["file"], "C:/p/src/main.cpp");
@@ -219,12 +217,12 @@ mod tests {
             let graph = Graph {
                 steps: vec![compile(kind, "src/main.cpp", &[written])],
             };
-            let compiler = ToolContext {
+            let context = ToolContext {
                 kind,
                 include: &[],
                 msvc: None,
             };
-            let value = entries(Path::new("C:/p"), &graph, compiler);
+            let value = entries(Path::new("C:/p"), &graph, context);
             assert_eq!(arguments(&value[0])[2], read, "{kind:?} {written}");
         }
         let graph = Graph {

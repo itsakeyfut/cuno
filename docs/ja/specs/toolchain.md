@@ -63,7 +63,7 @@ C++20 の指定を受け付けるものとする。
 - **clang-tidy にも同じ確認を適用する。** clang-tidy は compile_commands.json のコマンドで解析し、MSVC の標準ヘッダを読むので、古い clang-tidy は STL1000 で全ファイルの解析に失敗する。
   - 方法: 同じファイルを、clang-tidy に `--checks=-*,readability-braces-around-statements`（チェックが 1 つもないと解析せずに止まるため、影響のない 1 つだけを有効にする）と、`--` に続けて、compile_commands.json がそのファイルに書くはずのコマンドを渡して解析させる。つまり `dev` プロファイルで `CUNO_TEST` を定義したコンパイルの条件に、MSVC / Windows SDK のインクルードパスと MSVC のバージョン（`-fms-compatibility-version`）を加え、clang 系のツールが読む形に書き換えたもの（[build.md](build.md#出力)）。プロジェクトの `.clang-tidy` は読ませない。STL1000 は clang-tidy では標準出力に出る。判定は上と同じ。
     - compile_commands.json と違い、`--` の後のコマンドにはコンパイラのプログラム名がない。そのため、cl 形式のコマンド（MSVC、clang-cl）は `--driver-mode=cl` を付けて clang-cl のものとして読ませ、MSVC を選んだときはターゲット `x86_64-pc-windows-msvc` も渡す（cl の条件はターゲットを名指ししないため）。
-    - 理由: `cuno lint` は compile_commands.json のコマンドで clang-tidy を動かす。別の条件（たとえばビルドのプロファイル、`CUNO_TEST` なし、環境変数の `INCLUDE`）で確かめると、`cuno doctor` が問題なしとした clang-tidy が、`cuno lint` では別のコマンドで解析して失敗しうる。
+    - 理由: `cuno lint` は compile_commands.json のコマンドで clang-tidy を動かす。別の条件（たとえばビルドのプロファイル、`CUNO_TEST` なし、インクルードパスを環境変数の `INCLUDE` だけで渡すこと）で確かめると、`cuno doctor` が問題なしとした clang-tidy が、`cuno lint` では別のコマンドで解析して失敗しうる。
 - **どこで確認するか**:
 
   | コマンド | 確認するもの | C だけのプロジェクト（`[package] lang = "c"`） |

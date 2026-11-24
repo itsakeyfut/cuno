@@ -49,13 +49,13 @@ impl CompileSettings {
     }
 }
 
-/// The settings for compiling a `lang` source of the project at `root` with
-/// `manifest` (or, with no project, the defaults) with `kind` in `profile`,
-/// for a host `host` building for itself: `[build]`, `[platform.<os>.build]`,
 /// The settings compile_commands.json's commands are made with, whatever is
-/// built: the `dev` profile, compiled, with `CUNO_TEST` defined
-/// (`docs/en/specs/build.md`, "Output"). `cuno doctor`'s clang-tidy check
-/// takes the same, as it is to judge what `cuno lint` runs with them.
+/// built: [`compile_settings`] in the `dev` profile, compiled, with
+/// `CUNO_TEST` defined (`docs/en/specs/build.md`, "Output"). One function,
+/// as the pipeline writes the file with them and `cuno doctor`'s clang-tidy
+/// check analyses with them, which a second copy of the three values would
+/// let drift apart (`docs/en/specs/toolchain.md`, "Minimum compiler
+/// versions").
 pub fn editor_settings(
     project: Option<(&Path, &Manifest)>,
     kind: CompilerKind,
@@ -75,6 +75,9 @@ pub fn editor_settings(
     )
 }
 
+/// The settings for compiling a `lang` source of the project at `root` with
+/// `manifest` (or, with no project, the defaults) with `kind` in `profile`,
+/// for a host `host` building for itself: `[build]`, `[platform.<os>.build]`,
 /// `[build.<compiler>]` and the profile, layered as `manifest.md` says; the
 /// package's edition for its own language and the other language's default
 /// otherwise (`project-layout.md`, "Target files"); `src/` and then

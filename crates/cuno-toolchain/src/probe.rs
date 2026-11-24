@@ -15,16 +15,17 @@ use crate::flags::{CompileInput, Mode, ToolContext, compile_args, for_clang_tool
 use crate::select::{LlvmChoice, Selected};
 use crate::{Runner, ToolchainError, Version};
 
-/// What the build's compile command would also get, for the standard library
-/// probe.
+/// What a standard library probe compiles with, besides the probe file.
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeInputs<'a> {
     /// A directory outside the project to write the probe file in.
     pub scratch: &'a Path,
-    /// The build's compile input for a C++ source: the probe compiles C++,
-    /// so a C package's is made with `Lang::Cxx` and a C++ edition, or a C
-    /// standard switch would be rejected. Its command line is the build's
-    /// own ([`compile_args`]), in check mode whatever `input.mode` says.
+    /// The compile input for a C++ source: the probe compiles C++, so a C
+    /// package's is made with `Lang::Cxx` and a C++ edition, or a C
+    /// standard switch would be rejected. [`check`] is given the build's and
+    /// runs it in check mode, [`check_tidy`] compile_commands.json's and
+    /// runs it compiled, as that file plans it; each sets the mode itself,
+    /// whatever `input.mode` says.
     pub input: &'a CompileInput<'a>,
     /// Where the compiler runs: the project root, as for the build, so a
     /// relative path in the project's flags or include directories means

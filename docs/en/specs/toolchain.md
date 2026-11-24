@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob ce047e268d0a157e08beaf3e8cdfea89be14d377 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 422e70a8b9bcb25aabf8c913d311363d3240b87e -->
 
 # Toolchain
 
@@ -65,7 +65,7 @@ A compiler must accept a C++20 specification.
 - **The same check applies to clang-tidy.** clang-tidy analyzes with the commands in compile_commands.json and reads the MSVC standard headers, so an old clang-tidy fails on every file with STL1000.
   - Method: clang-tidy analyzes the same file with `--checks=-*,readability-braces-around-statements` (with no check enabled it stops without analyzing, so one harmless check is enabled) and, after `--`, the command compile_commands.json would write for that file. That is, the compile conditions of the `dev` profile with `CUNO_TEST` defined, plus the MSVC / Windows SDK include paths and the MSVC version (`-fms-compatibility-version`), rewritten into the form Clang-based tools read ([build.md](build.md#output)). The project's `.clang-tidy` is not read. clang-tidy reports STL1000 on stdout. The verdict is as above.
     - Unlike compile_commands.json, the command after `--` has no compiler program name. So a cl-style command (MSVC, clang-cl) is given `--driver-mode=cl` to be read as a clang-cl command, and when MSVC is selected the target `x86_64-pc-windows-msvc` is passed too (cl's conditions do not name a target).
-    - Rationale: `cuno lint` runs clang-tidy with the commands in compile_commands.json. Checking under other conditions (for example the build's profile, no `CUNO_TEST`, or the `INCLUDE` environment variable) could let a clang-tidy that `cuno doctor` reported as fine fail in `cuno lint`, which analyzes with a different command.
+    - Rationale: `cuno lint` runs clang-tidy with the commands in compile_commands.json. Checking under other conditions (for example the build's profile, no `CUNO_TEST`, or giving the include paths only through the `INCLUDE` environment variable) could let a clang-tidy that `cuno doctor` reported as fine fail in `cuno lint`, which analyzes with a different command.
 - **Where it is checked**:
 
   | Command | What is checked | C-only project (`[package] lang = "c"`) |

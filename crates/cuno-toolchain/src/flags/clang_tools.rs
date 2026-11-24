@@ -1,7 +1,8 @@
 //! A compile as the Clang-based tools read it: compile_commands.json, which
 //! clangd and `cuno lint` read, and `cuno doctor`'s clang-tidy check, which
-//! is to judge what `cuno lint` will run. Both build the command here, from
-//! the one function that can make a [`ToolCommand`] (`docs/en/specs/
+//! is to judge what `cuno lint` will run. Both build the command here: only
+//! [`for_clang_tools`] makes a [`ToolCommand`], so the two cannot come to
+//! give a tool different arguments, as they did before (`docs/en/specs/
 //! build.md`, "Output"; `docs/en/specs/toolchain.md`, "Minimum compiler
 //! versions").
 
@@ -21,7 +22,8 @@ pub struct ToolContext<'a> {
     pub kind: CompilerKind,
     /// The resolved `INCLUDE`, in order ([`include_dirs`]).
     pub include: &'a [PathBuf],
-    /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees.
+    /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees;
+    /// `None` without a toolset, when no version is written.
     pub msvc: Option<&'a Version>,
 }
 
@@ -37,7 +39,8 @@ pub struct ToolCommand {
 impl ToolCommand {
     /// The arguments after the compiler's program, as compile_commands.json
     /// writes them: a tool there learns from the program which driver and
-    /// target to read them as.
+    /// target to read them as. Given after `--` instead, they need
+    /// [`ToolCommand::after_double_dash`].
     pub fn args(&self) -> &[OsString] {
         &self.args
     }
@@ -45,7 +48,9 @@ impl ToolCommand {
     /// The arguments as given after `--`, where there is no program: a
     /// cl-style command is read as clang-cl's only with `--driver-mode=cl`,
     /// and cl's own flags name no target, so MSVC's gets the one it builds
-    /// for. An LLVM driver's flags already name it.
+    /// for. An LLVM driver's flags already name it. The source is among
+    /// them; a tool given its file before `--` is given it once only if the
+    /// caller leaves it out here.
     pub fn after_double_dash(&self) -> Vec<OsString> {
         let mut out = Vec::new();
         match self.kind.syntax() {
@@ -63,24 +68,12 @@ impl ToolCommand {
 
 /// `args`, a compile's arguments for `context.kind` from
 /// [`compile_args`](super::compile_args), as the Clang-based tools must see
-/// them to analyse what the compiler builds. They read a command for cl as
-/// one for clang-cl, so for both:
-///
-/// - `/c` is written `-c`, which cl takes too: clang-cl warns that `/c` is
-///   unused when it only analyses, and `/WX` makes that an error;
-/// - for cl, a standard switch clang-cl does not know (`/std:c++23`,
-///   `/std:clatest`) is written as clang-cl's own for the same standard;
-/// - for cl, `/GL` (from `lto`) is left out: link-time optimization means
-///   nothing to an analysis, and clang-cl warns that it is unused.
-///
-/// Then what lets a tool run anywhere see what the build saw:
-///
-/// - `INCLUDE`, after the tool's own headers, as the build's compiler
-///   searches it: `/imsvc` for cl syntax, `-idirafter` for clang
-///   (`-isystem` would put the MSVC and Windows headers before clang's own
-///   `stddef.h` and `limits.h`);
-/// - the MSVC version, which a tool would otherwise guess from whatever
-///   Visual Studio it finds.
+/// them to analyse what the compiler builds: `/c` written `-c`, and for cl
+/// a standard switch clang-cl does not know written as its own and `/GL`
+/// left out, as clang-cl reads a cl command; then `INCLUDE` after the
+/// tool's own headers (`/imsvc`, or `-idirafter` for clang) and the MSVC
+/// version, so a tool run anywhere sees what the build saw. Why each is
+/// written so is in `docs/en/specs/build.md`, "Output".
 pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolCommand {
     let kind = context.kind;
     let mut out = args.to_vec();
