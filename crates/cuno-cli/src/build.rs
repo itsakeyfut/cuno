@@ -27,6 +27,22 @@ pub struct BuildArgs {
     pub target: Option<String>,
 }
 
+/// The settings of a command that needs a project: build, check, run, test
+/// and clean. Outside a project the missing project is the error, whatever
+/// the settings say, so every such command says the same thing there
+/// (`docs/en/specs/commands.md`, "`cuno build` / `cuno check`").
+pub(crate) fn in_project(
+    resolved: Result<Settings, ConfigError>,
+    cwd: &Path,
+) -> Result<Settings, Box<dyn CunoError>> {
+    if cuno_manifest::find_project(cwd).is_none() {
+        return Err(Box::new(CommandError::NoProject {
+            cwd: cwd.to_owned(),
+        }));
+    }
+    resolved.map_err(boxed)
+}
+
 /// What a build command does once the project is built.
 #[derive(Debug)]
 pub enum Goal {
@@ -74,12 +90,11 @@ pub fn build(
         return Err(Box::new(CommandError::TargetNotSupported));
     }
     let profile = profile_named(args.release, args.profile.as_deref())?;
-    let settings = settings.map_err(boxed)?;
-    let Some((project, manifest)) = &settings.project else {
-        return Err(Box::new(CommandError::NoProject {
-            cwd: cwd.to_owned(),
-        }));
-    };
+    let settings = in_project(settings, cwd)?;
+    let (project, manifest) = settings
+        .project
+        .as_ref()
+        .expect("in_project found the project the settings were read from");
     let root = project.root.as_path();
 
     // The compiler, its environment, and its pairing with the standard
