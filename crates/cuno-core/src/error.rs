@@ -33,9 +33,10 @@ impl ExitClass {
     }
 }
 
-/// An error any cuno crate can return to the binary, which reports it in one
-/// place: `error: <Display>`, then `help: <help>` when there is one, then exits
-/// with [`ExitClass::code`] (`src/main.rs`, `report`).
+/// An error any cuno crate can return to `cuno-cli`, which reports it in one
+/// place, `error: <Display>` then `help: <help>` when there is one, and
+/// returns [`ExitClass::code`] for the binary to exit with
+/// (`crates/cuno-cli/src/lib.rs`, `report`).
 pub trait CunoError: std::error::Error {
     /// Which exit code this error leads to.
     fn exit_class(&self) -> ExitClass;

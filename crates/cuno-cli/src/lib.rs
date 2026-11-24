@@ -22,6 +22,9 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell};
 use cuno_manifest::{ConfigError, Inputs, Settings};
 
+// So the binary, which may depend only on this crate and `cuno-core`, can
+// name the host it collects (`architecture.md`, "Dependencies between
+// crates").
 pub use cuno_toolchain::HostOs;
 
 /// What only the process has, collected by the binary and handed in as
@@ -39,7 +42,8 @@ pub struct Process {
     pub host: HostOs,
     /// The temporary directory.
     pub temp: PathBuf,
-    /// Standard output: help, the version and the usage.
+    /// Standard output: help, the version and the usage. Any writer, so a
+    /// test can read what was written.
     pub stdout: Box<dyn Write>,
     /// Whether standard output is a terminal.
     pub stdout_is_terminal: bool,
@@ -275,31 +279,31 @@ pub fn run(process: Process) -> i32 {
     // as written, then NO_COLOR, then whether the output is a terminal.
     let given = color_before_parsing(&args);
     let no_color = env.get("NO_COLOR").is_some();
-    let to_stdout = parser_color(given, no_color, stdout_is_terminal);
-    let to_stderr = parser_color(given, no_color, stderr_is_terminal);
+    let stdout_color = parser_color(given, no_color, stdout_is_terminal);
+    let stderr_color = parser_color(given, no_color, stderr_is_terminal);
     // On `--version`, `--help` and usage errors, what clap made is printed
     // and its code returned: 0 for the first two and 2 for a usage error, as
     // the spec's exit codes require. Help and the version go to stdout, so
     // they are parsed again with stdout's color.
     let parse = |color| Cli::command().color(color).try_get_matches_from(&args);
-    let cli = match parse(to_stderr) {
+    let cli = match parse(stderr_color) {
         // Formatted against the command, as `Cli::parse` does, so such an
         // error would carry the usage line too.
         Ok(matches) => match Cli::from_arg_matches(&matches) {
             Ok(cli) => cli,
             Err(e) => {
-                let e = e.format(&mut Cli::command().color(to_stderr));
-                return print_clap(&e, to_stdout, to_stderr, &mut stdout, &mut stderr);
+                let e = e.format(&mut Cli::command().color(stderr_color));
+                return print_clap(&e, stdout_color, stderr_color, &mut stdout, &mut stderr);
             }
         },
         Err(error) => {
             let error = match error.kind() {
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                    parse(to_stdout).err().unwrap_or(error)
+                    parse(stdout_color).err().unwrap_or(error)
                 }
                 _ => error,
             };
-            return print_clap(&error, to_stdout, to_stderr, &mut stdout, &mut stderr);
+            return print_clap(&error, stdout_color, stderr_color, &mut stdout, &mut stderr);
         }
     };
     let mut shell = Shell::new(
@@ -308,13 +312,13 @@ pub fn run(process: Process) -> i32 {
         &env,
         stderr_is_terminal,
     );
-    let given = Given {
+    let given = Values {
         env: &env,
         cwd: &cwd,
         host,
         temp: &temp,
     };
-    let code = match dispatch(cli, given, &mut shell, to_stdout, &mut stdout) {
+    let code = match dispatch(cli, given, &mut shell, stdout_color, &mut stdout) {
         Ok(code) => code,
         Err(error) => report(&mut shell, &*error),
     };
@@ -328,15 +332,15 @@ pub fn run(process: Process) -> i32 {
 /// stream's color, and its exit code.
 fn print_clap(
     error: &clap::Error,
-    to_stdout: clap::ColorChoice,
-    to_stderr: clap::ColorChoice,
+    stdout_color: clap::ColorChoice,
+    stderr_color: clap::ColorChoice,
     stdout: &mut Box<dyn Write>,
     stderr: &mut Box<dyn Write>,
 ) -> i32 {
     let (out, color) = if error.use_stderr() {
-        (stderr, to_stderr)
+        (stderr, stderr_color)
     } else {
-        (stdout, to_stdout)
+        (stdout, stdout_color)
     };
     // A failed write (a closed stream) is ignored, as clap ignores it: the
     // exit code stays clap's.
@@ -344,7 +348,9 @@ fn print_clap(
     error.exit_code()
 }
 
-/// `text` written plain, or with its colors when `color` says so.
+/// `text` written plain, or with its colors when `color` says so. clap's
+/// own printing writes to the process's streams and exits, which a library
+/// may not, so what clap makes is written here to the streams given.
 fn write_styled(
     out: &mut dyn Write,
     text: &clap::builder::StyledStr,
@@ -357,16 +363,17 @@ fn write_styled(
     out.flush()
 }
 
-/// What the commands take from [`Process`] once the command line is parsed.
+/// The values the commands take from [`Process`], borrowed once the
+/// standard streams have gone to the shell and to the usage.
 #[derive(Clone, Copy)]
-struct Given<'a> {
+struct Values<'a> {
     env: &'a Env,
     cwd: &'a Result<PathBuf, String>,
     host: HostOs,
     temp: &'a Path,
 }
 
-impl Given<'_> {
+impl Values<'_> {
     /// The current directory, or the error a command reports without it.
     fn cwd(&self) -> Result<PathBuf, Box<dyn CunoError>> {
         self.cwd
@@ -395,7 +402,7 @@ fn resolve_settings(inputs: Inputs<'_>, shell: &mut Shell) -> Result<Settings, C
 /// `help_color` is how the usage printed with no command is colored.
 fn dispatch(
     cli: Cli,
-    given: Given<'_>,
+    given: Values<'_>,
     shell: &mut Shell,
     help_color: clap::ColorChoice,
     stdout: &mut Box<dyn Write>,
