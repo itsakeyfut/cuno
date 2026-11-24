@@ -2,7 +2,6 @@
 # `tests/` that run it. See docs/en/specs/architecture.md, "Repository layout".
 [package]
 name = "cuno"
-# Also the first line of `cuno --help` (src/main.rs reads it via `about`).
 description = "One comfortable tool for C/C++ development."
 version.workspace = true
 edition.workspace = true
@@ -11,15 +10,17 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# The binary only collects the process and calls cuno-cli (see
+# docs/en/specs/architecture.md, "Dependencies between crates"). The tests
+# drive the crates directly too, so they take them as dev-dependencies.
 [dependencies]
-clap.workspace = true
-cuno-build.workspace = true
+cuno-cli.workspace = true
 cuno-core.workspace = true
-cuno-manifest.workspace = true
-cuno-test.workspace = true
-cuno-toolchain.workspace = true
 
 [dev-dependencies]
+cuno-build.workspace = true
+cuno-manifest.workspace = true
+cuno-test.workspace = true
 cuno-toolchain.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -50,6 +51,7 @@ publish = false
 
 [workspace.dependencies]
 cuno-build = { path = "crates/cuno-build" }
+cuno-cli = { path = "crates/cuno-cli" }
 cuno-core = { path = "crates/cuno-core" }
 cuno-toolchain = { path = "crates/cuno-toolchain" }
 cuno-manifest = { path = "crates/cuno-manifest" }

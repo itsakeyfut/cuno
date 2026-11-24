@@ -92,7 +92,7 @@ pub fn build(
         target_dir: args.target_dir,
         jobs: args.jobs,
     };
-    let settings = crate::settings::resolve(
+    let settings = crate::resolve_settings(
         Inputs {
             cwd,
             env,

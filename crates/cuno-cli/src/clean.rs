@@ -43,7 +43,7 @@ pub fn clean(
     };
     // Read first, so that outside a project too the error is colored as the
     // user's configuration says, as `cuno build`'s is.
-    let resolved = crate::settings::resolve(
+    let resolved = crate::resolve_settings(
         Inputs {
             cwd,
             env,
