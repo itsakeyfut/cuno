@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell, Verbosity};
-use cuno_manifest::{ConfigError, Inputs, Settings};
+use cuno_manifest::{CliSettings, ConfigError, Inputs, Settings};
 
 // So the binary, which may depend only on this crate and `cuno-core`, can
 // name the host it collects (`architecture.md`, "Dependencies between
@@ -182,10 +182,7 @@ impl From<BuildOpts> for build::BuildArgs {
         build::BuildArgs {
             release: o.release,
             profile: o.profile,
-            compiler: o.compiler,
             target: o.target,
-            target_dir: o.target_dir,
-            jobs: o.jobs,
         }
     }
 }
@@ -380,6 +377,18 @@ fn resolve_settings(inputs: Inputs<'_>, shell: &mut Shell) -> Result<Settings, C
     Ok(loaded.value)
 }
 
+/// `cuno new`'s settings: the user's `[term]` alone, applied to `shell`,
+/// since the project around the new package is not its own
+/// (`docs/en/specs/commands.md`, "Available for all commands").
+fn resolve_user_settings(env: &Env, cwd: &Path, shell: &mut Shell) -> Result<(), ConfigError> {
+    let loaded = cuno_manifest::resolve_user(env, cwd)?;
+    shell.configure(loaded.value.color, loaded.value.verbose);
+    for warning in &loaded.warnings {
+        shell.warning(warning);
+    }
+    Ok(())
+}
+
 /// Carries out the parsed command line and returns the exit code. Every
 /// error a command can meet comes back here rather than being printed where
 /// it happens; `doctor` prints its problems itself and only says how many.
@@ -428,12 +437,19 @@ fn dispatch(
             target_dir,
         }) => {
             let cwd = given.cwd()?;
-            let args = clean::CleanArgs {
-                release,
-                profile,
+            let cli = CliSettings {
                 target_dir,
+                ..CliSettings::default()
             };
-            clean::clean(args, env, &cwd, shell)?;
+            let resolved = resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cli: &cli,
+                },
+                shell,
+            );
+            clean::clean(clean::CleanArgs { release, profile }, resolved, &cwd, shell)?;
             return Ok(0);
         }
         Some(Command::New {
@@ -444,6 +460,7 @@ fn dispatch(
             vcs,
         }) => {
             let cwd = given.cwd()?;
+            resolve_user_settings(env, &cwd, shell).map_err(build::boxed)?;
             // clap admits only these values.
             let args = new::NewArgs {
                 path,
@@ -464,7 +481,20 @@ fn dispatch(
         }
         Some(Command::Doctor { compiler }) => {
             let cwd = given.cwd()?;
-            let problems = doctor::doctor(compiler, env, &cwd, given.host, given.temp, shell);
+            let cli = CliSettings {
+                compiler: compiler.clone(),
+                ..CliSettings::default()
+            };
+            let resolved = resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cli: &cli,
+                },
+                shell,
+            );
+            let problems =
+                doctor::doctor(compiler, resolved, env, &cwd, given.host, given.temp, shell);
             return Ok(if problems == 0 { 0 } else { 1 });
         }
         None => {
@@ -479,7 +509,29 @@ fn dispatch(
         }
     };
     let cwd = given.cwd()?;
-    build::build(goal, opts.into(), env, &cwd, given.host, given.temp, shell)
+    let cli = CliSettings {
+        compiler: opts.compiler.clone(),
+        target_dir: opts.target_dir.clone(),
+        jobs: opts.jobs,
+    };
+    let resolved = resolve_settings(
+        Inputs {
+            cwd: &cwd,
+            env,
+            cli: &cli,
+        },
+        shell,
+    );
+    build::build(
+        goal,
+        opts.into(),
+        resolved,
+        env,
+        &cwd,
+        given.host,
+        given.temp,
+        shell,
+    )
 }
 
 /// The current directory cannot be read (deleted, or no permission).

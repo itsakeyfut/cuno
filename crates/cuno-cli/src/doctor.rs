@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use cuno_core::{CunoError, Env, Shell};
-use cuno_manifest::{CliSettings, Inputs, Profile, Settings};
+use cuno_manifest::{ConfigError, Profile, Settings};
 use cuno_toolchain::compiler::{CompilerKind, Family};
 use cuno_toolchain::flags::check_edition;
 use cuno_toolchain::llvm::Tool;
@@ -45,8 +45,11 @@ impl Problems<'_> {
 
 /// Diagnoses the compiler `--compiler` (or the selection precedence) picks,
 /// printing each finding to `shell`, and returns how many problems it found.
+/// `resolved` are the settings read before dispatch; their error is one of
+/// the problems, and the diagnosis goes on without them.
 pub fn doctor(
     compiler: Option<String>,
+    resolved: Result<Settings, ConfigError>,
     env: &Env,
     cwd: &Path,
     host: HostOs,
@@ -56,18 +59,6 @@ pub fn doctor(
     let mut problems = Problems { shell, count: 0 };
     let runner = SystemRunner::new();
 
-    let cli = CliSettings {
-        compiler: compiler.clone(),
-        ..Default::default()
-    };
-    let resolved = crate::resolve_settings(
-        Inputs {
-            cwd,
-            env,
-            cli: &cli,
-        },
-        problems.shell,
-    );
     let settings = match resolved {
         Ok(settings) => Some(settings),
         Err(error) => {

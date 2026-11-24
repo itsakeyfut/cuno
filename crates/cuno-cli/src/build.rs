@@ -5,7 +5,6 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -13,7 +12,7 @@ use cuno_build::exec::SystemSpawner;
 use cuno_build::pipeline::{self, Request, Toolchain};
 use cuno_build::{bundled, toolchain};
 use cuno_core::{CunoError, Env, ExitClass, Shell};
-use cuno_manifest::{CliSettings, Inputs, Profile};
+use cuno_manifest::{ConfigError, Profile, Settings};
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::{HostOs, SystemRunner};
 
@@ -24,14 +23,8 @@ pub struct BuildArgs {
     pub release: bool,
     /// `--profile`.
     pub profile: Option<String>,
-    /// `--compiler`.
-    pub compiler: Option<String>,
     /// `--target`, reserved.
     pub target: Option<String>,
-    /// `--target-dir`.
-    pub target_dir: Option<PathBuf>,
-    /// `-j, --jobs`.
-    pub jobs: Option<NonZeroU32>,
 }
 
 /// What a build command does once the project is built.
@@ -62,12 +55,14 @@ pub enum Goal {
 /// Carries out `goal` for the project around `cwd` and returns the exit
 /// code: 0; for `cuno run` the program's; for `cuno test`, 1 when a test
 /// failed or an executable's tests could not be listed. A failed build is
-/// an error, which exits 1 too.
+/// an error, which exits 1 too. `settings` were resolved before dispatch;
+/// their error is reported after the command's own argument errors.
 // Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn build(
     goal: Goal,
     args: BuildArgs,
+    settings: Result<Settings, ConfigError>,
     env: &Env,
     cwd: &Path,
     host: HostOs,
@@ -79,20 +74,7 @@ pub fn build(
         return Err(Box::new(CommandError::TargetNotSupported));
     }
     let profile = profile_named(args.release, args.profile.as_deref())?;
-    let cli = CliSettings {
-        compiler: args.compiler,
-        target_dir: args.target_dir,
-        jobs: args.jobs,
-    };
-    let settings = crate::resolve_settings(
-        Inputs {
-            cwd,
-            env,
-            cli: &cli,
-        },
-        shell,
-    )
-    .map_err(boxed)?;
+    let settings = settings.map_err(boxed)?;
     let Some((project, manifest)) = &settings.project else {
         return Err(Box::new(CommandError::NoProject {
             cwd: cwd.to_owned(),

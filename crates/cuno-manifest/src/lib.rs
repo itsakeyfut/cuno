@@ -19,4 +19,4 @@ pub use manifest::{
     Test, load_manifest, parse_manifest,
 };
 pub use project::{Project, find_project, resolve_path};
-pub use settings::{CliSettings, Inputs, Settings, resolve};
+pub use settings::{CliSettings, Inputs, Settings, Term, resolve, resolve_user};
