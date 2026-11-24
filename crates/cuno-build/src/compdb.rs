@@ -1,43 +1,16 @@
 //! `compile_commands.json`: the compile commands of a build graph, for
 //! clang-tidy and editors (`docs/en/specs/build.md`, "Output").
 
-use std::ffi::OsStr;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use cuno_toolchain::Version;
-use cuno_toolchain::compiler::{CompilerKind, Syntax};
-use cuno_toolchain::flags::{dependency_args, for_clang_tools};
+use cuno_toolchain::flags::{ToolContext, dependency_args, for_clang_tools};
 use serde_json::{Value, json};
 
 use crate::graph::{Graph, StepKind};
 
 /// The file's name, written at the project root.
 pub const FILE: &str = "compile_commands.json";
-
-/// What the commands in the file are run with, besides their arguments.
-#[derive(Clone, Copy, Debug)]
-pub struct Compiler<'a> {
-    /// The compiler.
-    pub kind: CompilerKind,
-    /// The resolved `INCLUDE`, in order.
-    pub include: &'a [PathBuf],
-    /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees.
-    pub msvc: Option<&'a Version>,
-}
-
-/// The directories of an `INCLUDE` value, in order. An empty entry (`a;;b`,
-/// or a trailing `;`) names no directory and is left out, rather than
-/// written as an empty include directory.
-pub fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
-    include
-        .map(|dirs| {
-            std::env::split_paths(dirs)
-                .filter(|dir| !dir.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
 
 /// Writes `<root>/compile_commands.json` from `graph`: one entry per
 /// compile, none for a link. The graph is the one `build.md`, "Output",
@@ -49,9 +22,9 @@ pub fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
 /// editor watching it does not analyse everything again after every
 /// build. A write that fails leaves no partial file behind; the caller
 /// warns and the build goes on (`build.md`, "Output").
-pub fn write(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> io::Result<()> {
+pub fn write(root: &Path, graph: &Graph, context: ToolContext<'_>) -> io::Result<()> {
     let text =
-        serde_json::to_string_pretty(&entries(root, graph, compiler)).map_err(io::Error::other)?;
+        serde_json::to_string_pretty(&entries(root, graph, context)).map_err(io::Error::other)?;
     let path = root.join(FILE);
     if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
         return Ok(());
@@ -65,32 +38,9 @@ pub fn write(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> io::Result<(
 }
 
 /// The entries, apart from writing them, so they can be tested without a
-/// file.
-///
-/// The file is for clang-based tools, which analyse with their own
-/// headers first and the compiler's `INCLUDE` after, as the build's
-/// compiler searches. So each command carries what lets such a tool, run
-/// anywhere, see what the build saw:
-///
-/// - `INCLUDE`, after the tool's own headers: `/imsvc` for cl syntax (read
-///   as clang-cl), `-idirafter` for clang (`-isystem` would put the MSVC
-///   and Windows headers before clang's own `stddef.h` and `limits.h`);
-/// - the MSVC version, which a tool would otherwise guess from whatever
-///   Visual Studio it finds;
-/// - the arguments as such a tool reads them ([`for_clang_tools`]).
-fn entries(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> Value {
-    let kind = compiler.kind;
-    let mut extra: Vec<String> = compiler
-        .include
-        .iter()
-        .flat_map(|dir| match kind.syntax() {
-            Syntax::Cl => vec![format!("/imsvc{}", dir.display())],
-            Syntax::Gnu => vec!["-idirafter".to_owned(), dir.display().to_string()],
-        })
-        .collect();
-    if let Some(version) = compiler.msvc {
-        extra.push(format!("-fms-compatibility-version={version}"));
-    }
+/// file. Each command is what [`for_clang_tools`] makes of the compile.
+fn entries(root: &Path, graph: &Graph, context: ToolContext<'_>) -> Value {
+    let kind = context.kind;
     let entries: Vec<Value> = graph
         .steps
         .iter()
@@ -114,11 +64,11 @@ fn entries(root: &Path, graph: &Graph, compiler: Compiler<'_>) -> Value {
             }
             let arguments: Vec<String> = std::iter::once(step.program.display().to_string())
                 .chain(
-                    for_clang_tools(kind, &args)
+                    for_clang_tools(context, &args)
+                        .args()
                         .iter()
                         .map(|a| a.to_string_lossy().into_owned()),
                 )
-                .chain(extra.iter().cloned())
                 .collect();
             Some(json!({
                 "directory": root.display().to_string(),
@@ -136,8 +86,10 @@ mod tests {
     use super::*;
     use crate::deps::Headers;
     use crate::graph::Step;
-    use cuno_toolchain::compiler::Dependencies;
+    use cuno_toolchain::Version;
+    use cuno_toolchain::compiler::{CompilerKind, Dependencies};
     use std::ffi::OsString;
+    use std::path::PathBuf;
 
     /// A compile of `source` with `kind`, its arguments `/c`, `extra`, the
     /// source and the dependency arguments, as `graph::plan` orders them.
@@ -222,12 +174,12 @@ mod tests {
                     link,
                 ],
             };
-            let compiler = Compiler {
+            let context = ToolContext {
                 kind,
                 include: &include,
                 msvc: Some(&version),
             };
-            let value = entries(Path::new("C:/p"), &graph, compiler);
+            let value = entries(Path::new("C:/p"), &graph, context);
             let entries = value.as_array().unwrap();
             assert_eq!(entries.len(), 2, "{kind:?}");
             assert_eq!(entries[0]["file"], "C:/p/src/main.cpp");
@@ -265,34 +217,24 @@ mod tests {
             let graph = Graph {
                 steps: vec![compile(kind, "src/main.cpp", &[written])],
             };
-            let compiler = Compiler {
+            let context = ToolContext {
                 kind,
                 include: &[],
                 msvc: None,
             };
-            let value = entries(Path::new("C:/p"), &graph, compiler);
+            let value = entries(Path::new("C:/p"), &graph, context);
             assert_eq!(arguments(&value[0])[2], read, "{kind:?} {written}");
         }
         let graph = Graph {
             steps: vec![compile(CompilerKind::Msvc, "src/main.cpp", &["/GL"])],
         };
-        let msvc = Compiler {
+        let msvc = ToolContext {
             kind: CompilerKind::Msvc,
             include: &[],
             msvc: None,
         };
         let value = entries(Path::new("C:/p"), &graph, msvc);
         assert!(!arguments(&value[0]).contains(&"/GL"));
-    }
-
-    /// Mutation: keep an empty `INCLUDE` entry; this test fails.
-    #[test]
-    fn an_empty_include_entry_is_no_directory() {
-        assert_eq!(
-            include_dirs(Some(OsStr::new("C:/a;;C:/b;"))),
-            [PathBuf::from("C:/a"), PathBuf::from("C:/b")]
-        );
-        assert!(include_dirs(None).is_empty());
     }
 
     /// Arguments that only look like the dependency arguments, because they
@@ -311,8 +253,8 @@ mod tests {
         assert_eq!(args.last(), Some(&"-DLAST"));
     }
 
-    fn clang() -> Compiler<'static> {
-        Compiler {
+    fn clang() -> ToolContext<'static> {
+        ToolContext {
             kind: CompilerKind::Clang,
             include: &[],
             msvc: None,

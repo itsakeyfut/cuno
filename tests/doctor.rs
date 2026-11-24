@@ -1321,3 +1321,91 @@ fn quiet_shows_only_warnings_and_problems() {
         run.stderr
     );
 }
+
+/// A batch file standing in for clang-tidy: it reports `version`, and
+/// writes the arguments of every other run to `args.txt` beside itself, and
+/// the `INCLUDE` it was run with to `include.txt`.
+fn recording_tidy(version: &str) -> String {
+    format!(
+        "@echo off\r\n\
+         if \"%~1\"==\"--version\" (echo LLVM version {version}& exit /b 0)\r\n\
+         echo %*>> \"%~dp0args.txt\"\r\n\
+         echo %INCLUDE%>> \"%~dp0include.txt\"\r\n\
+         exit /b 0\r\n"
+    )
+}
+
+/// Doctor's clang-tidy check gives clang-tidy the command compile_commands.json
+/// holds for a source, which is what `cuno lint` runs it with: `CUNO_TEST`
+/// defined, each `INCLUDE` directory after the tool's own headers, and the
+/// MSVC version (`docs/en/specs/toolchain.md`, "Minimum compiler
+/// versions"); and runs it in the resolved environment, as the build runs.
+///
+/// Mutation: build doctor's check from the build's settings (no
+/// `CUNO_TEST`), or without the include directories or the version
+/// compile_commands.json writes, or run clang-tidy without the resolved
+/// environment; this test fails.
+#[test]
+fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", &manifest(""))
+        .file("src/main.cpp", "int main() { return 0; }\n");
+    let config = configured(&project, &[("clang-tidy", "")]);
+    let project = project
+        .file("fake/clang-tidy.cmd", &recording_tidy("22.1.8"))
+        .file(".cuno/config.toml", &config);
+    let doctor = project.cuno(&["doctor", "--compiler", "msvc"]);
+    assert_eq!(doctor.code, Some(0), "{}", doctor.stderr);
+    let given =
+        std::fs::read_to_string(project.path().join("fake/args.txt")).expect("clang-tidy was run");
+
+    let built = project.cuno(&["build", "--compiler", "msvc"]);
+    assert_eq!(built.code, Some(0), "{}", built.stderr);
+    let text = std::fs::read_to_string(project.path().join("compile_commands.json")).unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let arguments: Vec<&str> = entries[0]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    let carried: Vec<&str> = arguments
+        .iter()
+        .copied()
+        .filter(|a| {
+            a.starts_with("/imsvc")
+                || a.starts_with("-fms-compatibility-version=")
+                || a.contains("CUNO_TEST")
+        })
+        .collect();
+    assert!(
+        carried.iter().any(|a| a.contains("CUNO_TEST")),
+        "{arguments:?}"
+    );
+    assert!(
+        carried.iter().any(|a| a.starts_with("/imsvc")),
+        "{arguments:?}"
+    );
+    assert!(
+        carried
+            .iter()
+            .any(|a| a.starts_with("-fms-compatibility-version=")),
+        "{arguments:?}"
+    );
+    for each in carried {
+        assert!(
+            given.contains(each),
+            "clang-tidy was not given {each}: {given}"
+        );
+    }
+    assert!(given.contains("--driver-mode=cl"), "{given}");
+    let include = std::fs::read_to_string(project.path().join("fake/include.txt")).unwrap();
+    let first = arguments
+        .iter()
+        .find_map(|a| a.strip_prefix("/imsvc"))
+        .unwrap();
+    assert!(include.contains(first), "INCLUDE was {include:?}");
+}

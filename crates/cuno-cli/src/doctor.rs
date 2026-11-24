@@ -16,7 +16,7 @@ use cuno_toolchain::select::{self, Choices, Found};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
 use cuno_build::bundled;
-use cuno_build::toolchain::{self, ProbeCompile};
+use cuno_build::toolchain::{self, TidyCompile};
 
 /// Prints `error:` and `help:` and counts problems, and prints the
 /// findings that are not problems as status lines, which the shell leaves
@@ -111,7 +111,7 @@ pub fn doctor(
     if !no_llvm {
         tools(
             &llvm,
-            diagnosed.stl.as_ref(),
+            diagnosed.tidy.as_ref(),
             host,
             temp,
             &runner,
@@ -144,9 +144,9 @@ struct Diagnosed {
     /// `[toolchain.paths] msvc` cannot be used, which the MSVC `Info` line
     /// would only repeat.
     vs_reported: bool,
-    /// What clang-tidy's standard library check needs, when it is to be
+    /// What clang-tidy's standard library check analyses, when it is to be
     /// made: a compiler, a Windows environment and a C++ project or none.
-    stl: Option<ProbeCompile>,
+    tidy: Option<TidyCompile>,
 }
 
 // Each argument answers its own question; a struct would only rename them.
@@ -209,14 +209,14 @@ fn diagnose(
             return Diagnosed {
                 attempted,
                 vs_reported: matches!(error, ToolchainError::VisualStudioNotAt { .. }),
-                stl: None,
+                tidy: None,
             };
         }
     };
     let mut diagnosed = Diagnosed {
         attempted,
         vs_reported: false,
-        stl: None,
+        tidy: None,
     };
     // Without a readable configuration, automatic selection is not what the
     // configuration chose (commands.md, "`cuno doctor`").
@@ -276,15 +276,17 @@ fn diagnose(
     let Ok(home) = cuno_core::cuno_home(env) else {
         return diagnosed;
     };
+    let project = project.map(|(p, m)| (p.root.as_path(), m));
+    // Not written by doctor, which only looks: see `toolchain::ready`.
+    let bundled = bundled::include_dir(&home);
     let Some(stl) = toolchain::probe_compile(
         &selected,
         &prepared,
-        project.map(|(p, m)| (p.root.as_path(), m)),
+        project,
         Profile::Dev,
         cwd,
         host,
-        // Not written by doctor, which only looks: see `toolchain::ready`.
-        &bundled::include_dir(&home),
+        &bundled,
     ) else {
         return diagnosed;
     };
@@ -294,15 +296,15 @@ fn diagnose(
             Err(error) => problems.report(&*error),
         }
     }
-    diagnosed.stl = Some(stl);
+    diagnosed.tidy = toolchain::tidy_compile(&selected, &prepared, project, cwd, host, &bundled);
     diagnosed
 }
 
 /// `Found` lines for clang-format and clang-tidy, a problem for each that is
-/// missing, and clang-tidy's standard library check when `stl` is given.
+/// missing, and clang-tidy's standard library check when `tidy` is given.
 fn tools(
     llvm: &[cuno_toolchain::llvm::LlvmTool],
-    stl: Option<&ProbeCompile>,
+    tidy: Option<&TidyCompile>,
     host: HostOs,
     temp: &Path,
     runner: &SystemRunner,
@@ -318,15 +320,16 @@ fn tools(
         };
         problems.status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
-            && let Some(stl) = stl
+            && let Some(tidy) = tidy
             && let Err(error) = toolchain::in_scratch(temp, "doctor", "clang-tidy", |scratch| {
                 probe::check_tidy(
                     &chosen,
-                    &stl.env,
+                    &tidy.env,
+                    tidy.context(),
                     ProbeInputs {
                         scratch,
-                        input: &stl.settings.input(),
-                        cwd: &stl.cwd,
+                        input: &tidy.settings.input(),
+                        cwd: &tidy.cwd,
                     },
                     runner,
                 )

@@ -49,6 +49,32 @@ impl CompileSettings {
     }
 }
 
+/// The settings compile_commands.json's commands are made with, whatever is
+/// built: [`compile_settings`] in the `dev` profile, compiled, with
+/// `CUNO_TEST` defined (`docs/en/specs/build.md`, "Output"). One function,
+/// as the pipeline writes the file with them and `cuno doctor`'s clang-tidy
+/// check analyses with them, which a second copy of the three values would
+/// let drift apart (`docs/en/specs/toolchain.md`, "Minimum compiler
+/// versions").
+pub fn editor_settings(
+    project: Option<(&Path, &Manifest)>,
+    kind: CompilerKind,
+    lang: Lang,
+    host: HostOs,
+    bundled: &Path,
+) -> CompileSettings {
+    compile_settings(
+        project,
+        kind,
+        Profile::Dev,
+        lang,
+        host,
+        bundled,
+        true,
+        Mode::Compile,
+    )
+}
+
 /// The settings for compiling a `lang` source of the project at `root` with
 /// `manifest` (or, with no project, the defaults) with `kind` in `profile`,
 /// for a host `host` building for itself: `[build]`, `[platform.<os>.build]`,

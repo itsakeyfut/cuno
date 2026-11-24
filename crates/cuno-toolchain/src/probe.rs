@@ -10,21 +10,22 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use cuno_core::Env;
 
-use crate::compiler::{Family, Syntax};
-use crate::flags::{CompileInput, Mode, TARGET_SWITCH, compile_args, for_clang_tools};
+use crate::compiler::Family;
+use crate::flags::{CompileInput, Mode, ToolContext, compile_args, for_clang_tools};
 use crate::select::{LlvmChoice, Selected};
 use crate::{Runner, ToolchainError, Version};
 
-/// What the build's compile command would also get, for the standard library
-/// probe.
+/// What a standard library probe compiles with, besides the probe file.
 #[derive(Clone, Copy, Debug)]
 pub struct ProbeInputs<'a> {
     /// A directory outside the project to write the probe file in.
     pub scratch: &'a Path,
-    /// The build's compile input for a C++ source: the probe compiles C++,
-    /// so a C package's is made with `Lang::Cxx` and a C++ edition, or a C
-    /// standard switch would be rejected. Its command line is the build's
-    /// own ([`compile_args`]), in check mode whatever `input.mode` says.
+    /// The compile input for a C++ source: the probe compiles C++, so a C
+    /// package's is made with `Lang::Cxx` and a C++ edition, or a C
+    /// standard switch would be rejected. [`check`] is given the build's and
+    /// runs it in check mode, [`check_tidy`] compile_commands.json's and
+    /// runs it compiled, as that file plans it; each sets the mode itself,
+    /// whatever `input.mode` says.
     pub input: &'a CompileInput<'a>,
     /// Where the compiler runs: the project root, as for the build, so a
     /// relative path in the project's flags or include directories means
@@ -72,15 +73,17 @@ fn check_command(inputs: &ProbeInputs<'_>, probe: &Path) -> Vec<OsString> {
 
 /// Whether `tidy` is accepted by the MSVC standard library: the same probe
 /// as [`check`], analysed by clang-tidy with one harmless check enabled
-/// (with none it stops without analysing) and, after `--`, the same
-/// command without the source, which clang-tidy is given as its file, as
-/// clang-tidy reads it: a cl command is read as clang-cl's, so it is
-/// rewritten into what clang-cl takes to mean the same
-/// ([`for_clang_tools`]) (`toolchain.md`, "Minimum compiler versions"). The project's
-/// `.clang-tidy` is not read.
+/// (with none it stops without analysing) and, after `--`, the command
+/// compile_commands.json would hold for it without the source, which
+/// clang-tidy is given as its file: `inputs.input` compiled, as the file
+/// is planned (`dev`, `CUNO_TEST`), and read as Clang-based tools read it,
+/// with `context` ([`for_clang_tools`]). That is what `cuno lint` runs
+/// clang-tidy with (`toolchain.md`, "Minimum compiler versions"). The
+/// project's `.clang-tidy` is not read.
 pub fn check_tidy(
     tidy: &LlvmChoice,
     env: &Env,
+    context: ToolContext<'_>,
     inputs: ProbeInputs<'_>,
     run: &dyn Runner,
 ) -> Result<(), ToolchainError> {
@@ -91,22 +94,15 @@ pub fn check_tidy(
             probe.into(),
             "--".into(),
         ];
-        let kind = inputs.input.kind;
-        let cl_syntax = match kind.syntax() {
-            Syntax::Cl => true,
-            Syntax::Gnu => false,
+        // Compiled, as compile_commands.json plans its commands.
+        let input = CompileInput {
+            mode: Mode::Compile,
+            ..*inputs.input
         };
-        if cl_syntax {
-            // clang-tidy reads flags as the GNU-style driver unless told.
-            args.push("--driver-mode=cl".into());
-        }
-        // An LLVM driver's flags name the target; cl's do not.
-        match kind.family() {
-            Family::Msvc => args.push(TARGET_SWITCH.into()),
-            Family::Llvm => {}
-        }
+        let command = for_clang_tools(context, &compile_args(&input, probe, None));
         args.extend(
-            for_clang_tools(kind, &check_command(&inputs, probe))
+            command
+                .after_double_dash()
                 .into_iter()
                 .filter(|arg| arg.as_os_str() != probe.as_os_str()),
         );
@@ -177,11 +173,12 @@ mod tests {
     use crate::Output;
     use crate::compiler::CompilerKind;
     use crate::flags::{
-        BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Warnings,
+        BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, TARGET_SWITCH, Warnings,
     };
     use crate::msvc::MsvcToolset;
     use crate::select::Source;
     use std::cell::RefCell;
+    use std::path::PathBuf;
 
     fn v(major: u32, minor: u32, patch: u32) -> Version {
         Version {
@@ -284,6 +281,15 @@ mod tests {
             lto: false,
         };
         (build, profile)
+    }
+
+    /// What clang-tidy is told of a build with no `INCLUDE` and no toolset.
+    fn no_context(kind: CompilerKind) -> ToolContext<'static> {
+        ToolContext {
+            kind,
+            include: &[],
+            msvc: None,
+        }
     }
 
     /// A C++20 input of `settings` for `kind`, in `mode`.
@@ -459,7 +465,9 @@ mod tests {
     /// `--`, give the command before `--` or with the file again, put
     /// cl-style flags through clang-tidy without `--driver-mode=cl` (or
     /// GNU-style ones with it), name the target twice or not at all for
-    /// MSVC, or run the command in the mode it is handed; this test fails.
+    /// MSVC, run the command in the mode it is handed rather than compiled
+    /// as compile_commands.json plans it, or leave out the include
+    /// directories or the MSVC version it is given; this test fails.
     #[test]
     fn clang_tidy_is_asked_the_standard_librarys_verdict() {
         let root = tempfile::tempdir().unwrap();
@@ -469,10 +477,18 @@ mod tests {
             version: v(20, 1, 8),
         };
         let stl = "x\\yvals_core.h(922,1): error: STL1000: Unexpected compiler version, expected Clang 22 or newer. [clang-diagnostic-error]\n";
+        let include = [PathBuf::from("C:/inc")];
+        let version = v(19, 52, 1);
+        let context = |kind| ToolContext {
+            kind,
+            include: &include,
+            msvc: Some(&version),
+        };
         let msvc = input(CompilerKind::Msvc, &settings, Mode::Check);
         let err = check_tidy(
             &tidy,
             &Env::default(),
+            context(CompilerKind::Msvc),
             ProbeInputs {
                 scratch: root.path(),
                 input: &msvc,
@@ -495,26 +511,33 @@ mod tests {
             (CompilerKind::ClangCl, &["--driver-mode=cl"][..]),
             (CompilerKind::Clang, &[][..]),
         ] {
-            let handed = input(kind, &settings, Mode::Compile);
+            let handed = input(kind, &settings, Mode::Check);
             let inputs = ProbeInputs {
                 scratch: root.path(),
                 input: &handed,
                 cwd: root.path(),
             };
             let run = answers(true, "", "");
-            check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
-            let compile = input(kind, &settings, Mode::Check);
+            check_tidy(&tidy, &Env::default(), context(kind), inputs, &run).unwrap();
+            let compile = input(kind, &settings, Mode::Compile);
             let args = run.args.borrow().clone();
             assert_eq!(args[0], "--checks=-*,readability-braces-around-statements");
             let probe = &args[2];
             assert!(probe.ends_with(".cpp"), "{args:?}");
-            let command: Vec<String> = strings(for_clang_tools(
-                kind,
-                &compile_args(&compile, Path::new(probe), None),
-            ))
+            let command: Vec<String> = strings(
+                for_clang_tools(
+                    context(kind),
+                    &compile_args(&compile, Path::new(probe), None),
+                )
+                .args()
+                .to_vec(),
+            )
             .into_iter()
             .filter(|a| a != probe)
             .collect();
+            for each in ["-fms-compatibility-version=19.52.1", "C:/inc"] {
+                assert!(args.iter().any(|a| a.contains(each)), "{kind:?}: {args:?}");
+            }
             let expected: Vec<String> = ["--"]
                 .iter()
                 .chain(mode)
@@ -554,7 +577,14 @@ mod tests {
             input: &compile,
             cwd: root.path(),
         };
-        check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+        check_tidy(
+            &tidy,
+            &Env::default(),
+            no_context(CompilerKind::Msvc),
+            inputs,
+            &run,
+        )
+        .unwrap();
         let args = run.args.borrow().clone();
         assert!(args.iter().any(|a| a == "/clang:-std=c++23"), "{args:?}");
         assert!(!args.iter().any(|a| a == "/std:c++23"), "{args:?}");
@@ -582,7 +612,14 @@ mod tests {
             input: &compile,
             cwd: root.path(),
         };
-        check_tidy(&tidy, &Env::default(), inputs, &run).unwrap();
+        check_tidy(
+            &tidy,
+            &Env::default(),
+            no_context(CompilerKind::Msvc),
+            inputs,
+            &run,
+        )
+        .unwrap();
         let args = run.args.borrow().clone();
         assert!(!args.iter().any(|a| a == "/GL"), "{args:?}");
     }

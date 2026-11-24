@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob ca7123f813a8b88f228d8e796725f5cdbe13fb28 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 422e70a8b9bcb25aabf8c913d311363d3240b87e -->
 
 # Toolchain
 
@@ -63,8 +63,9 @@ A compiler must accept a C++20 specification.
   - **When no verdict is possible**: if the probe fails for a reason other than STL1000 (headers not found, another STL error, etc.), or does not finish within 30 seconds, whether the pairing works cannot be decided. It is not treated as passing; the compiler's output is shown as an environment problem (with the exit codes below).
   - Rationale: reading the header's condition, or keeping a table of MSVC versions in cuno, could judge an unusable pairing as fine once a new Visual Studio changes how the header is written or which version it requires. The probe compile takes tens of milliseconds and uses the standard library's own answer.
 - **The same check applies to clang-tidy.** clang-tidy analyzes with the commands in compile_commands.json and reads the MSVC standard headers, so an old clang-tidy fails on every file with STL1000.
-  - Method: clang-tidy analyzes the same file with `--checks=-*,readability-braces-around-statements` (with no check enabled it stops without analyzing, so one harmless check is enabled) and, after `--`, the same compile conditions as above. The project's `.clang-tidy` is not read. clang-tidy reports STL1000 on stdout. The verdict is as above.
-    - When MSVC is selected, clang-tidy reads these conditions as a clang-cl command. So they are passed rewritten into a form clang-cl reads with the same meaning (MSVC's standard switch becomes clang-cl's, and `/GL` is left out; the same rewrite as compile_commands.json, [build.md](build.md#output)). Left as they are, clang-cl would, for example, not know `/std:c++23` and ignore it, and under `warnings-as-errors` its warning about the unused argument becomes an error, reporting a problem that does not exist.
+  - Method: clang-tidy analyzes the same file with `--checks=-*,readability-braces-around-statements` (with no check enabled it stops without analyzing, so one harmless check is enabled) and, after `--`, the command compile_commands.json would write for that file. That is, the compile conditions of the `dev` profile with `CUNO_TEST` defined, plus the MSVC / Windows SDK include paths and the MSVC version (`-fms-compatibility-version`), rewritten into the form Clang-based tools read ([build.md](build.md#output)). The project's `.clang-tidy` is not read. clang-tidy reports STL1000 on stdout. The verdict is as above.
+    - Unlike compile_commands.json, the command after `--` has no compiler program name. So a cl-style command (MSVC, clang-cl) is given `--driver-mode=cl` to be read as a clang-cl command, and when MSVC is selected the target `x86_64-pc-windows-msvc` is passed too (cl's conditions do not name a target).
+    - Rationale: `cuno lint` runs clang-tidy with the commands in compile_commands.json. Checking under other conditions (for example the build's profile, no `CUNO_TEST`, or giving the include paths only through the `INCLUDE` environment variable) could let a clang-tidy that `cuno doctor` reported as fine fail in `cuno lint`, which analyzes with a different command.
 - **Where it is checked**:
 
   | Command | What is checked | C-only project (`[package] lang = "c"`) |
