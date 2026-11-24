@@ -7,6 +7,7 @@ mod build;
 mod bundled;
 mod clean;
 mod doctor;
+mod new;
 mod scratch;
 mod settings;
 mod toolchain;
@@ -57,6 +58,24 @@ struct Cli {
 /// The commands (docs/en/specs/commands.md).
 #[derive(Subcommand)]
 enum Command {
+    /// Create a new package
+    New {
+        /// Where to create it
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// The language (c / c++; default c++)
+        #[arg(long, value_name = "LANG", value_parser = ["c", "c++"])]
+        lang: Option<String>,
+        /// The language standard (c++17 / c++20 / c++23 / c11 / c17 / c23)
+        #[arg(long, value_name = "EDITION", value_parser = ["c++17", "c++20", "c++23", "c11", "c17", "c23"])]
+        edition: Option<String>,
+        /// The package's name (default: the directory's)
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Version control (git / none)
+        #[arg(long, value_name = "VCS", value_parser = ["git", "none"], default_value = "git")]
+        vcs: String,
+    },
     /// Compile the package
     Build(BuildOpts),
     /// Check the package for errors without building it
@@ -296,6 +315,33 @@ fn run(
                 target_dir,
             };
             clean::clean(args, quiet, env, &cwd, shell)?;
+            return Ok(0);
+        }
+        Some(Command::New {
+            path,
+            lang,
+            edition,
+            name,
+            vcs,
+        }) => {
+            let cwd = std::env::current_dir()
+                .map_err(|e| Box::new(CwdError(e.to_string())) as Box<dyn CunoError>)?;
+            // clap admits only these values.
+            let args = new::NewArgs {
+                path,
+                lang: lang
+                    .map(|l| cuno_toolchain::flags::Lang::parse(&l).expect("a lang clap admits")),
+                edition: edition.map(|e| {
+                    cuno_toolchain::flags::Edition::parse(&e).expect("an edition clap admits")
+                }),
+                name,
+                vcs: if vcs == "none" {
+                    new::Vcs::None
+                } else {
+                    new::Vcs::Git
+                },
+            };
+            new::new(args, &cwd, quiet, shell).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
             return Ok(0);
         }
         Some(Command::Doctor { compiler }) => {

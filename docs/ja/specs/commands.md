@@ -106,6 +106,8 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `--vcs <種類>` | バージョン管理（git / none）。既定 git |
 
 - **パッケージ名の規則**: 英数字・`-`・`_` のみ。先頭は英字。違反すればエラー（終了コード 2）。`--name` を省略してディレクトリ名が規則に合わない場合もエラーにし、`--name` での指定を案内する。
+  - Windows の予約名（`con`、`prn`、`aux`、`nul`、`com1`〜`com9`、`lpt1`〜`lpt9`。大文字・小文字を問わない）も、どの OS でもエラーにする。
+    - 理由: パッケージ名はディレクトリ名と実行ファイル名になる。Windows ではこれらの名前のファイルやディレクトリを作れないか、作れても消しにくい。
 - **作成先のディレクトリが既にある場合**はエラー（終了コード 2）。既存ディレクトリのプロジェクト化は `cuno init`（MVP 直後）で扱う。
 - `--edition` と `--lang` が合わない場合（例: `--lang c++ --edition c17`）はエラー。`--edition` だけを指定した場合は、その規格から言語を決める（`c11` / `c17` / `c23` なら C）。
 - `--lib`（ライブラリとして作成）は、ライブラリプロジェクトの対応と合わせて「後」に追加する（[project-layout.md](project-layout.md)）。
@@ -127,6 +129,20 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `.gitignore` | `target/`、`.cuno/`、`compile_commands.json`、`.clang-format`、`.clang-tidy`（後の 3 つは cuno の生成物。[dev-tools.md](dev-tools.md)） |
 
 - 空の `tests/` / `examples/` / `benches/` は作らない。
+
+#### 表示とエラー
+
+- 作り終えたら ``     Created `<名前>` package`` を表示する（`-q` では出さない）。
+- 下の表のエラーは終了コード 2。ファイルやディレクトリを作れない場合は終了コード 3。
+
+| 場合 | メッセージ |
+|---|---|
+| 名前が規則に合わない | `` error: `<名前>` is not a valid package name `` と `help: a package name starts with a letter and has only letters, digits, - and _`。名前がディレクトリ名から来た場合は `help: name the package with --name` も出す |
+| 名前が Windows の予約名 | `` error: `<名前>` is a reserved name on Windows `` と `help: choose another name` |
+| 作成先がある | `` error: `<パス>` already exists `` |
+| `--edition` が `--lang` と合わない | `` error: `<規格>` is not a standard of <言語> `` と `help: use --lang <規格の言語>, or an edition of <言語>: <その言語の規格の一覧>` |
+
+- git が見つからない場合は `warning: git was not found; the package is not under version control` を出す。`git init` が失敗した場合も、`warning: git init failed: <git の出力>` の警告にとどめる（ファイルは作り終えているため、作ったものは消さない）。
 
 ### `cuno run`
 

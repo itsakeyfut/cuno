@@ -33,6 +33,7 @@ One comfortable tool for C/C++ development.
 Usage: cuno [OPTIONS] [COMMAND]
 
 Commands:
+  new     Create a new package
   build   Compile the package
   check   Check the package for errors without building it
   run     Build the package and run one of its executables
