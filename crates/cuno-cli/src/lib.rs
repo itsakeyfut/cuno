@@ -17,7 +17,6 @@ use std::io::Write;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cuno_core::{ColorChoice, CunoError, Env, Shell};
 use cuno_manifest::{ConfigError, Inputs, Settings};
@@ -223,10 +222,10 @@ fn color_before_parsing(args: &[OsString]) -> Option<ColorChoice> {
     found.flatten()
 }
 
-/// The color clap uses for what it prints itself: the choice given, or with
-/// none, no color under `NO_COLOR` (set to anything, even empty), and
-/// otherwise whether the output is a terminal. Never clap's own `Auto`,
-/// which reads `CLICOLOR_FORCE`, a variable cuno does not read.
+/// Whether what clap makes is written with its colors on a stream: the
+/// choice given, or with none, no color under `NO_COLOR` (set to anything,
+/// even empty), and otherwise whether the stream is a terminal. Never clap's
+/// own `Auto`, which reads `CLICOLOR_FORCE`, a variable cuno does not read.
 fn parser_color(given: Option<ColorChoice>, no_color: bool, terminal: bool) -> clap::ColorChoice {
     let on = match given {
         Some(ColorChoice::Always) => true,
@@ -283,26 +282,20 @@ pub fn run(process: Process) -> i32 {
     let stderr_color = parser_color(given, no_color, stderr_is_terminal);
     // On `--version`, `--help` and usage errors, what clap made is printed
     // and its code returned: 0 for the first two and 2 for a usage error, as
-    // the spec's exit codes require. Help and the version go to stdout, so
-    // they are parsed again with stdout's color.
-    let parse = |color| Cli::command().color(color).try_get_matches_from(&args);
-    let cli = match parse(stderr_color) {
+    // the spec's exit codes require. What clap makes carries its styles
+    // whatever color the command is given; whether they are written is
+    // decided per stream, in `write_styled`.
+    let cli = match Cli::command().try_get_matches_from(&args) {
         // Formatted against the command, as `Cli::parse` does, so such an
         // error would carry the usage line too.
         Ok(matches) => match Cli::from_arg_matches(&matches) {
             Ok(cli) => cli,
             Err(e) => {
-                let e = e.format(&mut Cli::command().color(stderr_color));
+                let e = e.format(&mut Cli::command());
                 return print_clap(&e, stdout_color, stderr_color, &mut stdout, &mut stderr);
             }
         },
         Err(error) => {
-            let error = match error.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                    parse(stdout_color).err().unwrap_or(error)
-                }
-                _ => error,
-            };
             return print_clap(&error, stdout_color, stderr_color, &mut stdout, &mut stderr);
         }
     };
@@ -480,7 +473,7 @@ fn dispatch(
             // command". A failed write (a closed stdout) is ignored,
             // matching what clap does for `--help` and what Cargo does in
             // both cases: the exit code stays 0.
-            let usage = Cli::command().color(help_color).render_help();
+            let usage = Cli::command().render_help();
             let _ = write_styled(stdout.as_mut(), &usage, help_color);
             return Ok(0);
         }
