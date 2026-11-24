@@ -41,7 +41,7 @@ impl Spawner for SystemSpawner {
         let output = Command::new(&step.program)
             // First, so a color flag of the user's own, later, wins.
             .args(&step.color)
-            .args(&step.args)
+            .args(step.run_args())
             .env_clear()
             .envs(env.vars())
             .current_dir(cwd)
@@ -325,6 +325,7 @@ mod tests {
             searched: Vec::new(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency: Vec::new(),
         }
     }
 
@@ -664,6 +665,7 @@ mod tests {
             searched: Vec::new(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency: Vec::new(),
             ..step("clang", &[])
         };
         let spawner = Compiles {

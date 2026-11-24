@@ -360,7 +360,7 @@ fn command_line(step: &Step) -> String {
     };
     // As it runs: the color flags first (`commands.md`, "Format").
     std::iter::once(quote(step.program.as_os_str()))
-        .chain(step.color.iter().chain(&step.args).map(|a| quote(a)))
+        .chain(step.color.iter().chain(step.run_args()).map(|a| quote(a)))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -383,6 +383,7 @@ mod tests {
             searched: Vec::new(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency: Vec::new(),
         })
     }
 

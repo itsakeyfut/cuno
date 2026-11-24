@@ -4,7 +4,7 @@
 use std::io;
 use std::path::Path;
 
-use cuno_toolchain::flags::{ToolContext, dependency_args, for_clang_tools};
+use cuno_toolchain::flags::{ToolContext, for_clang_tools};
 use serde_json::{Value, json};
 
 use crate::graph::{Graph, StepKind};
@@ -40,7 +40,6 @@ pub fn write(root: &Path, graph: &Graph, context: ToolContext<'_>) -> io::Result
 /// The entries, apart from writing them, so they can be tested without a
 /// file. Each command is what [`for_clang_tools`] makes of the compile.
 fn entries(root: &Path, graph: &Graph, context: ToolContext<'_>) -> Value {
-    let kind = context.kind;
     let entries: Vec<Value> = graph
         .steps
         .iter()
@@ -51,20 +50,12 @@ fn entries(root: &Path, graph: &Graph, context: ToolContext<'_>) -> Value {
                 StepKind::Compile { source } => source,
                 StepKind::Check { .. } | StepKind::Link { .. } => return None,
             };
-            // The dependency file is the build's own bookkeeping, not part
-            // of what a source means. `graph::plan` puts those arguments
-            // last (see `dependency_args`); were they elsewhere they would
-            // stay, which a tool only writes a stray file for.
-            let mut args = step.args.clone();
-            if let Some(headers) = &step.headers {
-                let tail = dependency_args(kind, headers.file());
-                if args.ends_with(&tail) {
-                    args.truncate(args.len() - tail.len());
-                }
-            }
+            // `args` alone: the dependency arguments are the build's own
+            // bookkeeping, not part of what a source means (`Step::dependency`).
+            let args = &step.args;
             let arguments: Vec<String> = std::iter::once(step.program.display().to_string())
                 .chain(
-                    for_clang_tools(context, &args)
+                    for_clang_tools(context, args)
                         .args()
                         .iter()
                         .map(|a| a.to_string_lossy().into_owned()),
@@ -88,11 +79,13 @@ mod tests {
     use crate::graph::Step;
     use cuno_toolchain::Version;
     use cuno_toolchain::compiler::{CompilerKind, Dependencies};
+    use cuno_toolchain::flags::dependency_args;
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    /// A compile of `source` with `kind`, its arguments `/c`, `extra`, the
-    /// source and the dependency arguments, as `graph::plan` orders them.
+    /// A compile of `source` with `kind`: its arguments `/c`, `extra` and
+    /// the source, and its dependency arguments apart, as `graph::plan`
+    /// makes them.
     fn compile(kind: CompilerKind, source: &str, extra: &[&str]) -> Step {
         let object = PathBuf::from(format!("C:/p/target/debug/obj/app/{source}.obj"));
         let headers = match kind.dependencies() {
@@ -102,7 +95,7 @@ mod tests {
         let mut args: Vec<OsString> = vec!["/c".into()];
         args.extend(extra.iter().map(OsString::from));
         args.push(format!("C:/p/{source}").into());
-        args.extend(dependency_args(kind, headers.file()));
+        let dependency = dependency_args(kind, headers.file());
         Step {
             kind: StepKind::Compile {
                 source: format!("C:/p/{source}").into(),
@@ -117,6 +110,7 @@ mod tests {
             searched: Vec::new(),
             looked_for: Vec::new(),
             color: Vec::new(),
+            dependency,
         }
     }
 
@@ -244,19 +238,22 @@ mod tests {
         assert!(!arguments(&value[0]).contains(&"/GL"));
     }
 
-    /// Arguments that only look like the dependency arguments, because they
-    /// are not last, are kept.
+    /// A compile's dependency arguments, the build's own bookkeeping, are
+    /// not in its entry, and its own arguments all are, in order, the last
+    /// included.
     ///
-    /// Mutation: drop the last arguments whether or not they are the
-    /// dependency arguments; this test fails.
+    /// Mutation: write the arguments a step runs with (`run_args`) rather
+    /// than `args`, or drop the last argument; this test fails.
     #[test]
-    fn only_trailing_dependency_arguments_are_dropped() {
+    fn the_dependency_arguments_are_left_out() {
         let mut step = compile(CompilerKind::Clang, "src/main.cpp", &[]);
         step.args.push("-DLAST".into());
+        let file = step.headers.as_ref().unwrap().file().to_owned();
         let graph = Graph { steps: vec![step] };
         let value = entries(Path::new("C:/p"), &graph, clang());
         let args = arguments(&value[0]);
-        assert!(args.contains(&"-MD"), "{args:?}");
+        let file = file.to_string_lossy();
+        assert!(!args.iter().any(|a| a.contains(&*file)), "{args:?}");
         assert_eq!(args.last(), Some(&"-DLAST"));
     }
 
