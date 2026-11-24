@@ -222,51 +222,11 @@ pub fn dependency_args(kind: CompilerKind, file: &Path) -> Vec<OsString> {
     }
 }
 
-/// `args`, a compile's arguments for `kind` from [`compile_args`], as the
-/// clang-based tools that read `compile_commands.json` (clangd, clang-tidy)
-/// must see them to analyse what the compiler builds (`build.md`,
-/// "Output"). They read a command for cl as one for clang-cl, so for both:
-///
-/// - `/c` is written `-c`, which cl takes too: clang-cl warns that `/c` is
-///   unused when it only analyses, and `/WX` makes that an error;
-/// - for cl, a standard switch clang-cl does not know (`/std:c++23`,
-///   `/std:clatest`) is written as clang-cl's own for the same standard;
-/// - for cl, `/GL` (from `lto`) is left out: link-time optimization means
-///   nothing to an analysis, and clang-cl warns that it is unused.
-pub fn for_clang_tools(kind: CompilerKind, args: &[OsString]) -> Vec<OsString> {
-    let mut out = args.to_vec();
-    match kind.syntax() {
-        Syntax::Cl => {
-            for arg in &mut out {
-                if arg == "/c" {
-                    *arg = "-c".into();
-                }
-            }
-        }
-        Syntax::Gnu => {}
-    }
-    match kind {
-        CompilerKind::Msvc => {
-            out.retain(|arg| arg != "/GL");
-            for arg in &mut out {
-                let same = Edition::ALL
-                    .iter()
-                    .find(|(edition, _)| *arg == standard(CompilerKind::Msvc, *edition));
-                if let Some((edition, _)) = same {
-                    *arg = standard(CompilerKind::ClangCl, *edition).into();
-                }
-            }
-        }
-        CompilerKind::ClangCl | CompilerKind::Clang => {}
-    }
-    out
-}
-
 /// The language standard switch, naming the standard on every driver:
 /// `/std:c++latest` is already C++26 on current cl and clang-cl, and
 /// clang-cl ignores `/std:c++23` and `/std:c23`, so it gets clang's own
 /// through `/clang:`. C23 is `c2x`, which Clang 17 also accepts.
-fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
+pub(super) fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
     match (kind, edition) {
         (CompilerKind::Clang, Edition::Cxx17) => "-std=c++17",
         (CompilerKind::Clang, Edition::Cxx20) => "-std=c++20",

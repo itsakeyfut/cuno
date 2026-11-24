@@ -11,14 +11,14 @@ use std::time::Instant;
 use cuno_core::{Env, Shell};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
 use cuno_toolchain::compiler::CompilerKind;
-use cuno_toolchain::flags::Mode;
+use cuno_toolchain::flags::{Mode, ToolContext, include_dirs};
 use cuno_toolchain::{HostOs, Version};
 
 use crate::BuildError;
 use crate::compdb;
 use crate::exec::{self, Event, Spawner};
 use crate::graph::{self, Plan, Products, Step, StepKind};
-use crate::input::compile_settings;
+use crate::input::{compile_settings, editor_settings};
 use crate::layout::{self, Layout};
 use crate::sources::{self, Bin};
 use crate::state::Records;
@@ -194,18 +194,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     // Written before anything runs, so it is current even when a compile
     // fails, and always from the `dev` profile with `CUNO_TEST` defined,
     // whatever is built (build.md, "Output").
-    let for_editors = |lang| {
-        compile_settings(
-            Some((root, manifest)),
-            tool.kind,
-            Profile::Dev,
-            lang,
-            host,
-            bundled,
-            true,
-            Mode::Compile,
-        )
-    };
+    let for_editors =
+        |lang| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
     let editors = graph::plan(&Plan {
         package,
         sources: &sources,
@@ -221,8 +211,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         // compile_commands.json never carries the color flags.
         color: false,
     });
-    let include = compdb::include_dirs(tool.env.get("INCLUDE"));
-    let compiler = compdb::Compiler {
+    let include = include_dirs(tool.env.get("INCLUDE"));
+    let compiler = ToolContext {
         kind: tool.kind,
         include: &include,
         msvc: tool.msvc,

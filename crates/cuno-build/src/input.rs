@@ -52,6 +52,29 @@ impl CompileSettings {
 /// The settings for compiling a `lang` source of the project at `root` with
 /// `manifest` (or, with no project, the defaults) with `kind` in `profile`,
 /// for a host `host` building for itself: `[build]`, `[platform.<os>.build]`,
+/// The settings compile_commands.json's commands are made with, whatever is
+/// built: the `dev` profile, compiled, with `CUNO_TEST` defined
+/// (`docs/en/specs/build.md`, "Output"). `cuno doctor`'s clang-tidy check
+/// takes the same, as it is to judge what `cuno lint` runs with them.
+pub fn editor_settings(
+    project: Option<(&Path, &Manifest)>,
+    kind: CompilerKind,
+    lang: Lang,
+    host: HostOs,
+    bundled: &Path,
+) -> CompileSettings {
+    compile_settings(
+        project,
+        kind,
+        Profile::Dev,
+        lang,
+        host,
+        bundled,
+        true,
+        Mode::Compile,
+    )
+}
+
 /// `[build.<compiler>]` and the profile, layered as `manifest.md` says; the
 /// package's edition for its own language and the other language's default
 /// otherwise (`project-layout.md`, "Target files"); `src/` and then

@@ -13,15 +13,16 @@ use std::path::{Path, PathBuf};
 
 use cuno_core::{CunoError, Env, ExitClass, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
-use cuno_toolchain::flags::{Mode, check_edition};
+use cuno_toolchain::compiler::CompilerKind;
+use cuno_toolchain::flags::{Mode, ToolContext, check_edition, include_dirs};
 use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
 use cuno_toolchain::select::{self, Found, Selected};
-use cuno_toolchain::{HostOs, Runner, ToolchainError};
+use cuno_toolchain::{HostOs, Runner, ToolchainError, Version};
 
 use crate::bundled;
-use crate::input::{CompileSettings, compile_settings};
+use crate::input::{CompileSettings, compile_settings, editor_settings};
 
 /// The steps fail with errors of several crates, each a `CunoError`, and
 /// return them as one type. The command code above this crate has a helper
@@ -45,7 +46,7 @@ pub fn detect(
 
 /// What the standard library probe compiles: the build's settings for a
 /// C++ input in `profile`, the resolved environment, and where the build
-/// runs. Doctor's clang-tidy check reads the same compile.
+/// runs.
 pub struct ProbeCompile {
     /// The resolved Windows environment.
     pub env: Env,
@@ -88,6 +89,59 @@ pub fn probe_compile(
         env: prepared.env.clone(),
         settings,
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
+    })
+}
+
+/// What `cuno doctor`'s clang-tidy check analyses: the probe as
+/// compile_commands.json would hold it, the settings `cuno lint` runs
+/// clang-tidy with ([`editor_settings`]), and what clang-tidy is told of
+/// the compiler (`toolchain.md`, "Minimum compiler versions").
+pub struct TidyCompile {
+    /// The resolved Windows environment.
+    pub env: Env,
+    /// compile_commands.json's settings for a C++ input.
+    pub settings: CompileSettings,
+    /// Where the build runs, as for [`ProbeCompile`].
+    pub cwd: PathBuf,
+    kind: CompilerKind,
+    include: Vec<PathBuf>,
+    msvc: Option<Version>,
+}
+
+impl TidyCompile {
+    /// What clang-tidy is told of the compiler, as compile_commands.json
+    /// tells it.
+    pub fn context(&self) -> ToolContext<'_> {
+        ToolContext {
+            kind: self.kind,
+            include: &self.include,
+            msvc: self.msvc.as_ref(),
+        }
+    }
+}
+
+/// The clang-tidy check's compile, or `None` for a C package, which uses no
+/// C++ standard library: the same cases as [`probe_compile`], with
+/// compile_commands.json's settings and the `INCLUDE` and cl version it
+/// writes.
+pub fn tidy_compile(
+    selected: &Selected,
+    prepared: &Prepared,
+    project: Option<(&Path, &Manifest)>,
+    cwd: &Path,
+    host: HostOs,
+    bundled: &Path,
+) -> Option<TidyCompile> {
+    if project.is_some_and(|(_, manifest)| manifest.package.lang == Lang::C) {
+        return None;
+    }
+    Some(TidyCompile {
+        env: prepared.env.clone(),
+        settings: editor_settings(project, selected.kind, Lang::Cxx, host, bundled),
+        cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
+        kind: selected.kind,
+        include: include_dirs(prepared.env.get("INCLUDE")),
+        msvc: selected.msvc.as_ref().map(|toolset| toolset.cl_version),
     })
 }
 

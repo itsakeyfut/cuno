@@ -1,13 +1,14 @@
 //! Turning settings into compiler arguments. See `docs/en/specs/build.md`,
 //! "Settings and flags".
 
+mod clang_tools;
 mod compile;
 mod link;
 mod settings;
 
+pub use clang_tools::{ToolCommand, ToolContext, for_clang_tools, include_dirs};
 pub use compile::{
     CompileInput, Mode, TARGET_SWITCH, check_edition, compile_args, compile_flags, dependency_args,
-    for_clang_tools,
 };
 pub use link::{LinkInput, link_args};
 
