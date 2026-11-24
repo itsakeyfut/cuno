@@ -605,6 +605,29 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    /// `--profile`'s help, which clap takes from a doc comment and cannot
+    /// ask `Profile` for, names every profile `Profile` has, for every
+    /// command that takes it.
+    ///
+    /// Mutation: add a profile to `Profile` without naming it in the help,
+    /// or drop `release` from one command's help; this test fails.
+    #[test]
+    fn the_profile_help_names_every_profile() {
+        let mut cli = Cli::command();
+        for command in ["build", "check", "run", "test", "clean"] {
+            let sub = cli.find_subcommand_mut(command).expect(command);
+            let help = sub
+                .get_arguments()
+                .find(|a| a.get_id() == "profile")
+                .and_then(|a| a.get_help())
+                .map(|h| h.to_string())
+                .expect(command);
+            for (_, name) in cuno_manifest::Profile::ALL {
+                assert!(help.contains(name), "{command}: {help}");
+            }
+        }
+    }
+
     /// A stream the test reads back after `run` has written to it. With
     /// `buffered`, what is written reaches it only when flushed, as through
     /// a buffered writer.
