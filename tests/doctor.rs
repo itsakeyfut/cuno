@@ -1323,12 +1323,14 @@ fn quiet_shows_only_warnings_and_problems() {
 }
 
 /// A batch file standing in for clang-tidy: it reports `version`, and
-/// writes the arguments of every other run to `args.txt` beside itself.
+/// writes the arguments of every other run to `args.txt` beside itself, and
+/// the `INCLUDE` it was run with to `include.txt`.
 fn recording_tidy(version: &str) -> String {
     format!(
         "@echo off\r\n\
          if \"%~1\"==\"--version\" (echo LLVM version {version}& exit /b 0)\r\n\
          echo %*>> \"%~dp0args.txt\"\r\n\
+         echo %INCLUDE%>> \"%~dp0include.txt\"\r\n\
          exit /b 0\r\n"
     )
 }
@@ -1337,11 +1339,12 @@ fn recording_tidy(version: &str) -> String {
 /// holds for a source, which is what `cuno lint` runs it with: `CUNO_TEST`
 /// defined, each `INCLUDE` directory after the tool's own headers, and the
 /// MSVC version (`docs/en/specs/toolchain.md`, "Minimum compiler
-/// versions").
+/// versions"); and runs it in the resolved environment, as the build runs.
 ///
 /// Mutation: build doctor's check from the build's settings (no
 /// `CUNO_TEST`), or without the include directories or the version
-/// compile_commands.json writes; this test fails.
+/// compile_commands.json writes, or run clang-tidy without the resolved
+/// environment; this test fails.
 #[test]
 fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
     if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
@@ -1399,4 +1402,10 @@ fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
         );
     }
     assert!(given.contains("--driver-mode=cl"), "{given}");
+    let include = std::fs::read_to_string(project.path().join("fake/include.txt")).unwrap();
+    let first = arguments
+        .iter()
+        .find_map(|a| a.strip_prefix("/imsvc"))
+        .unwrap();
+    assert!(include.contains(first), "INCLUDE was {include:?}");
 }
