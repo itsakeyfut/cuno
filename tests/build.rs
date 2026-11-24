@@ -1143,3 +1143,54 @@ fn a_missing_temporary_directory_stops_the_build() {
     assert!(!missing.exists(), "the temporary directory was created");
     assert!(!project.path().join("target/debug/app.exe").exists());
 }
+
+/// compile_commands.json's clang command names the headers itself: run in
+/// an environment whose `INCLUDE` holds a `<vector>` that is an `#error`,
+/// it still reads the selected toolset's. clang searches the environment's
+/// headers before `-idirafter`, so without `-nostdlibinc` it would read the
+/// decoy (`build.md`, "Output").
+///
+/// Mutation: leave `-nostdlibinc` out of clang's form; this test fails.
+#[test]
+fn compile_commands_for_clang_ignore_the_environments_headers() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file(
+            "src/main.cpp",
+            "#include <vector>\nint main() { return std::vector<int>{1}.size() == 1 ? 0 : 1; }\n",
+        )
+        .file(
+            "decoy/vector",
+            "#error the environment's headers were read\n",
+        );
+    let run = project.cuno(&["build", "--compiler", "clang"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let text = std::fs::read_to_string(project.path().join("compile_commands.json")).unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let arguments: Vec<&str> = entries[0]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    // The command as written, analysing only, in the decoy environment.
+    let mut cmd = std::process::Command::new(arguments[0]);
+    cmd.args(
+        arguments[1..]
+            .iter()
+            .map(|&a| if a == "-c" { "-fsyntax-only" } else { a }),
+    )
+    .env_clear()
+    .env("INCLUDE", project.path().join("decoy"))
+    .current_dir(project.path());
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        cmd.env("SystemRoot", root);
+    }
+    let out = cmd.output().unwrap();
+    let shown =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{arguments:?}\n{shown}");
+}
