@@ -228,10 +228,13 @@ mod tests {
     /// shell less verbose (`docs/en/specs/commands.md`, "Available for all
     /// commands").
     ///
-    /// Mutation: let `[term] verbose` override `-q`, ignore it, or let
-    /// `false` quiet a `-v`; this test fails.
+    /// Mutation: start a new shell verbose, let `[term] verbose` override
+    /// `-q`, ignore it, or let `false` quiet a `-v`; this test fails.
     #[test]
     fn configured_verbose_ranks_below_the_command_line() {
+        // A new shell is neither quiet nor verbose until told.
+        let (fresh, _) = shell(Some(ColorChoice::Never), &[], false);
+        assert!(!fresh.verbose());
         for (given, configured, verbose, quiet) in [
             (Verbosity::Normal, true, true, false),
             (Verbosity::Normal, false, false, false),
