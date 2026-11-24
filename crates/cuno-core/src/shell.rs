@@ -223,6 +223,34 @@ mod tests {
         )
     }
 
+    /// `[term] verbose` makes a shell verbose only when the command line
+    /// said neither `-q` nor `-v`: `-q` wins over it, and it never makes a
+    /// shell less verbose (`docs/en/specs/commands.md`, "Available for all
+    /// commands").
+    ///
+    /// Mutation: let `[term] verbose` override `-q`, ignore it, or let
+    /// `false` quiet a `-v`; this test fails.
+    #[test]
+    fn configured_verbose_ranks_below_the_command_line() {
+        for (given, configured, verbose, quiet) in [
+            (Verbosity::Normal, true, true, false),
+            (Verbosity::Normal, false, false, false),
+            (Verbosity::Quiet, true, false, true),
+            (Verbosity::Verbose, false, true, false),
+        ] {
+            let (mut sh, out) = shell(Some(ColorChoice::Never), &[], false);
+            sh.set_verbosity(given);
+            sh.configure(None, configured);
+            assert_eq!(sh.verbose(), verbose, "{given:?}, configured {configured}");
+            sh.status("Compiling", "app");
+            assert_eq!(
+                out.text().is_empty(),
+                quiet,
+                "{given:?}, configured {configured}"
+            );
+        }
+    }
+
     /// Under `-q` a status line is left out, and everything else is still
     /// written.
     ///

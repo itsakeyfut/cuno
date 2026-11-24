@@ -1194,3 +1194,20 @@ fn compile_commands_for_clang_ignore_the_environments_headers() {
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{arguments:?}\n{shown}");
 }
+
+/// `-q` wins over `[term] verbose = true`: no step's command and no status
+/// line is shown (`commands.md`, "Available for all commands").
+///
+/// Mutation: let `[term] verbose` override `-q`; this test fails.
+#[test]
+fn quiet_wins_over_configured_verbose() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("").file(".cuno/config.toml", "[term]\nverbose = true\n");
+    let run = project.cuno(&["-q", "build", "--compiler", "msvc"]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    for line in ["Running", "Compiling", "Finished"] {
+        assert!(!run.stderr.contains(line), "{line} in:\n{}", run.stderr);
+    }
+}
