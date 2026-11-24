@@ -72,6 +72,17 @@ enum Command {
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<OsString>,
     },
+    /// Build the package's tests and run them
+    Test {
+        /// Run only the tests whose names contain this
+        #[arg(value_name = "FILTER")]
+        filter: Option<String>,
+        /// Show every test's output, not only a failed one's
+        #[arg(long)]
+        nocapture: bool,
+        #[command(flatten)]
+        opts: BuildOpts,
+    },
     /// Remove the build's output
     Clean {
         /// Remove only the release profile's output
@@ -267,6 +278,11 @@ fn run(
         Some(Command::Build(opts)) => (build::Goal::Build, opts),
         Some(Command::Check(opts)) => (build::Goal::Check, opts),
         Some(Command::Run { bin, opts, args }) => (build::Goal::Run { bin, args }, opts),
+        Some(Command::Test {
+            filter,
+            nocapture,
+            opts,
+        }) => (build::Goal::Test { filter, nocapture }, opts),
         Some(Command::Clean {
             release,
             profile,
