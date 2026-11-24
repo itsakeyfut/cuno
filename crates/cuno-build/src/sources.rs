@@ -242,7 +242,7 @@ pub fn classify(
         None => {
             let mut bins = Vec::new();
             let lang = manifest.package.lang;
-            let default = Place::of(&src.join(default_entry(lang)), case);
+            let default = Place::of(&root.join(lang.default_entry()), case);
             if let Some(path) = as_found(&default) {
                 bins.push(Bin {
                     name: manifest.package.name.clone(),
@@ -271,7 +271,7 @@ pub fn classify(
     };
     if bins.is_empty() {
         return Err(BuildError::NoExecutable {
-            default: format!("src/{}", default_entry(manifest.package.lang)),
+            default: manifest.package.lang.default_entry().to_owned(),
         });
     }
     for (i, bin) in bins.iter().enumerate() {
@@ -358,14 +358,6 @@ pub fn test_executables(
         }
     }
     Ok(exes)
-}
-
-/// The default entry file's name for a package in `lang`.
-fn default_entry(lang: Lang) -> &'static str {
-    match lang {
-        Lang::Cxx => "main.cpp",
-        Lang::C => "main.c",
-    }
 }
 
 /// The search of `src/` for sources.

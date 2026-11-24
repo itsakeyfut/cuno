@@ -208,7 +208,7 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
                 }
             };
             files.push((
-                "src/main.cpp",
+                lang.default_entry(),
                 include_str!("../../../templates/cxx/main.cpp").into(),
             ));
             files.push((
@@ -219,7 +219,7 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
         }
         Lang::C => {
             files.push((
-                "src/main.c",
+                lang.default_entry(),
                 include_str!("../../../templates/c/main.c").into(),
             ));
             files.push((
