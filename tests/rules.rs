@@ -191,9 +191,12 @@ fn outside_a_project_the_missing_project_is_the_error() {
 /// project root, and every command that uses the output directory refuses
 /// it (`docs/en/specs/build.md`, "Output directory").
 ///
-/// Mutation: compare the output directory with the project root as
-/// written (`dir.starts_with(guarded)` in `check_output_dir`); this test
-/// fails, naming the command.
+/// Windows only: elsewhere the project's directory in another case is
+/// another directory.
+///
+/// Mutation: in `check_output_dir`, replace `paths::within(guarded, dir,
+/// case)` with `dir.starts_with(guarded)`, comparing the paths as written;
+/// this test fails, naming the command.
 #[cfg(windows)]
 #[test]
 fn the_output_directory_is_judged_as_the_file_system_names_it() {
