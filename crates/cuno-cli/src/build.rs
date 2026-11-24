@@ -226,12 +226,23 @@ pub(crate) fn profile_named(
     if release {
         return Ok(Profile::Release);
     }
-    match name {
-        None | Some("dev") => Ok(Profile::Dev),
-        Some("release") => Ok(Profile::Release),
-        Some(other) => Err(Box::new(CommandError::UnknownProfile {
-            name: other.to_owned(),
-        })),
+    let Some(name) = name else {
+        return Ok(Profile::Dev);
+    };
+    Profile::parse(name).ok_or_else(|| {
+        Box::new(CommandError::UnknownProfile {
+            name: name.to_owned(),
+        }) as Box<dyn CunoError>
+    })
+}
+
+/// The profiles there are, as `--profile` takes them: `dev or release`.
+fn profile_names() -> String {
+    let names: Vec<&str> = Profile::ALL.iter().map(|(_, name)| *name).collect();
+    match names.split_last() {
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
     }
 }
 
@@ -299,8 +310,30 @@ impl CunoError for CommandError {
             CommandError::NoProject { .. } => {
                 Some("run it in a directory that holds a cuno.toml, or below one".to_owned())
             }
-            CommandError::UnknownProfile { .. } => Some("use dev or release".to_owned()),
+            CommandError::UnknownProfile { .. } => Some(format!("use {}", profile_names())),
             CommandError::TargetNotSupported | CommandError::CannotRun { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--profile` takes every profile `Profile` has, by the name
+    /// `cuno.toml` writes it with, and no other; the help lists them all.
+    ///
+    /// Mutation: write a profile name in `profile_named` instead of asking
+    /// `Profile`, or leave one out of `profile_names`; this test fails.
+    #[test]
+    fn every_profile_is_taken_by_its_name() {
+        for (profile, name) in Profile::ALL {
+            assert_eq!(profile_named(false, Some(name)).unwrap(), *profile);
+            assert!(profile_names().contains(name), "{name}");
+        }
+        assert_eq!(profile_named(false, None).unwrap(), Profile::Dev);
+        assert_eq!(profile_named(true, Some("dev")).unwrap(), Profile::Release);
+        assert!(profile_named(false, Some("bench")).is_err());
+        assert_eq!(profile_names(), "dev or release");
     }
 }

@@ -281,7 +281,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         "Finished",
         format!(
             "`{}` profile [{optimized}{debuginfo}] in {:.2}s",
-            profile_name(profile),
+            profile.as_str(),
             request.started.elapsed().as_secs_f64()
         ),
     );
@@ -322,14 +322,6 @@ fn choose<'a>(bins: &'a [Bin], bin: Option<&str>) -> Result<&'a Bin, BuildError>
         }),
         // Classifying refuses a package with no executable before this.
         (None, []) => unreachable!("a package to run has an executable"),
-    }
-}
-
-/// The profile's name as `cuno.toml` writes it.
-fn profile_name(profile: Profile) -> &'static str {
-    match profile {
-        Profile::Dev => "dev",
-        Profile::Release => "release",
     }
 }
 
