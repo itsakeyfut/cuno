@@ -70,12 +70,33 @@ impl ToolCommand {
 /// [`compile_args`](super::compile_args), as the Clang-based tools must see
 /// them to analyse what the compiler builds: `/c` written `-c`, and for cl
 /// a standard switch clang-cl does not know written as its own and `/GL`
-/// left out, as clang-cl reads a cl command; then `INCLUDE` after the
-/// tool's own headers (`/imsvc`, or `-idirafter` for clang) and the MSVC
-/// version, so a tool run anywhere sees what the build saw. Why each is
-/// written so is in `docs/en/specs/build.md`, "Output".
+/// left out, as clang-cl reads a cl command; `INCLUDE` after the tool's own
+/// headers (`/imsvc`, or for clang `-nostdlibinc` and then `-idirafter`, as
+/// clang would otherwise search the environment's headers first), written
+/// before the compile's arguments so a user's own `-idirafter` is searched
+/// after it, as in the build; and the MSVC version, so a tool run anywhere
+/// sees what the build saw. Why each is written so is in
+/// `docs/en/specs/build.md`, "Output".
 pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolCommand {
     let kind = context.kind;
+    let mut include: Vec<OsString> = Vec::new();
+    match kind.syntax() {
+        Syntax::Gnu if !context.include.is_empty() => include.push("-nostdlibinc".into()),
+        Syntax::Gnu | Syntax::Cl => {}
+    }
+    for dir in context.include {
+        match kind.syntax() {
+            Syntax::Cl => {
+                let mut arg = OsString::from("/imsvc");
+                arg.push(dir);
+                include.push(arg);
+            }
+            Syntax::Gnu => {
+                include.push("-idirafter".into());
+                include.push(dir.into());
+            }
+        }
+    }
     let mut out = args.to_vec();
     match kind.syntax() {
         Syntax::Cl => {
@@ -101,19 +122,7 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
         }
         CompilerKind::ClangCl | CompilerKind::Clang => {}
     }
-    for dir in context.include {
-        match kind.syntax() {
-            Syntax::Cl => {
-                let mut arg = OsString::from("/imsvc");
-                arg.push(dir);
-                out.push(arg);
-            }
-            Syntax::Gnu => {
-                out.push("-idirafter".into());
-                out.push(dir.into());
-            }
-        }
-    }
+    out.splice(0..0, include);
     if let Some(version) = context.msvc {
         out.push(format!("-fms-compatibility-version={version}").into());
     }
@@ -148,12 +157,16 @@ mod tests {
     }
 
     /// The include directories come after the tool's own headers, in the
-    /// form each driver reads, then the MSVC version when there is a
-    /// toolset (`docs/en/specs/build.md`, "Output").
+    /// form each driver reads, clang's alone with `-nostdlibinc` so the
+    /// environment's are not searched first, then the MSVC version when
+    /// there is a toolset (`docs/en/specs/build.md`, "Output").
     ///
     /// Mutation: give clang `/imsvc` or `-isystem`, give a cl-style driver
-    /// `-idirafter`, drop a directory, change their order, or leave out the
-    /// version or add one without a toolset; this test fails.
+    /// `-idirafter` or `-nostdlibinc`, leave `-nostdlibinc` out for clang or
+    /// give it without include directories, drop a directory, change their
+    /// order, write them after the compile's arguments (a user's
+    /// `-idirafter` is then searched first), or leave out the version or
+    /// add one without a toolset; this test fails.
     #[test]
     fn include_and_version_follow_the_driver() {
         let include = [
@@ -171,10 +184,10 @@ mod tests {
             assert_eq!(
                 strings(for_clang_tools(context(kind, Some(&version)), &args).args()),
                 [
-                    "-c",
-                    "a.cpp",
                     "/imsvcC:/sdk/ucrt",
                     "/imsvcC:/msvc/include",
+                    "-c",
+                    "a.cpp",
                     "-fms-compatibility-version=19.52.37029"
                 ],
                 "{kind:?}"
@@ -183,13 +196,40 @@ mod tests {
         assert_eq!(
             strings(for_clang_tools(context(CompilerKind::Clang, None), &args).args()),
             [
-                "-c",
-                "a.cpp",
+                "-nostdlibinc",
                 "-idirafter",
                 "C:/sdk/ucrt",
                 "-idirafter",
-                "C:/msvc/include"
+                "C:/msvc/include",
+                "-c",
+                "a.cpp"
             ]
+        );
+        // A user's own `-idirafter` in the compile's arguments stays after
+        // the toolset's, as the build searches it.
+        let user = os(&["-idirafter", "extra", "-c", "a.cpp"]);
+        assert_eq!(
+            strings(for_clang_tools(context(CompilerKind::Clang, None), &user).args()),
+            [
+                "-nostdlibinc",
+                "-idirafter",
+                "C:/sdk/ucrt",
+                "-idirafter",
+                "C:/msvc/include",
+                "-idirafter",
+                "extra",
+                "-c",
+                "a.cpp"
+            ]
+        );
+        let none = ToolContext {
+            kind: CompilerKind::Clang,
+            include: &[],
+            msvc: None,
+        };
+        assert_eq!(
+            strings(for_clang_tools(none, &args).args()),
+            ["-c", "a.cpp"]
         );
     }
 
