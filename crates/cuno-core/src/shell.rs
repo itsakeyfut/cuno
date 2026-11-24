@@ -24,6 +24,25 @@ const BOLD_YELLOW: &str = "\x1b[1;33m";
 const BOLD_CYAN: &str = "\x1b[1;36m";
 const BOLD_GREEN: &str = "\x1b[1;32m";
 
+/// Whether to color: `--color` (`given`), then `[term] color`
+/// (`configured`), then `NO_COLOR` (`no_color`, set to anything, even
+/// empty), then whether the output is a `terminal`. The one place this
+/// order is written; see `docs/en/specs/commands.md`, "Available for all
+/// commands".
+pub fn colors(
+    given: Option<ColorChoice>,
+    configured: Option<ColorChoice>,
+    no_color: bool,
+    terminal: bool,
+) -> bool {
+    match given.or(configured) {
+        Some(ColorChoice::Always) => true,
+        Some(ColorChoice::Never) => false,
+        Some(ColorChoice::Auto) => terminal,
+        None => terminal && !no_color,
+    }
+}
+
 /// Where cuno's messages go (stderr for the binary). Crates write through a
 /// `Shell` instead of printing, so the color decision is made once.
 pub struct Shell {
@@ -70,12 +89,7 @@ impl Shell {
     /// Applies `[term] color`, which is read after the shell is made: it
     /// ranks below `--color` and above `NO_COLOR`.
     pub fn configure(&mut self, configured: Option<ColorChoice>) {
-        self.color = match self.given.or(configured) {
-            Some(ColorChoice::Always) => true,
-            Some(ColorChoice::Never) => false,
-            Some(ColorChoice::Auto) => self.terminal,
-            None => self.terminal && !self.no_color,
-        };
+        self.color = colors(self.given, configured, self.no_color, self.terminal);
     }
 
     /// Applies `-q`: from now on [`Shell::status`] writes nothing, and errors,
@@ -279,6 +293,29 @@ main.cpp(1): note
         assert!(!on(Some(ColorChoice::Auto), &[], false));
         assert!(on(Some(ColorChoice::Always), no_color, false));
         assert!(!on(Some(ColorChoice::Never), &[], true));
+    }
+
+    /// `--color`, then `[term] color`, then `NO_COLOR`, then the terminal,
+    /// each level deciding only when every level above it gave nothing.
+    ///
+    /// Mutation: swap any two levels, let `NO_COLOR` beat a choice given or
+    /// configured, or let `auto` ignore the terminal; this test fails.
+    #[test]
+    fn colors_follows_the_order() {
+        use ColorChoice::{Always, Auto, Never};
+        // `--color` beats `[term] color`, and both beat `NO_COLOR`.
+        assert!(colors(Some(Always), Some(Never), true, false));
+        assert!(!colors(Some(Never), Some(Always), false, true));
+        assert!(colors(None, Some(Always), true, false));
+        assert!(!colors(None, Some(Never), false, true));
+        // `auto`, given or configured, follows the terminal over `NO_COLOR`.
+        assert!(colors(Some(Auto), None, true, true));
+        assert!(!colors(Some(Auto), Some(Always), false, false));
+        assert!(colors(None, Some(Auto), true, true));
+        // With neither, `NO_COLOR` decides, then the terminal.
+        assert!(!colors(None, None, true, true));
+        assert!(colors(None, None, false, true));
+        assert!(!colors(None, None, false, false));
     }
 
     /// `[term] color` ranks below `--color` and above `NO_COLOR`
