@@ -290,6 +290,8 @@ fn run(
         command,
     } = cli;
 
+    shell.set_quiet(quiet);
+
     #[cfg(debug_assertions)]
     test_trigger::fire(env)?;
 
@@ -314,7 +316,7 @@ fn run(
                 profile,
                 target_dir,
             };
-            clean::clean(args, quiet, env, &cwd, shell)?;
+            clean::clean(args, env, &cwd, shell)?;
             return Ok(0);
         }
         Some(Command::New {
@@ -341,7 +343,7 @@ fn run(
                     new::Vcs::Git
                 },
             };
-            new::new(args, &cwd, quiet, shell).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
+            new::new(args, &cwd, shell).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
             return Ok(0);
         }
         Some(Command::Doctor { compiler }) => {
@@ -353,7 +355,6 @@ fn run(
                 env,
                 &cwd,
                 cuno_toolchain::HostOs::current(),
-                quiet,
                 shell,
             );
             return Ok(if problems == 0 { 0 } else { 1 });
@@ -373,7 +374,7 @@ fn run(
     build::build(
         goal,
         opts.into(),
-        build::Verbosity { verbose, quiet },
+        build::Verbosity { verbose },
         env,
         &cwd,
         cuno_toolchain::HostOs::current(),

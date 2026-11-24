@@ -229,7 +229,7 @@ const GITIGNORE: &str = include_str!("../templates/gitignore");
 /// Makes the package `args` describe, `args.path` taken from `cwd`. Every
 /// refusal comes before anything is written; a file that cannot be written
 /// half way stops it there, leaving what was made for the user to see.
-pub fn new(args: NewArgs, cwd: &Path, quiet: bool, shell: &mut Shell) -> Result<(), NewError> {
+pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError> {
     // `..` resolved, so the directories above it are the ones it will be in.
     let dir = cuno_core::paths::lexical(&cwd.join(&args.path));
     let (name, from_directory) = match &args.name {
@@ -295,9 +295,7 @@ pub fn new(args: NewArgs, cwd: &Path, quiet: bool, shell: &mut Shell) -> Result<
             }
         }
     }
-    if !quiet {
-        shell.status("Created", format!("`{name}` package"));
-    }
+    shell.status("Created", format!("`{name}` package"));
     Ok(())
 }
 

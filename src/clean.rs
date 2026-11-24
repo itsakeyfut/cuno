@@ -29,7 +29,6 @@ pub struct CleanArgs {
 /// "`cuno clean`").
 pub fn clean(
     args: CleanArgs,
-    quiet: bool,
     env: &Env,
     cwd: &Path,
     shell: &mut Shell,
@@ -76,10 +75,8 @@ pub fn clean(
             }) as Box<dyn CunoError>
         })?
     };
-    if !quiet {
-        let noun = if removed == 1 { "file" } else { "files" };
-        shell.status("Removed", format!("{removed} {noun}"));
-    }
+    let noun = if removed == 1 { "file" } else { "files" };
+    shell.status("Removed", format!("{removed} {noun}"));
     Ok(())
 }
 

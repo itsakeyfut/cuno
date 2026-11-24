@@ -78,8 +78,6 @@ pub struct Request<'a> {
     pub jobs: usize,
     /// `-v`: show each step's command.
     pub verbose: bool,
-    /// `-q`: show errors, warnings and the compilers' output only.
-    pub quiet: bool,
     /// When the command started, for the `Finished` line.
     pub started: Instant,
     /// The compiler.
@@ -123,7 +121,6 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         goal,
         host,
         bundled,
-        quiet,
         ..
     } = *request;
     let tool = &request.toolchain;
@@ -259,12 +256,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Some(&records),
         &mut |event| match event {
             Event::Started(step) => {
-                if let Some(line) = first_status.take()
-                    && !quiet
-                {
+                if let Some(line) = first_status.take() {
                     shell.status(verb, line);
                 }
-                if request.verbose && !quiet {
+                if request.verbose {
                     shell.status("Running", format!("`{}`", command_line(step)));
                 }
             }
@@ -285,26 +280,24 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         });
     }
 
-    if !quiet {
-        let settings = manifest.profile_settings(profile);
-        let optimized = match settings.opt_level {
-            OptLevel::O0 => "unoptimized",
-            OptLevel::O1 | OptLevel::O2 | OptLevel::O3 | OptLevel::Size => "optimized",
-        };
-        let debuginfo = if settings.debug_info {
-            " + debuginfo"
-        } else {
-            ""
-        };
-        shell.status(
-            "Finished",
-            format!(
-                "`{}` profile [{optimized}{debuginfo}] in {:.2}s",
-                profile_name(profile),
-                request.started.elapsed().as_secs_f64()
-            ),
-        );
-    }
+    let settings = manifest.profile_settings(profile);
+    let optimized = match settings.opt_level {
+        OptLevel::O0 => "unoptimized",
+        OptLevel::O1 | OptLevel::O2 | OptLevel::O3 | OptLevel::Size => "optimized",
+    };
+    let debuginfo = if settings.debug_info {
+        " + debuginfo"
+    } else {
+        ""
+    };
+    shell.status(
+        "Finished",
+        format!(
+            "`{}` profile [{optimized}{debuginfo}] in {:.2}s",
+            profile_name(profile),
+            request.started.elapsed().as_secs_f64()
+        ),
+    );
     let test_executables = executables
         .into_iter()
         .map(|exe| BuiltTest {
@@ -577,7 +570,6 @@ mod tests {
             bundled: Path::new(BUNDLED),
             jobs: options.jobs,
             verbose: options.verbose,
-            quiet: options.quiet,
             started: Instant::now() - options.ago,
             toolchain: Toolchain {
                 kind: CompilerKind::Clang,
@@ -591,6 +583,7 @@ mod tests {
         };
         let out = Captured::default();
         let mut shell = Shell::new(Box::new(out.clone()), None, &env, false);
+        shell.set_quiet(options.quiet);
         let result = build(&request, &mut shell);
         (result, out.text())
     }
