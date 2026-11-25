@@ -357,7 +357,7 @@ const BUILDS: [(&str, &[&str], &str); 3] = [
 ///
 /// Mutations, each failing this test, naming the shape, build and
 /// compiler: drop the `/include` pragma that keeps a C registration in
-/// `headers/cuno/test.h` (`c, release with lto, msvc`); compile the test
+/// `crates/cuno-build/headers/cuno/test.h` (`c, release with lto, msvc`); compile the test
 /// build without `CUNO_TEST`, with the assert in `graph::plan` removed
 /// (every combination); run only the first test executable (the `tests/`
 /// line missing).

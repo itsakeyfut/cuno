@@ -194,42 +194,33 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
         Lang::Cxx => {
             // Every edition named, so a new one has to choose its sample.
             let calc = match edition {
-                Edition::Cxx17 => include_str!("../../../templates/cxx/calc17.cpp"),
-                Edition::Cxx20 | Edition::Cxx23 => include_str!("../../../templates/cxx/calc.cpp"),
+                Edition::Cxx17 => include_str!("../templates/cxx/calc17.cpp"),
+                Edition::Cxx20 | Edition::Cxx23 => include_str!("../templates/cxx/calc.cpp"),
                 Edition::C11 | Edition::C17 | Edition::C23 => {
                     unreachable!("a C edition with the C++ language")
                 }
             };
             files.push((
                 lang.default_entry(),
-                include_str!("../../../templates/cxx/main.cpp").into(),
+                include_str!("../templates/cxx/main.cpp").into(),
             ));
-            files.push((
-                "src/calc.h",
-                include_str!("../../../templates/cxx/calc.h").into(),
-            ));
+            files.push(("src/calc.h", include_str!("../templates/cxx/calc.h").into()));
             files.push(("src/calc.cpp", calc.into()));
         }
         Lang::C => {
             files.push((
                 lang.default_entry(),
-                include_str!("../../../templates/c/main.c").into(),
+                include_str!("../templates/c/main.c").into(),
             ));
-            files.push((
-                "src/calc.h",
-                include_str!("../../../templates/c/calc.h").into(),
-            ));
-            files.push((
-                "src/calc.c",
-                include_str!("../../../templates/c/calc.c").into(),
-            ));
+            files.push(("src/calc.h", include_str!("../templates/c/calc.h").into()));
+            files.push(("src/calc.c", include_str!("../templates/c/calc.c").into()));
         }
     }
     files
 }
 
 /// The `.gitignore` of a package under Git.
-const GITIGNORE: &str = include_str!("../../../templates/gitignore");
+const GITIGNORE: &str = include_str!("../templates/gitignore");
 
 /// Makes the package `args` describe, `args.path` taken from `cwd`. Every
 /// refusal comes before anything is written; a file that cannot be written

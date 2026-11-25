@@ -1,4 +1,4 @@
-//! cuno's bundled test headers and runtime (`headers/cuno/`), compiled with
+//! cuno's bundled test headers and runtime (`crates/cuno-build/headers/cuno/`), compiled with
 //! each compiler here: tests register, run one at a time and report through
 //! the result file, in C, C++17 and C++20, in one executable; and a normal
 //! build of a file holding tests compiles none of them.
@@ -20,7 +20,7 @@ const COMPILERS: [Compiler; 3] = [Compiler::Msvc, Compiler::Clang, Compiler::Cla
 /// The headers in this repository, which cuno embeds and writes to the cuno
 /// home unchanged (`crates/cuno-build/src/bundled.rs`).
 fn headers() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("headers")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/cuno-build/headers")
 }
 
 #[derive(Clone, Copy, PartialEq)]

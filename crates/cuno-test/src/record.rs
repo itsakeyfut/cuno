@@ -1,6 +1,6 @@
 //! Reading the result file a test executable writes: the `test` records of
 //! `--list`, and what one `--exact` run reported. The format is documented
-//! at the top of `headers/cuno/test_main.c`, which writes it; see
+//! at the top of `crates/cuno-build/headers/cuno/test_main.c`, which writes it; see
 //! `docs/en/specs/testing.md`, "Contract between cuno and test
 //! executables".
 
