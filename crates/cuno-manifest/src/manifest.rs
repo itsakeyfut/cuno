@@ -218,21 +218,33 @@ macro_rules! choices {
 
 choices!(
     /// `<OS>` in `[platform.<OS>.build]`.
-    Os { /// Windows.
-    Windows = "windows", /// Linux.
-    Linux = "linux", /// macOS.
-    Macos = "macos", /// Android.
-    Android = "android", /// WebAssembly.
-    Wasm = "wasm" }
+    Os {
+        /// Windows.
+        Windows = "windows",
+        /// Linux.
+        Linux = "linux",
+        /// macOS.
+        Macos = "macos",
+        /// Android.
+        Android = "android",
+        /// WebAssembly.
+        Wasm = "wasm",
+    }
 );
 choices!(
     /// `<compiler>` in `[build.<compiler>]` and `[toolchain.version]`.
-    CompilerName { /// MSVC.
-    Msvc = "msvc", /// clang.
-    Clang = "clang", /// clang-cl.
-    ClangCl = "clang-cl", /// GCC.
-    Gcc = "gcc", /// safec.
-    Safec = "safec" }
+    CompilerName {
+        /// MSVC.
+        Msvc = "msvc",
+        /// clang.
+        Clang = "clang",
+        /// clang-cl.
+        ClangCl = "clang-cl",
+        /// GCC.
+        Gcc = "gcc",
+        /// safec.
+        Safec = "safec",
+    }
 );
 /// The name `[build.<compiler>]` and `[toolchain.version]` use for each
 /// compiler cuno can build with: the one place a compiler kind is mapped to
@@ -250,33 +262,51 @@ impl From<CompilerKind> for CompilerName {
 
 choices!(
     /// A profile; only the two built in exist so far.
-    Profile { /// The default.
-    Dev = "dev", /// `--release`.
-    Release = "release" }
+    Profile {
+        /// The default.
+        Dev = "dev",
+        /// `--release`.
+        Release = "release",
+    }
 );
 choices!(
     /// `[fmt] style`.
-    FmtStyle { /// cuno's own, the default.
-    Cuno = "cuno", /// The LLVM project's.
-    Llvm = "llvm", /// Google's.
-    Google = "google", /// Microsoft's.
-    Microsoft = "microsoft", /// Mozilla's.
-    Mozilla = "mozilla", /// WebKit's.
-    Webkit = "webkit", /// Chromium's.
-    Chromium = "chromium", /// GNU's.
-    Gnu = "gnu" }
+    FmtStyle {
+        /// cuno's own, the default.
+        Cuno = "cuno",
+        /// The LLVM project's.
+        Llvm = "llvm",
+        /// Google's.
+        Google = "google",
+        /// Microsoft's.
+        Microsoft = "microsoft",
+        /// Mozilla's.
+        Mozilla = "mozilla",
+        /// WebKit's.
+        Webkit = "webkit",
+        /// Chromium's.
+        Chromium = "chromium",
+        /// GNU's.
+        Gnu = "gnu",
+    }
 );
 choices!(
     /// `[lint] preset`.
-    LintPreset { /// No checks but those written in `warn` / `deny`.
-    None = "none", /// Few false positives; the default.
-    Recommended = "recommended", /// Stricter.
-    Strict = "strict" }
+    LintPreset {
+        /// No checks but those written in `warn` / `deny`.
+        None = "none",
+        /// Few false positives; the default.
+        Recommended = "recommended",
+        /// Stricter.
+        Strict = "strict",
+    }
 );
 choices!(
     /// `[test] framework`.
-    Framework { /// cuno's own.
-    Cuno = "cuno" }
+    Framework {
+        /// cuno's own.
+        Cuno = "cuno",
+    }
 );
 
 impl Default for Test {
