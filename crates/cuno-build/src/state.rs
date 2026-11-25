@@ -160,10 +160,29 @@ impl Records {
         true
     }
 
-    /// Removes `step`'s record before it runs, so a step that then fails
-    /// has none and runs again next time.
+    /// Removes `step`'s record, and what it printed last time, before it
+    /// runs, so a step that then fails has none and runs again next time,
+    /// and one that then prints nothing shows nothing old.
     pub fn forget(&self, step: &Step) {
         let _ = fs::remove_file(state_path(&step.output));
+        let _ = fs::remove_file(output_path(&step.output));
+    }
+
+    /// Keeps what `step` printed when it succeeded, as it was shown, for
+    /// [`Records::saved_output`]; nothing is kept for a step that printed
+    /// nothing, whose last output [`Records::forget`] has already removed
+    /// (`docs/en/specs/build.md`, "Deciding what changed").
+    pub fn save_output(&self, step: &Step, shown: &[u8]) {
+        if !shown.is_empty() {
+            let _ = fs::write(output_path(&step.output), shown);
+        }
+    }
+
+    /// What `step` printed when it last succeeded, shown again when it is
+    /// up to date (`docs/en/specs/commands.md`, "Format"); empty when it
+    /// printed nothing or what it printed cannot be read.
+    pub fn saved_output(&self, step: &Step) -> Vec<u8> {
+        fs::read(output_path(&step.output)).unwrap_or_default()
     }
 
     /// Records that `step`, started at `started`, succeeded having read
@@ -487,6 +506,14 @@ impl Records {
 fn state_path(output: &Path) -> PathBuf {
     let mut path = output.as_os_str().to_owned();
     path.push(".cuno-state");
+    PathBuf::from(path)
+}
+
+/// Where what the step that writes `output` printed is kept, beside its
+/// record.
+fn output_path(output: &Path) -> PathBuf {
+    let mut path = output.as_os_str().to_owned();
+    path.push(".cuno-output");
     PathBuf::from(path)
 }
 

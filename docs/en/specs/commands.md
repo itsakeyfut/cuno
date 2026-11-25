@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob b27842c7082ca0cdbe47f61538fe5c0c12c8d543 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob f352fa5d0ae4d2cdba42b47630536ac2236be99c -->
 
 # Commands
 
@@ -320,7 +320,7 @@ Follows cargo.
 ```
 
 - cuno's own errors are shown as `error: ...`, and fixes as `help: ...`.
-- Compiler errors and warnings are displayed as is. A step that is up to date and does not run shows the output of its last successful run (warnings, for example) as is ([build.md](build.md#deciding-what-changed)).
+- Compiler errors and warnings are displayed as is. A step that is up to date and does not run shows the output of its last successful run (warnings, for example) as is ([build.md](build.md#deciding-what-changed)). When cuno does not color its output (the color rule below), the color escape sequences are removed from that output first. It is shown where a step that ran would be: after the `Compiling` line in a build that runs other steps, and before the `Finished` line in a build that runs none.
   - Rationale: the inputs and the command are the same, so the output is the same. If it were not shown, merely building again without changing anything would make the warnings disappear, leaving no way to see a missed warning again.
   - The exception is the source's file name (`main.cpp`, for example) that cl.exe prints as the first line of every compile, which is not shown. It is removed only when the first line of the output is the compiled source's file name. cl prints a name with non-ASCII characters in the console's code page (CP932 on Japanese Windows), so for such a name the line counts as the file name when the ASCII parts at its start and end match and it holds no `:` (no Windows file name has a `:`, and every cl diagnostic does).
     - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.

@@ -62,6 +62,10 @@ pub enum Event<'a> {
     Started(&'a Step),
     /// A step finished, with what it printed.
     Finished(&'a Step, &'a Output),
+    /// A step was up to date, and printed something when it last
+    /// succeeded: that, to be shown again (`docs/en/specs/commands.md`,
+    /// "Format"). Never preceded by `Started`.
+    Replayed(&'a Step, &'a [u8]),
     /// A step that succeeded read an input dated in the future, so it was
     /// left unrecorded and runs again (`docs/en/specs/build.md`, "Deciding
     /// what changed"). Heard after the step's `Finished`.
@@ -87,8 +91,9 @@ enum Report {
     /// It ran, and was left unrecorded for the files dated in the future
     /// given, if any.
     Ran(Output, Vec<PathBuf>),
-    /// It was up to date and did not run.
-    UpToDate,
+    /// It was up to date and did not run, with what it printed when it
+    /// last succeeded.
+    UpToDate(Vec<u8>),
 }
 
 /// Runs `graph` with `env` in `cwd`, at most `jobs` steps at a time, each
@@ -136,8 +141,10 @@ pub fn execute(
                         // A panic is a failure that still reports back, so
                         // the wait below always ends.
                         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                            if records.is_some_and(|r| r.up_to_date(step)) {
-                                return Report::UpToDate;
+                            if let Some(records) = records
+                                && records.up_to_date(step)
+                            {
+                                return Report::UpToDate(records.saved_output(step));
                             }
                             let _ = done.send((i, Report::Starting));
                             let (output, ahead) =
@@ -170,13 +177,23 @@ pub fn execute(
             let step = &graph.steps[i];
             match report {
                 Report::Starting => on(Event::Started(step)),
-                Report::UpToDate => {
+                Report::UpToDate(saved) => {
                     running -= 1;
                     state[i] = State::Done;
+                    // What it printed last time, without the color it
+                    // was asked for then when none is asked for now
+                    // (`docs/en/specs/commands.md`, "Format").
+                    if !saved.is_empty() {
+                        let saved = if step.color.is_empty() {
+                            without_color(&saved)
+                        } else {
+                            saved
+                        };
+                        on(Event::Replayed(step, &saved));
+                    }
                 }
                 Report::Ran(output, ahead) => {
                     running -= 1;
-                    let output = without_echo(step, output);
                     on(Event::Finished(step, &output));
                     for path in &ahead {
                         on(Event::DatedAhead(path));
@@ -214,13 +231,22 @@ fn perform(
         records.forget(step);
     }
     let started = SystemTime::now();
-    let output = run(step, env, cwd, spawner);
+    // As it is shown, so what is kept is what was shown.
+    let output = without_echo(step, run(step, env, cwd, spawner));
     if !output.success {
         return (output, Vec::new());
     }
     let Some(records) = records else {
         return (output, Vec::new());
     };
+    // Before the record, so a step recorded has its output kept.
+    let shown: Vec<u8> = output
+        .stdout
+        .iter()
+        .chain(&output.stderr)
+        .copied()
+        .collect();
+    records.save_output(step, &shown);
     let headers = match &step.headers {
         Some(headers) => std::fs::read(headers.file())
             .ok()
@@ -276,6 +302,27 @@ fn run(step: &Step, env: &Env, cwd: &Path, spawner: &dyn Spawner) -> Output {
     output
 }
 
+/// `bytes` without the escape sequences a terminal reads as color (ESC `[`,
+/// parameters, and a final byte from `@` to `~`), which Clang writes when it
+/// is asked to color.
+fn without_color(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b'[') {
+            let end = bytes[i + 2..]
+                .iter()
+                .position(|b| (0x40..=0x7e).contains(b))
+                .map_or(bytes.len(), |p| i + 2 + p + 1);
+            i = end;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// `output` without cl.exe's first line, the source's file name, when it is
 /// exactly that line.
 fn without_echo(step: &Step, mut output: Output) -> Output {
@@ -319,6 +366,32 @@ fn is_echo(line: &[u8], name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Color escapes are removed and everything else is kept, an escape at
+    /// the very end included.
+    ///
+    /// Mutation: keep the escapes, drop a byte after one, or stop at a
+    /// lone ESC; this test fails.
+    #[test]
+    fn color_is_taken_out_and_nothing_else() {
+        let colored = b"[1ma.cpp:1:1: [0;1;35mwarning: [0mx
+[0m";
+        assert_eq!(
+            without_color(colored),
+            b"a.cpp:1:1: warning: x
+"
+        );
+        assert_eq!(
+            without_color(
+                b"no color
+"
+            ),
+            b"no color
+"
+        );
+        assert_eq!(without_color(b"lone  here"), b"lone  here");
+        assert_eq!(without_color(b"cut [0"), b"cut ");
+    }
     use crate::deps::Headers;
     use crate::graph::StepKind;
     use std::ffi::OsStr;
@@ -391,6 +464,7 @@ mod tests {
                     String::from_utf8_lossy(&out.stdout).trim_end()
                 )),
                 Event::DatedAhead(path) => seen.push(format!("ahead {}", path.display())),
+                Event::Replayed(s, _) => seen.push(format!("replayed {}", s.program.display())),
             },
         );
         (result, seen)

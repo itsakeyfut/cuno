@@ -240,6 +240,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         tool.version
     ));
     let mut dated_ahead = std::collections::BTreeSet::new();
+    let mut replayed: Vec<Vec<u8>> = Vec::new();
     let result = exec::execute(
         &graph,
         tool.env,
@@ -251,6 +252,9 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             Event::Started(step) => {
                 if let Some(line) = first_status.take() {
                     shell.status(verb, line);
+                    for saved in replayed.drain(..) {
+                        shell.raw(&saved);
+                    }
                 }
                 if shell.verbose() {
                     shell.status("Running", format!("`{}`", command_line(step)));
@@ -259,6 +263,16 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             Event::Finished(_, output) => {
                 shell.raw(&output.stdout);
                 shell.raw(&output.stderr);
+            }
+            // Held until the status line, which comes before the first
+            // step that runs, so it shows where a step that ran would
+            // (commands.md, "Format").
+            Event::Replayed(_, saved) => {
+                if first_status.is_some() {
+                    replayed.push(saved.to_vec());
+                } else {
+                    shell.raw(saved);
+                }
             }
             // Once a file per build, though every step that reads it is
             // left unrecorded (build.md, "Deciding what changed").
@@ -276,6 +290,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             }
         },
     );
+    // A build that ran nothing shows them before its Finished line.
+    for saved in replayed {
+        shell.raw(&saved);
+    }
     if let Err(failed) = result {
         let link = failed
             .0
