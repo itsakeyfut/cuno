@@ -1,6 +1,7 @@
 //! One resolution of every setting from every layer, in the precedence
-//! `docs/en/specs/manifest.md` (".cuno/config.toml", "Two levels of
-//! settings") and `docs/en/specs/build.md` (the output directory) give:
+//! (`docs/en/specs/manifest.md`, ".cuno/config.toml";
+//! `docs/en/specs/manifest.md`, "Two levels of settings";
+//! `docs/en/specs/build.md`, "Output directory") gives:
 //! command line, environment, `.cuno/config.toml`, `cuno.toml`, the
 //! user-level `config.toml`, defaults.
 

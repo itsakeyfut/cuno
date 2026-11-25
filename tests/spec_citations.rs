@@ -71,6 +71,7 @@ fn comments(text: &str) -> Vec<(String, Vec<(usize, usize)>)> {
 }
 
 /// A citation found in a comment: the file named, the title, and where.
+/// `title` is `None` for one the test cannot read.
 #[derive(Debug)]
 struct Citation {
     file: String,
@@ -78,9 +79,10 @@ struct Citation {
     line: usize,
 }
 
-/// The citations in one joined comment. A file name followed by a comma
-/// and an opening quote with no closing one is a citation with no title,
-/// reported rather than skipped.
+/// The citations in one joined comment. One the test cannot read is
+/// returned with no title, to be reported rather than skipped: a file name
+/// followed by a comma and an opening quote with no closing one, or by a
+/// parenthesis holding quoted titles.
 fn citations(text: &str, starts: &[(usize, usize)]) -> Vec<Citation> {
     let line_of = |offset: usize| {
         starts
@@ -96,18 +98,27 @@ fn citations(text: &str, starts: &[(usize, usize)]) -> Vec<Citation> {
         from = at + 3;
         let after = &text[at + 3..];
         let after = after.strip_prefix('`').unwrap_or(after);
-        let Some(after) = after.strip_prefix(',') else {
-            continue;
-        };
-        let Some(quoted) = after.trim_start().strip_prefix('"') else {
-            continue;
+        let title = match after.strip_prefix(',') {
+            Some(rest) => match rest.trim_start().strip_prefix('"') {
+                Some(quoted) => quoted.find('"').map(|end| quoted[..end].to_owned()),
+                None => continue,
+            },
+            None => {
+                let Some(inside) = after.trim_start().strip_prefix('(') else {
+                    continue;
+                };
+                if !inside.split(')').next().unwrap_or("").contains('"') {
+                    continue;
+                }
+                None
+            }
         };
         let name_start = text[..at]
             .rfind(|c: char| !(c.is_ascii_alphanumeric() || "_./-".contains(c)))
             .map_or(0, |i| i + 1);
         found.push(Citation {
             file: format!("{}.md", &text[name_start..at]),
-            title: quoted.find('"').map(|end| quoted[..end].to_owned()),
+            title,
             line: line_of(at),
         });
     }
@@ -136,8 +147,9 @@ fn headings(file: &str) -> Option<Vec<String>> {
 /// file it names.
 ///
 /// Mutation: rename a cited heading in `docs/en/specs/`, cite one that does
-/// not exist, or leave a citation's closing quote out; this test fails,
-/// naming the file and line of each citation.
+/// not exist, leave a citation's closing quote out, or put its titles in
+/// parentheses after the file; this test fails, naming the file and line of
+/// each citation.
 #[test]
 fn every_spec_citation_names_a_heading() {
     let mut files = Vec::new();
@@ -155,7 +167,7 @@ fn every_spec_citation_names_a_heading() {
                 let at = format!("{shown}:{}", citation.line);
                 match (&citation.title, headings(&citation.file)) {
                     (None, _) => broken.push(format!(
-                        "{at}: a citation of {} with no closing quote",
+                        "{at}: a citation of {} this test cannot read; write it as (`{0}`, \"Section\")",
                         citation.file
                     )),
                     (_, None) => broken.push(format!(
