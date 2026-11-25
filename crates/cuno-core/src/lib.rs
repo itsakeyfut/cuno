@@ -8,6 +8,7 @@ mod env;
 mod error;
 mod home;
 pub mod paths;
+pub mod program;
 mod shell;
 
 pub use env::{Env, NameCase};

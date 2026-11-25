@@ -195,15 +195,10 @@ pub fn build(
     let (Some(exe), Some(args)) = (built.exe, run) else {
         return Ok(0);
     };
-    let shown = exe.strip_prefix(cwd).unwrap_or(&exe);
+    let shown = cuno_core::program::shown(&exe, cwd);
     shell.status("Running", format!("`{}`", shown.display()));
-    // The environment cuno was given, not the compiler's; the standard
-    // streams are left connected (commands.md, "`cuno run`").
-    let status = std::process::Command::new(&exe)
-        .args(args)
-        .env_clear()
-        .envs(env.vars())
-        .current_dir(root)
+    // The standard streams are left connected (commands.md, "`cuno run`").
+    let status = cuno_core::program::command(&exe, args, env, root)
         .status()
         .map_err(|e| {
             Box::new(CommandError::CannotRun {
