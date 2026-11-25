@@ -9,6 +9,8 @@ use cuno_core::paths;
 use cuno_manifest::Profile;
 use cuno_toolchain::HostOs;
 
+use crate::sources::SOURCE_DIRS;
+
 /// The file a build leaves in an output directory it made, and without
 /// which `cuno clean` removes nothing (`docs/en/specs/build.md`, "Output
 /// directory").
@@ -146,16 +148,14 @@ impl Layout {
     fn beside_object(&self, package: &str, source: &Path, suffix: &str) -> PathBuf {
         let source = paths::lexical(source);
         let case = self.host.name_case();
-        // `src/` and `tests/` are the project's even when they are links
-        // leading out of it (`project-layout.md`, "Source collection and
-        // linking").
+        // The source directories are the project's even when they are links
+        // leading out of it (`SOURCE_DIRS`).
         let within = |dir: &Path, name: &str| {
             paths::relative(dir, &self.root.join(name), case).map(|r| Path::new(name).join(r))
         };
         let under = source.parent().and_then(|dir| {
             paths::relative(dir, &self.root, case)
-                .or_else(|| within(dir, "src"))
-                .or_else(|| within(dir, "tests"))
+                .or_else(|| SOURCE_DIRS.iter().find_map(|name| within(dir, name)))
         });
         let (Some(under), Some(file)) = (under, source.file_name()) else {
             panic!(
