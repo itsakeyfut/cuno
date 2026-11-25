@@ -260,7 +260,12 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         let link = failed
             .0
             .first()
-            .is_some_and(|&i| matches!(graph.steps[i].kind, StepKind::Link { .. }));
+            // A match, so a new kind has to say whether its failure is a
+            // link's (`architecture.md`, "Crate layout").
+            .is_some_and(|&i| match graph.steps[i].kind {
+                StepKind::Link { .. } => true,
+                StepKind::Compile { .. } | StepKind::Check { .. } => false,
+            });
         return Err(BuildError::Failed {
             package: package.clone(),
             link,
