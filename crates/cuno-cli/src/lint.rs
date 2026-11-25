@@ -182,6 +182,7 @@ pub fn lint(
             env: &prepared.env,
             jobs,
             fix,
+            scratch: &scratch,
         };
         let is_ours = |path: &Path| {
             let place = Place::of(path, case);
@@ -198,6 +199,13 @@ pub fn lint(
     let linted = linted?;
 
     shell.raw(&linted.shown);
+    for (source, target) in &linted.not_fixed {
+        shell.warning(format!(
+            "`{}` is not fixed: a fix would change `{}`, which is not the package's",
+            relative(root, source),
+            cuno_core::paths::lexical(&root.join(target)).display()
+        ));
+    }
     for (source, why) in &linted.failed {
         shell.error(format!(
             "could not lint `{}`: {why}",

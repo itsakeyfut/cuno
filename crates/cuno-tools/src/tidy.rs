@@ -1,7 +1,8 @@
 //! clang-tidy's configuration from `[lint]`
 //! (`docs/en/specs/dev-tools.md`, "`[lint]`").
 
-use std::ffi::OsStr;
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -145,6 +146,11 @@ pub fn unknown_names<'a>(lint: &'a Lint, known: &[String]) -> Vec<(&'static str,
         ("lint.deny", &lint.deny),
     ] {
         for name in names {
+            // The compiler's own warnings, which `--list-checks` does not
+            // list, are checks all the same.
+            if name.starts_with("clang-diagnostic-") {
+                continue;
+            }
             let found = match name.find('*') {
                 Some(star) => {
                     let (before, after) = (&name[..star], &name[star + 1..]);
@@ -172,6 +178,9 @@ pub fn known_checks(
 ) -> std::io::Result<Vec<String>> {
     let args: [&OsStr; 2] = ["--list-checks".as_ref(), "--checks=*".as_ref()];
     let output = runner.run(program, &args, env)?;
+    if !output.success {
+        return Err(std::io::Error::other("clang-tidy did not list its checks"));
+    }
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
@@ -194,6 +203,8 @@ pub struct ClangTidy<'a> {
     pub jobs: usize,
     /// `--fix`: fix the sources themselves, headers left alone.
     pub fix: bool,
+    /// Where `--fix` writes the fixes it looks at first.
+    pub scratch: &'a Path,
 }
 
 /// What analysing found.
@@ -210,6 +221,9 @@ pub struct Linted {
     pub fixed: usize,
     /// Sources clang-tidy could not analyse, with why.
     pub failed: Vec<(PathBuf, String)>,
+    /// Under `--fix`, sources left unfixed because a fix would change the
+    /// file given, which is not the package's.
+    pub not_fixed: Vec<(PathBuf, PathBuf)>,
 }
 
 /// Analyses `sources` with `tool`, keeping only the findings in files
@@ -222,8 +236,7 @@ pub fn lint(
     runner: &(dyn Runner + Sync),
 ) -> Linted {
     let next = AtomicUsize::new(0);
-    type Run = (usize, std::io::Result<cuno_toolchain::Output>);
-    let runs: Mutex<Vec<Run>> = Mutex::new(Vec::new());
+    let runs: Mutex<Vec<(usize, Run)>> = Mutex::new(Vec::new());
     let jobs = if tool.fix { 1 } else { tool.jobs };
     std::thread::scope(|scope| {
         for _ in 0..jobs.clamp(1, sources.len().max(1)) {
@@ -231,8 +244,15 @@ pub fn lint(
                 loop {
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     let Some(source) = sources.get(i) else { break };
-                    let output = run_one(source, tool, runner);
-                    runs.lock().unwrap().push((i, output));
+                    let run = if tool.fix {
+                        fix_one(i, source, tool, ours, runner)
+                    } else {
+                        Run {
+                            output: run_one(source, tool, Mode::Show, runner),
+                            foreign: None,
+                        }
+                    };
+                    runs.lock().unwrap().push((i, run));
                 }
             });
         }
@@ -240,26 +260,44 @@ pub fn lint(
     let mut runs = runs.into_inner().unwrap();
     runs.sort_by_key(|(i, _)| *i);
     let mut linted = Linted::default();
-    let mut seen: Vec<Vec<u8>> = Vec::new();
-    for (i, output) in runs {
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    for (i, run) in runs {
         let source = &sources[i];
-        let output = match output {
+        if let Some(foreign) = run.foreign {
+            linted.not_fixed.push((source.clone(), foreign));
+        }
+        let output = match run.output {
             Ok(output) => output,
             Err(e) => {
                 linted.failed.push((source.clone(), e.to_string()));
                 continue;
             }
         };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // A fix clang-tidy could not write is not a fix.
+        let unwritten = stderr
+            .lines()
+            .find(|line| line.contains("unable to overwrite file"));
+        if let Some(line) = unwritten {
+            linted.failed.push((source.clone(), line.trim().to_owned()));
+        }
         let mut explained = false;
         for finding in findings(&output.stdout) {
-            explained |= finding.error;
             let path = tool.root.join(&finding.path);
-            if !ours(&path) || seen.contains(&finding.text) {
+            // A compile error is shown wherever it is: the source could not
+            // be analysed. Another file's other findings are not the
+            // package's, though they may be why clang-tidy failed.
+            let compile_error = finding.error && finding.check.contains("clang-diagnostic-");
+            if !compile_error && !ours(&path) {
+                explained |= finding.error;
                 continue;
             }
-            // Fixed under `--fix`: shown, as clang-tidy says so, but no
-            // longer a finding to count.
-            let fixed = String::from_utf8_lossy(&finding.text).contains("FIX-IT applied");
+            explained |= finding.error;
+            if !seen.insert(finding.text.clone()) {
+                continue;
+            }
+            let fixed = unwritten.is_none()
+                && String::from_utf8_lossy(&finding.text).contains("FIX-IT applied");
             if fixed {
                 linted.fixed += 1;
             } else if finding.error {
@@ -268,12 +306,10 @@ pub fn lint(
                 linted.warnings += 1;
             }
             linted.shown.extend_from_slice(&finding.text);
-            seen.push(finding.text);
         }
         // A failure no error finding explains is never a pass.
-        if !output.success && !explained {
-            let said = String::from_utf8_lossy(&output.stderr);
-            let said = said
+        if !output.success && !explained && unwritten.is_none() {
+            let said = stderr
                 .lines()
                 .find(|line| !line.trim().is_empty())
                 .unwrap_or("clang-tidy failed and said nothing");
@@ -283,29 +319,119 @@ pub fn lint(
     linted
 }
 
+/// One source's analysis, and under `--fix` a file outside the package a
+/// fix would have changed, when one did and nothing was fixed.
+struct Run {
+    output: std::io::Result<cuno_toolchain::Output>,
+    foreign: Option<PathBuf>,
+}
+
+/// How clang-tidy is run on a source.
+#[derive(Clone, Copy)]
+enum Mode<'a> {
+    /// Findings shown, headers' included.
+    Show,
+    /// The fixes written to the file given, nothing changed.
+    Export(&'a Path),
+    /// The fixes applied.
+    Fix,
+}
+
+/// `--fix` for one source: the fixes clang-tidy would make are looked at
+/// first, and applied only when every one is in the package's files; a fix
+/// to a declaration in another package's header would otherwise rewrite
+/// that header.
+fn fix_one(
+    i: usize,
+    source: &Path,
+    tool: &ClangTidy<'_>,
+    ours: &(dyn Fn(&Path) -> bool + Sync),
+    runner: &dyn Runner,
+) -> Run {
+    let exported = tool.scratch.join(format!("fixes-{i}.yaml"));
+    let looked = run_one(source, tool, Mode::Export(&exported), runner);
+    let targets = std::fs::read_to_string(&exported)
+        .map(|text| fix_targets(&text))
+        .unwrap_or_default();
+    let _ = std::fs::remove_file(&exported);
+    if let Some(foreign) = targets.iter().find(|t| !ours(&tool.root.join(t))) {
+        return Run {
+            output: looked,
+            foreign: Some(foreign.clone()),
+        };
+    }
+    if targets.is_empty() {
+        return Run {
+            output: looked,
+            foreign: None,
+        };
+    }
+    Run {
+        output: run_one(source, tool, Mode::Fix, runner),
+        foreign: None,
+    }
+}
+
+/// The files the fixes in clang-tidy's exported YAML would change: every
+/// replacement's `FilePath`.
+fn fix_targets(yaml: &str) -> Vec<PathBuf> {
+    yaml.lines()
+        .filter_map(|line| line.trim_start().strip_prefix("- FilePath:"))
+        .map(|value| PathBuf::from(unquote(value.trim())))
+        .collect()
+}
+
+/// A YAML scalar as LLVM writes a path: plain, `'...'` with `''` for a
+/// quote, or `"..."` with backslash escapes.
+fn unquote(value: &str) -> String {
+    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        inner.replace("''", "'")
+    } else if let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                out.extend(chars.next());
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else {
+        value.to_owned()
+    }
+}
+
 fn run_one(
     source: &Path,
     tool: &ClangTidy<'_>,
+    mode: Mode<'_>,
     runner: &dyn Runner,
 ) -> std::io::Result<cuno_toolchain::Output> {
     let config = format!("--config-file={}", tool.config.display());
     let database = format!("-p={}", tool.root.display());
-    // Under `--fix` no header is shown, and so none is rewritten.
-    let headers = if tool.fix {
-        "--header-filter=^$"
-    } else {
-        "--header-filter=.*"
+    // Fixing, no header's finding is shown: headers are not fixed.
+    let headers = match mode {
+        Mode::Show => "--header-filter=.*",
+        Mode::Export(_) | Mode::Fix => "--header-filter=^$",
     };
-    let mut args: Vec<&OsStr> = vec![
-        config.as_ref(),
-        database.as_ref(),
-        headers.as_ref(),
-        "--quiet".as_ref(),
+    let mut args: Vec<OsString> = vec![
+        config.into(),
+        database.into(),
+        headers.into(),
+        "--quiet".into(),
     ];
-    if tool.fix {
-        args.push("--fix".as_ref());
+    match mode {
+        Mode::Show => {}
+        Mode::Export(file) => {
+            let mut arg = OsString::from("--export-fixes=");
+            arg.push(file);
+            args.push(arg);
+        }
+        Mode::Fix => args.push("--fix".into()),
     }
-    args.push(source.as_os_str());
+    args.push(source.into());
+    let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
     runner.run_in(tool.program, &args, tool.env, tool.root)
 }
 
@@ -314,6 +440,8 @@ fn run_one(
 struct Finding {
     path: PathBuf,
     error: bool,
+    /// The bracketed check names at the end of its first line.
+    check: String,
     text: Vec<u8>,
 }
 
@@ -323,9 +451,15 @@ fn findings(stdout: &[u8]) -> Vec<Finding> {
     for line in stdout.split_inclusive(|b| *b == b'\n') {
         let text = String::from_utf8_lossy(line);
         if let Some((path, error)) = finding_head(&text) {
+            let check = text
+                .trim_end()
+                .rsplit_once('[')
+                .map(|(_, rest)| rest.trim_end_matches(']').to_owned())
+                .unwrap_or_default();
             found.push(Finding {
                 path,
                 error,
+                check,
                 text: line.to_vec(),
             });
         } else if summary(&text) {
@@ -338,8 +472,12 @@ fn findings(stdout: &[u8]) -> Vec<Finding> {
 }
 
 /// The path and severity of a line that starts a finding:
-/// `path:line:column: warning: ...` or `... error: ...`.
+/// `path:line:column: warning: ...` or `... error: ...`, at the start of
+/// the line: an excerpt of code, indented, never starts one.
 fn finding_head(line: &str) -> Option<(PathBuf, bool)> {
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
     for (marker, error) in [(": warning: ", false), (": error: ", true)] {
         let Some(at) = line.find(marker) else {
             continue;
@@ -357,7 +495,12 @@ fn finding_head(line: &str) -> Option<(PathBuf, bool)> {
 
 /// clang-tidy's tallies and advice, which `cuno lint` does not show.
 fn summary(line: &str) -> bool {
-    let line = line.trim();
+    // clang-tidy prints these at the start of a line; an excerpt of code is
+    // indented, whatever it says.
+    if line.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let line = line.trim_end();
     line.ends_with(" generated.")
         || line.starts_with("Suppressed ")
         || line.starts_with("Use -header-filter")
@@ -410,6 +553,7 @@ mod tests {
             env: &env,
             jobs: 2,
             fix: false,
+            scratch: Path::new("s"),
         };
         let sources: Vec<PathBuf> = sources.iter().map(|s| root.join(s)).collect();
         let ours = |p: &Path| !p.to_string_lossy().contains("vendor");
@@ -453,6 +597,79 @@ Suppressed 4 warnings (4 in non-user code).
         assert!(linted.failed.is_empty(), "{:?}", linted.failed);
     }
 
+    /// A compile error is shown and counted in any file, the package's or
+    /// not; another file's deny finding is not shown, but explains why
+    /// clang-tidy failed; an indented excerpt that reads like a finding, or
+    /// like a tally, is part of the finding above it.
+    ///
+    /// Mutation: drop a foreign compile error, let a dropped one explain a
+    /// failure, take an indented line for a finding, or drop an indented
+    /// line ending in "generated."; this test fails.
+    #[test]
+    fn compile_errors_count_anywhere_and_excerpts_stay_whole() {
+        let linted = analyse(
+            &Answers {
+                stdout: "\
+/p/vendor/v.h:1:10: error: 'nope.h' file not found [clang-diagnostic-error]
+/p/src/a.cpp:2:5: warning: w [bugprone-x]
+    2 |     puts(\"a.c:1:2: error: x\"); // all generated.
+      |     ^
+",
+                success: false,
+            },
+            &["src/a.cpp"],
+        );
+        let shown = String::from_utf8(linted.shown).unwrap();
+        assert!(
+            shown.starts_with("/p/vendor/v.h:1:10: error: 'nope.h'"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("// all generated.\n      |     ^\n"),
+            "{shown}"
+        );
+        assert_eq!((linted.warnings, linted.errors), (1, 1));
+        assert!(linted.failed.is_empty(), "{:?}", linted.failed);
+
+        let linted = analyse(
+            &Answers {
+                stdout: "/p/vendor/v.h:1:1: error: theirs [bugprone-y,-warnings-as-errors]\n",
+                success: false,
+            },
+            &["src/a.cpp"],
+        );
+        assert!(linted.shown.is_empty());
+        assert_eq!(linted.errors, 0);
+        assert!(linted.failed.is_empty(), "{:?}", linted.failed);
+    }
+
+    /// The files exported fixes would change are every replacement's path,
+    /// unquoted as LLVM writes it.
+    ///
+    /// Mutation: read the diagnostic's own path, or leave quotes in; this
+    /// test fails.
+    #[test]
+    fn fix_targets_are_the_replacements_paths() {
+        let yaml = "\
+Diagnostics:
+  - DiagnosticName:  x
+    DiagnosticMessage:
+      FilePath:        'C:\\p\\src\\a.cpp'
+      Replacements:
+        - FilePath:        'C:\\p\\src\\a.cpp'
+          Offset:          1
+        - FilePath:        'C:\\v\\it''s.h'
+          Offset:          2
+";
+        assert_eq!(
+            fix_targets(yaml),
+            [
+                PathBuf::from("C:\\p\\src\\a.cpp"),
+                PathBuf::from("C:\\v\\it's.h")
+            ]
+        );
+    }
+
     /// A clang-tidy that fails with no error finding to explain it is a
     /// failure of that source, never a pass.
     ///
@@ -482,7 +699,7 @@ Suppressed 4 warnings (4 in non-user code).
             .map(str::to_owned)
             .to_vec();
         let l = lint(
-            "[lint]\nallow = [\"modernize-*\"]\nwarn = [\"bugprone-use\"]\ndeny = [\"nope-*\", \"modernize-use-nullptr\"]\n",
+            "[lint]\nallow = [\"modernize-*\", \"clang-diagnostic-unused-variable\"]\nwarn = [\"bugprone-use\"]\ndeny = [\"nope-*\", \"modernize-use-nullptr\"]\n",
         );
         assert_eq!(
             unknown_names(&l, &known),

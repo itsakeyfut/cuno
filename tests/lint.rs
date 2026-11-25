@@ -118,6 +118,53 @@ fn fix_fixes_the_source() {
     assert!(fixed.contains("int* p = nullptr;"), "{fixed}");
 }
 
+/// `--fix` never rewrites a file outside the package: a source whose fix
+/// would also change a declaration in an `include-dirs` header is left
+/// unfixed and said to be; a compile error in such a header is shown and
+/// fails the run.
+///
+/// Mutation: apply fixes without looking where they go, or drop a foreign
+/// compile error; this test fails.
+#[test]
+fn fix_leaves_other_packages_alone_and_their_errors_show() {
+    let Some(name) = compilers().first().copied() else {
+        return;
+    };
+    let vend = "#include <string>\nvoid f(std::string s);\n";
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &format!(
+                "{MANIFEST}[build]\ninclude-dirs = [\"vend\"]\n[lint]\npreset = \"none\"\nwarn = [\"performance-unnecessary-value-param\"]\n"
+            ),
+        )
+        .file("vend/v.h", vend)
+        .file(
+            "src/main.cpp",
+            "#include \"v.h\"\nvoid f(std::string s) { (void)s.size(); }\nint main() { return 0; }\n",
+        );
+    let run = project.cuno(&["lint", "--fix", "--compiler", name]);
+    assert!(
+        run.stderr
+            .contains("warning: `src/main.cpp` is not fixed: a fix would change `"),
+        "{name}: {}",
+        run.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("vend/v.h")).unwrap(),
+        vend
+    );
+
+    std::fs::write(project.path().join("vend/v.h"), "#include \"nope.h\"\n").unwrap();
+    let run = project.cuno(&["lint", "--compiler", name]);
+    assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
+    assert!(
+        run.stderr.contains("'nope.h' file not found"),
+        "{name}: {}",
+        run.stderr
+    );
+}
+
 /// With no check enabled, nothing runs: a warning, exit 0. lint takes no
 /// profile.
 ///
