@@ -530,6 +530,35 @@ struct Check<'a> {
 }
 
 impl Check<'_> {
+    /// `allow` / `warn` / `deny`: clang-tidy check names, a `*` allowed.
+    /// Anything else (a `,`, a quote, a space) is an error at its place: it
+    /// would break the `.clang-tidy` written from it
+    /// (`docs/en/specs/dev-tools.md`, "allow / warn / deny").
+    fn check_names(
+        &self,
+        path: &str,
+        written: Option<Vec<String>>,
+    ) -> Result<Vec<String>, ConfigError> {
+        let names = written.unwrap_or_default();
+        for (i, name) in names.iter().enumerate() {
+            // A leading `-` would turn a name into its negation.
+            let ok = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '*')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '*'));
+            if !ok {
+                return Err(self.error(
+                    &format!("{path}.{i}"),
+                    format!(
+                        "`{name}` in `{path}` in {} is not a clang-tidy check name",
+                        self.doc.file.display()
+                    ),
+                ));
+            }
+        }
+        Ok(names)
+    }
+
     /// `exclude`'s patterns, a malformed one an error at its place.
     fn globs(&self, path: &str, written: Option<Vec<String>>) -> Result<Vec<Glob>, ConfigError> {
         written
@@ -761,9 +790,9 @@ impl Check<'_> {
                     LintPreset::ALL,
                 )?
                 .unwrap_or(LintPreset::Recommended),
-            allow: raw_lint.allow.unwrap_or_default(),
-            warn: raw_lint.warn.unwrap_or_default(),
-            deny: raw_lint.deny.unwrap_or_default(),
+            allow: self.check_names("lint.allow", raw_lint.allow)?,
+            warn: self.check_names("lint.warn", raw_lint.warn)?,
+            deny: self.check_names("lint.deny", raw_lint.deny)?,
             exclude: self.globs("lint.exclude", raw_lint.exclude)?,
         };
 
@@ -1676,6 +1705,18 @@ indent-width = 2
             ("[fmt]\nindent-width = 0\n", "fmt.indent-width"),
             ("[fmt]\ncolumn-limit = 0\n", "fmt.column-limit"),
             ("[fmt]\nexclude = [\"***\"]\n", "is not a pattern"),
+            (
+                "[lint]\nwarn = [\"a,b\"]\n",
+                "is not a clang-tidy check name",
+            ),
+            (
+                "[lint]\ndeny = [\"x'y\"]\n",
+                "is not a clang-tidy check name",
+            ),
+            (
+                "[lint]\ndeny = [\"-bugprone-*\"]\n",
+                "is not a clang-tidy check name",
+            ),
             ("[lint]\nexclude = [\"src\\\\x\"]\n", "is not a pattern"),
             // A wrong type names what was expected, at its line.
             ("[fmt]\nuse-tabs = \"no\"\n", "expected a boolean"),

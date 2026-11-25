@@ -157,12 +157,12 @@ exclude = []           # 解析しないファイル
   - `modernize-use-trailing-return-type`: `auto f() -> int` の書き方を強制する。
   - `readability-identifier-length`: 短い変数名を禁止する。
 
-- C のプロジェクトでは、C++ 専用のチェックは自動的に対象外になる。
+- C のプロジェクトでは、C++ 専用のチェックは自動的に対象外になる。clang-tidy 自身が C のファイルには働かせないので、cuno はグループごと外すことはしない（`cppcoreguidelines-init-variables` のように C にも当てはまるチェックは、`strict` で有効）。
 - 除外リストの細かな調整は実装時に行い、本仕様書に書き戻す。
 
 #### allow / warn / deny
 
-`allow` / `warn` / `deny` は clippy と同じ考え方。チェック名は clang-tidy の名前（例: `bugprone-use-after-move`）。ワイルドカード（例: `modernize-*`）も使える。
+`allow` / `warn` / `deny` は clippy と同じ考え方。チェック名は clang-tidy の名前（例: `bugprone-use-after-move`）。ワイルドカード（例: `modernize-*`）も使える。名前は英字か `*` で始まり、使えるのは英数字と `-` `_` `.` `*` だけで、それ以外を含む値はエラー（終了コード 3）で、その行を示す（生成する `.clang-tidy` が壊れるのを防ぐため）。
 
 - `allow`: そのチェックを無効にする。
 - `warn`: 指摘を警告として表示する。終了コードには影響しない。
@@ -170,8 +170,10 @@ exclude = []           # 解析しないファイル
 
 **優先規則**（同じチェックが複数のリストに該当する場合）:
 
-1. 具体的な名前（`modernize-use-auto`）は、ワイルドカード（`modernize-*`）より優先する。
+1. 具体的な名前（`modernize-use-auto`）は、ワイルドカード（`modernize-*`）より優先する。ワイルドカード同士では、`*` より前が長い（当てはまる範囲が狭い）方を優先する（`modernize-use-*` は `modernize-*` より優先）。
 2. 具体度が同じなら `deny` > `warn` > `allow` の順に優先する。
+3. preset が除いたチェック（上の「除外」）は、ワイルドカードでは有効に戻らない。名前で書いたときだけ有効になる（`deny = ["bugprone-*"]` でも `bugprone-easily-swappable-parameters` は動かない）。
+   - 理由: 除外は誤検知の多さや好みによるもので、グループを指定しただけで、終了コード 1 を出すチェックが増えないようにする。
 
 例: `warn = ["modernize-*"]` と `allow = ["modernize-use-auto"]` なら、`modernize-use-auto` だけ無効で、他の `modernize-*` は警告。
 
