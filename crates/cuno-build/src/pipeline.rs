@@ -20,8 +20,70 @@ use crate::exec::{self, Event, Spawner};
 use crate::graph::{self, Graph, Plan, Products, Purpose, Step, StepKind};
 use crate::input::{compile_settings, editor_settings};
 use crate::layout::{self, Layout};
-use crate::sources::{self, Bin};
+use crate::sources::{self, Bin, Sources};
 use crate::state::Records;
+
+/// Writes compile_commands.json for the package at `root`, as every build
+/// writes it, without building: what `cuno lint` analyses
+/// (`docs/en/specs/dev-tools.md`). The outer error is the package's layout,
+/// the inner one the write, which the caller reports as it decides.
+pub fn write_compile_commands(
+    root: &Path,
+    manifest: &Manifest,
+    target_dir: &Path,
+    host: HostOs,
+    tool: &Toolchain<'_>,
+    bundled: &Path,
+) -> Result<std::io::Result<()>, BuildError> {
+    let sources = sources::classify(root, manifest, target_dir, host)?;
+    Ok(compile_commands(
+        root, manifest, target_dir, host, tool, bundled, &sources,
+    ))
+}
+
+/// compile_commands.json from sources already classified, with the same
+/// settings whatever is built (`editor_settings`).
+fn compile_commands(
+    root: &Path,
+    manifest: &Manifest,
+    target_dir: &Path,
+    host: HostOs,
+    tool: &Toolchain<'_>,
+    bundled: &Path,
+    sources: &Sources,
+) -> std::io::Result<()> {
+    let for_editors =
+        |lang, _: Purpose| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
+    // Never linked; the plan takes link settings all the same.
+    let link = for_editors(
+        manifest.package.lang,
+        Purpose {
+            test: true,
+            mode: Mode::Compile,
+        },
+    );
+    let editors = graph::plan(&Plan {
+        package: &manifest.package.name,
+        sources,
+        products: Products::CompileCommands,
+        // The test build's objects: what compile_commands.json describes is
+        // compiled with `CUNO_TEST` (build.md, "Output").
+        layout: &Layout::new(target_dir, Profile::Dev, root, host),
+        kind: tool.kind,
+        program: tool.executable,
+        compile: &for_editors,
+        link: (&link.build, &link.profile),
+        // compile_commands.json never carries the color flags.
+        color: false,
+    });
+    let include = include_dirs(tool.env.get("INCLUDE"));
+    let context = ToolContext {
+        kind: tool.kind,
+        include: &include,
+        msvc: tool.msvc,
+    };
+    compdb::write(root, &editors, context)
+}
 
 /// The compiler a build runs, once the toolchain is ready.
 pub struct Toolchain<'a> {
@@ -236,30 +298,9 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     }
 
     // Written before anything runs, so it is current even when a compile
-    // fails, with the same settings whatever is built (`editor_settings`).
-    let for_editors =
-        |lang, _: Purpose| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
-    let editors = graph::plan(&Plan {
-        package,
-        sources: &sources,
-        products: Products::CompileCommands,
-        // The test build's objects: what compile_commands.json describes is
-        // compiled with `CUNO_TEST` (build.md, "Output").
-        layout: &Layout::new(target_dir, Profile::Dev, root, host),
-        kind: tool.kind,
-        program: tool.executable,
-        compile: &for_editors,
-        link: (&link.build, &link.profile),
-        // compile_commands.json never carries the color flags.
-        color: false,
-    });
+    // fails.
     let include = include_dirs(tool.env.get("INCLUDE"));
-    let context = ToolContext {
-        kind: tool.kind,
-        include: &include,
-        msvc: tool.msvc,
-    };
-    if let Err(e) = compdb::write(root, &editors, context) {
+    if let Err(e) = compile_commands(root, manifest, target_dir, host, tool, bundled, &sources) {
         shell.warning(format!("could not write {}: {e}", compdb::FILE));
     }
 
@@ -961,6 +1002,56 @@ mod tests {
             assert!(compdb.contains("main.cpp"), "{goal:?}: {compdb}");
             assert!(!compdb.contains("test_main"), "{goal:?}: {compdb}");
         }
+    }
+
+    /// `write_compile_commands` alone writes the file a build writes, byte for
+    /// byte, and a layout the build refuses is its error too.
+    ///
+    /// Mutation: plan another product, layout, profile or settings in the
+    /// function than in the build, or skip classifying; this test fails.
+    #[test]
+    fn compile_commands_are_written_alone_as_a_build_writes_them() {
+        let (root, manifest) = package_with(
+            "[build]
+defines = [\"X=1\"]
+",
+            &[],
+        );
+        write_old(root.path(), "tests/t.cpp");
+        run(root.path(), &manifest, Goal::Build, &Fake::default()).unwrap();
+        let file = root.path().join(compdb::FILE);
+        let built = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        let env = Env::from_pairs([], NameCase::Insensitive);
+        let version = Version::find_in("22.1.8").unwrap();
+        let tool = Toolchain {
+            kind: CompilerKind::Clang,
+            executable: Path::new("clang.exe"),
+            version: &version,
+            msvc: None,
+            env: &env,
+            identity: vec![OsString::from("22.1.8")],
+        };
+        let write = |root: &Path, manifest: &Manifest| {
+            write_compile_commands(
+                root,
+                manifest,
+                &root.join("target"),
+                HostOs::Windows,
+                &tool,
+                Path::new(BUNDLED),
+            )
+        };
+        write(root.path(), &manifest).unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), built);
+
+        let (empty, manifest) = package_with("", &[]);
+        std::fs::remove_dir_all(empty.path().join("src")).unwrap();
+        let result = write(empty.path(), &manifest);
+        assert!(
+            matches!(result, Err(BuildError::NoExecutable { .. })),
+            "{result:?}"
+        );
     }
 
     /// Two test executables of one name stop the build before anything
