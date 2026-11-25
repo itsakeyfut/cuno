@@ -274,15 +274,31 @@ pub fn in_scratch(
     // `create_dir`, not `create_dir_all`: a temporary directory that does not
     // exist is a problem to report, not a tree to make.
     // The process id keeps two cuno processes apart. It is the process's
-    // identity, not its environment, so a library may ask for it.
-    let scratch = temp.join(format!("cuno-{command}-{}", std::process::id()));
-    std::fs::create_dir(&scratch).map_err(|e| {
+    // identity, not its environment, so a library may ask for it. A killed
+    // run leaves its directory behind, and the id is reused: a name already
+    // taken, whoever took it, is passed over for the next.
+    let failed = |dir: &Path, reason: String| {
         boxed(ScratchError {
             what,
-            dir: scratch.clone(),
-            reason: e.to_string(),
+            dir: dir.to_owned(),
+            reason,
         })
-    })?;
+    };
+    let mut made = None;
+    for n in 0..100 {
+        let dir = temp.join(format!("cuno-{command}-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                made = Some(dir);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(failed(&dir, e.to_string())),
+        }
+    }
+    let Some(scratch) = made else {
+        return Err(failed(temp, "every scratch name is taken".to_owned()));
+    };
     let result = check(&scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     result.map_err(boxed)
@@ -456,8 +472,32 @@ mod tests {
         let seen = seen.unwrap();
         assert_eq!(seen.parent(), Some(temp.path()));
         let name = seen.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(name, format!("cuno-build-{}", std::process::id()));
+        assert_eq!(name, format!("cuno-build-{}-0", std::process::id()));
         assert!(!seen.exists(), "the scratch directory was left behind");
+    }
+
+    /// A directory a killed run left under the name this one would take, its
+    /// process id reused, is passed over and left alone; the check still
+    /// runs.
+    ///
+    /// Mutation: fail on a name already taken, or take it over; this test
+    /// fails.
+    #[test]
+    fn a_name_left_by_a_killed_run_is_passed_over() {
+        let temp = tempfile::tempdir().unwrap();
+        let left = temp
+            .path()
+            .join(format!("cuno-doctor-{}-0", std::process::id()));
+        std::fs::create_dir(&left).unwrap();
+        std::fs::write(left.join("theirs"), "").unwrap();
+        let mut seen = None;
+        in_scratch(temp.path(), "doctor", "clang-tidy", |dir| {
+            seen = Some(dir.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        assert_ne!(seen.as_deref(), Some(left.as_path()));
+        assert!(left.join("theirs").is_file());
     }
 
     /// A temporary directory that does not exist is a setup problem naming
