@@ -32,6 +32,7 @@ const COLOR: &[(&str, Row)] = &[
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
     ("fmt", Runs(&["fmt"])),
+    ("lint", Runs(&["lint"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
 ];
@@ -48,6 +49,7 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
     ("fmt", Runs(&["fmt"])),
+    ("lint", Runs(&["lint"])),
     ("clean", Runs(&["clean"])),
     (
         "doctor",
@@ -64,6 +66,7 @@ const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
     ("fmt", Runs(&["fmt"])),
+    ("lint", Runs(&["lint"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
 ];
@@ -77,6 +80,7 @@ const CONFIGURED_COPY: &[(&str, Row)] = &[
     ("run", Runs(&["run", "--compiler", "msvc"])),
     ("test", Runs(&["test", "--compiler", "msvc"])),
     ("fmt", Runs(&["fmt"])),
+    ("lint", Runs(&["lint", "--compiler", "msvc"])),
     ("clean", DoesNotApply("it runs no tool")),
     ("doctor", Runs(&["doctor", "--compiler", "msvc"])),
 ];

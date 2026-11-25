@@ -1,7 +1,14 @@
 //! clang-tidy's configuration from `[lint]`
 //! (`docs/en/specs/dev-tools.md`, "`[lint]`").
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use cuno_core::Env;
 use cuno_manifest::{Lint, LintPreset};
+use cuno_toolchain::Runner;
 
 /// The file editors read, at the project root.
 pub const FILE: &str = ".clang-tidy";
@@ -122,6 +129,242 @@ pub fn clang_tidy_file(lint: &Lint) -> String {
     )
 }
 
+/// Whether `config` turns any check on; clang-tidy refuses to run with
+/// none (`docs/en/specs/commands.md`, "`cuno lint`").
+pub fn any_check(config: &TidyConfig) -> bool {
+    config.checks.iter().any(|glob| !glob.starts_with('-'))
+}
+
+/// The names in `lint`'s lists that match no check in `known`, with the
+/// list each is in: a misspelt `deny` would otherwise do nothing, silently.
+pub fn unknown_names<'a>(lint: &'a Lint, known: &[String]) -> Vec<(&'static str, &'a str)> {
+    let mut unknown = Vec::new();
+    for (list, names) in [
+        ("lint.allow", &lint.allow),
+        ("lint.warn", &lint.warn),
+        ("lint.deny", &lint.deny),
+    ] {
+        for name in names {
+            let found = match name.find('*') {
+                Some(star) => {
+                    let (before, after) = (&name[..star], &name[star + 1..]);
+                    known.iter().any(|check| {
+                        check.len() >= before.len() + after.len()
+                            && check.starts_with(before)
+                            && check.ends_with(after)
+                    })
+                }
+                None => known.iter().any(|check| check == name),
+            };
+            if !found {
+                unknown.push((list, name.as_str()));
+            }
+        }
+    }
+    unknown
+}
+
+/// The checks `program` has, from `--list-checks --checks=*`.
+pub fn known_checks(
+    program: &Path,
+    env: &Env,
+    runner: &dyn Runner,
+) -> std::io::Result<Vec<String>> {
+    let args: [&OsStr; 2] = ["--list-checks".as_ref(), "--checks=*".as_ref()];
+    let output = runner.run(program, &args, env)?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.ends_with(':'))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// clang-tidy, and what it is run with.
+pub struct ClangTidy<'a> {
+    /// The executable selection chose.
+    pub program: &'a Path,
+    /// The `.clang-tidy` to analyse with, whatever is at the root.
+    pub config: &'a Path,
+    /// The directory holding compile_commands.json; clang-tidy runs there.
+    pub root: &'a Path,
+    /// The compiler's environment.
+    pub env: &'a Env,
+    /// How many sources at once (one under `fix`).
+    pub jobs: usize,
+    /// `--fix`: fix the sources themselves, headers left alone.
+    pub fix: bool,
+}
+
+/// What analysing found.
+#[derive(Debug, Default)]
+pub struct Linted {
+    /// The findings to show, each once, as clang-tidy printed them, source
+    /// by source in the order given.
+    pub shown: Vec<u8>,
+    /// How many of those are warnings.
+    pub warnings: usize,
+    /// How many are errors (`deny`, or a compile error).
+    pub errors: usize,
+    /// How many `--fix` fixed; neither warnings nor errors any more.
+    pub fixed: usize,
+    /// Sources clang-tidy could not analyse, with why.
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+/// Analyses `sources` with `tool`, keeping only the findings in files
+/// `ours` accepts (the package's, not excluded), each once
+/// (`docs/en/specs/commands.md`, "`cuno lint`").
+pub fn lint(
+    sources: &[PathBuf],
+    tool: &ClangTidy<'_>,
+    ours: &(dyn Fn(&Path) -> bool + Sync),
+    runner: &(dyn Runner + Sync),
+) -> Linted {
+    let next = AtomicUsize::new(0);
+    type Run = (usize, std::io::Result<cuno_toolchain::Output>);
+    let runs: Mutex<Vec<Run>> = Mutex::new(Vec::new());
+    let jobs = if tool.fix { 1 } else { tool.jobs };
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.clamp(1, sources.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(source) = sources.get(i) else { break };
+                    let output = run_one(source, tool, runner);
+                    runs.lock().unwrap().push((i, output));
+                }
+            });
+        }
+    });
+    let mut runs = runs.into_inner().unwrap();
+    runs.sort_by_key(|(i, _)| *i);
+    let mut linted = Linted::default();
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    for (i, output) in runs {
+        let source = &sources[i];
+        let output = match output {
+            Ok(output) => output,
+            Err(e) => {
+                linted.failed.push((source.clone(), e.to_string()));
+                continue;
+            }
+        };
+        let mut explained = false;
+        for finding in findings(&output.stdout) {
+            explained |= finding.error;
+            let path = tool.root.join(&finding.path);
+            if !ours(&path) || seen.contains(&finding.text) {
+                continue;
+            }
+            // Fixed under `--fix`: shown, as clang-tidy says so, but no
+            // longer a finding to count.
+            let fixed = String::from_utf8_lossy(&finding.text).contains("FIX-IT applied");
+            if fixed {
+                linted.fixed += 1;
+            } else if finding.error {
+                linted.errors += 1;
+            } else {
+                linted.warnings += 1;
+            }
+            linted.shown.extend_from_slice(&finding.text);
+            seen.push(finding.text);
+        }
+        // A failure no error finding explains is never a pass.
+        if !output.success && !explained {
+            let said = String::from_utf8_lossy(&output.stderr);
+            let said = said
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("clang-tidy failed and said nothing");
+            linted.failed.push((source.clone(), said.trim().to_owned()));
+        }
+    }
+    linted
+}
+
+fn run_one(
+    source: &Path,
+    tool: &ClangTidy<'_>,
+    runner: &dyn Runner,
+) -> std::io::Result<cuno_toolchain::Output> {
+    let config = format!("--config-file={}", tool.config.display());
+    let database = format!("-p={}", tool.root.display());
+    // Under `--fix` no header is shown, and so none is rewritten.
+    let headers = if tool.fix {
+        "--header-filter=^$"
+    } else {
+        "--header-filter=.*"
+    };
+    let mut args: Vec<&OsStr> = vec![
+        config.as_ref(),
+        database.as_ref(),
+        headers.as_ref(),
+        "--quiet".as_ref(),
+    ];
+    if tool.fix {
+        args.push("--fix".as_ref());
+    }
+    args.push(source.as_os_str());
+    runner.run_in(tool.program, &args, tool.env, tool.root)
+}
+
+/// One finding as clang-tidy printed it: its first line and the lines
+/// after it (the code, the caret, its notes) up to the next finding.
+struct Finding {
+    path: PathBuf,
+    error: bool,
+    text: Vec<u8>,
+}
+
+/// The findings in clang-tidy's output; summary lines are not findings.
+fn findings(stdout: &[u8]) -> Vec<Finding> {
+    let mut found: Vec<Finding> = Vec::new();
+    for line in stdout.split_inclusive(|b| *b == b'\n') {
+        let text = String::from_utf8_lossy(line);
+        if let Some((path, error)) = finding_head(&text) {
+            found.push(Finding {
+                path,
+                error,
+                text: line.to_vec(),
+            });
+        } else if summary(&text) {
+            continue;
+        } else if let Some(last) = found.last_mut() {
+            last.text.extend_from_slice(line);
+        }
+    }
+    found
+}
+
+/// The path and severity of a line that starts a finding:
+/// `path:line:column: warning: ...` or `... error: ...`.
+fn finding_head(line: &str) -> Option<(PathBuf, bool)> {
+    for (marker, error) in [(": warning: ", false), (": error: ", true)] {
+        let Some(at) = line.find(marker) else {
+            continue;
+        };
+        let mut parts = line[..at].rsplitn(3, ':');
+        let column = parts.next()?;
+        let row = parts.next()?;
+        let path = parts.next()?;
+        if column.parse::<u32>().is_ok() && row.parse::<u32>().is_ok() && !path.is_empty() {
+            return Some((PathBuf::from(path), error));
+        }
+    }
+    None
+}
+
+/// clang-tidy's tallies and advice, which `cuno lint` does not show.
+fn summary(line: &str) -> bool {
+    let line = line.trim();
+    line.ends_with(" generated.")
+        || line.starts_with("Suppressed ")
+        || line.starts_with("Use -header-filter")
+        || line.starts_with("Found compiler error")
+        || line.starts_with("Error while processing")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +376,131 @@ mod tests {
             .unwrap()
             .value
             .lint
+    }
+
+    /// A clang-tidy that prints `stdout` and succeeds or not, whatever it is
+    /// asked.
+    struct Answers {
+        stdout: &'static str,
+        success: bool,
+    }
+
+    impl Runner for Answers {
+        fn run(
+            &self,
+            _program: &Path,
+            _args: &[&OsStr],
+            _env: &Env,
+        ) -> std::io::Result<cuno_toolchain::Output> {
+            Ok(cuno_toolchain::Output {
+                success: self.success,
+                stdout: self.stdout.as_bytes().to_vec(),
+                stderr: b"\nboom\n".to_vec(),
+            })
+        }
+    }
+
+    fn analyse(answers: &Answers, sources: &[&str]) -> Linted {
+        let env = Env::from_pairs([], cuno_core::NameCase::Insensitive);
+        let root = Path::new("/p");
+        let tool = ClangTidy {
+            program: Path::new("clang-tidy"),
+            config: Path::new("c"),
+            root,
+            env: &env,
+            jobs: 2,
+            fix: false,
+        };
+        let sources: Vec<PathBuf> = sources.iter().map(|s| root.join(s)).collect();
+        let ours = |p: &Path| !p.to_string_lossy().contains("vendor");
+        super::lint(&sources, &tool, &ours, answers)
+    }
+
+    const OUTPUT: &str = "\
+/p/src/a.cpp:3:14: warning: use nullptr [modernize-use-nullptr]
+    3 |     int* p = 0;
+      |              ^
+/p/src/a.h:1:1: error: bad [bugprone-x,-warnings-as-errors]
+/p/src/a.h:1:1: note: here
+/p/vendor/v.h:2:2: warning: theirs [bugprone-y]
+2 warnings generated.
+Suppressed 4 warnings (4 in non-user code).
+";
+
+    /// Each finding is kept with its lines, counted by severity, shown once
+    /// though two sources print it, and dropped outside the package;
+    /// clang-tidy's tallies are not shown.
+    ///
+    /// Mutation: keep a summary line, keep another package's finding, show
+    /// a repeat, or count an error as a warning; this test fails.
+    #[test]
+    fn findings_are_kept_once_and_only_the_package_s() {
+        let linted = analyse(
+            &Answers {
+                stdout: OUTPUT,
+                success: false,
+            },
+            &["src/a.cpp", "src/b.cpp"],
+        );
+        let shown = String::from_utf8(linted.shown).unwrap();
+        assert_eq!(
+            shown,
+            "/p/src/a.cpp:3:14: warning: use nullptr [modernize-use-nullptr]\n    3 |     int* p = 0;\n      |              ^\n\
+             /p/src/a.h:1:1: error: bad [bugprone-x,-warnings-as-errors]\n/p/src/a.h:1:1: note: here\n",
+        );
+        assert_eq!((linted.warnings, linted.errors), (1, 1));
+        assert!(linted.failed.is_empty(), "{:?}", linted.failed);
+    }
+
+    /// A clang-tidy that fails with no error finding to explain it is a
+    /// failure of that source, never a pass.
+    ///
+    /// Mutation: treat a failure without findings as success; this test
+    /// fails.
+    #[test]
+    fn an_unexplained_failure_is_reported() {
+        let linted = analyse(
+            &Answers {
+                stdout: "",
+                success: false,
+            },
+            &["src/a.cpp"],
+        );
+        assert_eq!(linted.failed.len(), 1);
+        assert_eq!(linted.failed[0].1, "boom");
+    }
+
+    /// A name, or a wildcard, that matches no check clang-tidy has is
+    /// reported with its list.
+    ///
+    /// Mutation: accept any wildcard, or match names by prefix; this test
+    /// fails.
+    #[test]
+    fn unknown_names_are_found() {
+        let known: Vec<String> = ["bugprone-use-after-move", "modernize-use-nullptr"]
+            .map(str::to_owned)
+            .to_vec();
+        let l = lint(
+            "[lint]\nallow = [\"modernize-*\"]\nwarn = [\"bugprone-use\"]\ndeny = [\"nope-*\", \"modernize-use-nullptr\"]\n",
+        );
+        assert_eq!(
+            unknown_names(&l, &known),
+            [("lint.warn", "bugprone-use"), ("lint.deny", "nope-*")]
+        );
+    }
+
+    /// No check on is `preset = "none"` with nothing written.
+    ///
+    /// Mutation: count a negation as a check; this test fails.
+    #[test]
+    fn none_with_nothing_written_enables_nothing() {
+        assert!(!any_check(&clang_tidy_config(&lint(
+            "[lint]\npreset = \"none\"\n"
+        ))));
+        assert!(any_check(&clang_tidy_config(&lint(
+            "[lint]\npreset = \"none\"\nwarn = [\"bugprone-*\"]\n"
+        ))));
+        assert!(any_check(&clang_tidy_config(&lint(""))));
     }
 
     /// clang-tidy's own rule: the last glob that matches decides.

@@ -66,6 +66,13 @@ impl SystemRunner {
             limit: TOOL_TIMEOUT,
         }
     }
+
+    /// A runner that stops a tool after `limit` instead: for work rather
+    /// than a probe, such as clang-tidy analysing a source
+    /// (`docs/en/specs/commands.md`, "`cuno lint`").
+    pub const fn with_limit(limit: Duration) -> SystemRunner {
+        SystemRunner { limit }
+    }
 }
 
 impl Default for SystemRunner {

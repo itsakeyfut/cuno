@@ -11,6 +11,7 @@ mod build;
 mod clean;
 mod doctor;
 mod fmt;
+mod lint;
 mod new;
 
 use std::ffi::OsString;
@@ -148,6 +149,15 @@ enum Command {
         /// Do not format; fail if any file is not formatted (for CI)
         #[arg(long)]
         check: bool,
+    },
+    /// Analyse the package's code with clang-tidy
+    Lint {
+        /// Fix what clang-tidy can, in the sources themselves
+        #[arg(long)]
+        fix: bool,
+        /// The compiler whose commands are analysed (msvc / clang / clang-cl / gcc / safec)
+        #[arg(long, value_name = "NAME")]
+        compiler: Option<String>,
     },
     /// Remove the build's output
     Clean {
@@ -524,6 +534,22 @@ fn dispatch(
                 shell,
             );
             return fmt::fmt(check, resolved, env, &cwd, given.host, given.temp, shell);
+        }
+        Some(Command::Lint { fix, compiler }) => {
+            let cwd = given.cwd()?;
+            let cli = CliSettings {
+                compiler,
+                ..CliSettings::default()
+            };
+            let resolved = resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cli: &cli,
+                },
+                shell,
+            );
+            return lint::lint(fix, resolved, env, &cwd, given.host, given.temp, shell);
         }
         Some(Command::Doctor { compiler }) => {
             let cwd = given.cwd()?;

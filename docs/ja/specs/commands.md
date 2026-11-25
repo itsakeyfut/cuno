@@ -233,6 +233,13 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - 指摘は clang-tidy の表示（`ファイル:行:列: warning: ... [チェック名]` とコードの抜粋）のまま出す。ソースごとの clang-tidy は `-j` に従って並列に動かし、表示はソースごとにまとめて、混ざらないようにする。
 - clang-tidy の集計の行（`N warnings generated.` など）は出さない。同じヘッダの同じ指摘が複数のソースから出たときは 1 回だけ出す。
   - 理由: 指摘の形を変えないことで、エディタや CI がそのまま読める。作り直すと、clang-tidy の版で表示が変わったときに指摘を取りこぼすおそれがある。
+- 解析するソースは、compile_commands.json にコマンドのあるもの（パッケージ本体、エントリファイル、`tests/` のソース）。`examples/` や `benches/` のように、まだビルドしないソースは解析しない。ヘッダは、それを読むソースを通して解析する。
+- `--fix` は、ソースファイル自身への指摘だけを直す。ヘッダは書き換えず、ヘッダへの指摘も表示しない（`--fix` なしの `cuno lint` で確かめる）。ファイルへのリンクのソースも直さず、``warning: `src/x.cpp` is a link; cuno lint --fix leaves it`` を出す。`--fix` のときは、ソースを 1 つずつ解析する。直した指摘は表示するが、警告にもエラーにも数えない。
+  - 理由: clang-tidy の `--fix` は、表示を許したヘッダをすべて書き換える。パッケージのヘッダだけに絞る正規表現は、Windows の綴りの揺れ（大文字・小文字、区切り）で確実に作れず、`include-dirs` の第三者のヘッダを書き換えてしまう。並べて解析すると、同じファイルを 2 つの解析が同時に書き換えうる。
+- 有効なチェックが 1 つもない（`preset = "none"` で `warn` / `deny` も空）ときは、clang-tidy を動かさず、``warning: no checks are enabled ([lint] preset = "none" and no warn / deny); nothing was analysed`` を出して終了コード 0。
+- `allow` / `warn` / `deny` に書いた名前を、使う clang-tidy が知らない（ワイルドカードなら、どのチェックにも当てはまらない）ときは、``warning: `bugprone-typoo` in `lint.deny` names no check this clang-tidy has`` を出して解析は続ける。
+  - 理由: clang-tidy は知らない名前を黙って無視するので、綴りを誤った `deny` が何もしないことに気づけない。
+- clang-tidy は 1 ソースにつき 10 分で止め、そのソースは ``error: could not lint `src/x.cpp`: <理由>`` として示す（終了コード 1）。clang-tidy が 0 以外で終わり、それを説明するエラーの指摘がないときも同じ形で示す。
 - 最後に、解析したファイルの数と指摘の数を示す（`-q` では出さない）。
 
 ```
