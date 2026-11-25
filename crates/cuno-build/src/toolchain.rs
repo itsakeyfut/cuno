@@ -18,7 +18,7 @@ use cuno_toolchain::flags::{Mode, ToolContext, check_edition, include_dirs};
 use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
-use cuno_toolchain::select::{self, Found, Selected};
+use cuno_toolchain::select::{self, Found, LlvmChoice, Selected};
 use cuno_toolchain::{HostOs, Runner, ToolchainError, Version};
 
 use crate::bundled;
@@ -142,6 +142,33 @@ pub fn tidy_compile(
         kind: selected.kind,
         include: include_dirs(prepared.env.get("INCLUDE")),
         msvc: selected.msvc.as_ref().map(|toolset| toolset.cl_version),
+    })
+}
+
+/// Whether `chosen`, the clang-tidy selection picked, can analyse this
+/// package: its standard library check on `tidy`'s compile, in a scratch
+/// directory under `temp` named for `command` (`doctor`, `lint`).
+/// `cuno doctor` reports the error and `cuno lint` stops on it
+/// (`docs/en/specs/toolchain.md`, "Minimum compiler versions").
+pub fn tidy_ready(
+    chosen: &LlvmChoice,
+    tidy: &TidyCompile,
+    temp: &Path,
+    command: &str,
+    runner: &dyn Runner,
+) -> Result<(), Box<dyn CunoError>> {
+    in_scratch(temp, command, "clang-tidy", |scratch| {
+        stl::check_tidy(
+            chosen,
+            &tidy.env,
+            tidy.context(),
+            ProbeInputs {
+                scratch,
+                input: &tidy.settings.input(),
+                cwd: &tidy.cwd,
+            },
+            runner,
+        )
     })
 }
 

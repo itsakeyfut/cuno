@@ -11,7 +11,6 @@ use cuno_toolchain::flags::check_edition;
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::prepare;
-use cuno_toolchain::probe::{self, ProbeInputs};
 use cuno_toolchain::select::{self, Choices, Found};
 use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
 
@@ -312,19 +311,7 @@ fn tools(
         problems.status("Found", format!("{} {}", tool.name(), chosen.version));
         if tool == Tool::ClangTidy
             && let Some(tidy) = tidy
-            && let Err(error) = toolchain::in_scratch(temp, "doctor", "clang-tidy", |scratch| {
-                probe::check_tidy(
-                    &chosen,
-                    &tidy.env,
-                    tidy.context(),
-                    ProbeInputs {
-                        scratch,
-                        input: &tidy.settings.input(),
-                        cwd: &tidy.cwd,
-                    },
-                    runner,
-                )
-            })
+            && let Err(error) = toolchain::tidy_ready(&chosen, tidy, temp, "doctor", runner)
         {
             problems.report(&*error);
         }
