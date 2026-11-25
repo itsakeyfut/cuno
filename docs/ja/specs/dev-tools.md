@@ -29,7 +29,7 @@
 
 - 対象の拡張子: `.c` / `.h` / `.cpp` / `.cc` / `.cxx` / `.hpp` / `.hh` / `.hxx` / `.inl`。
 - `.h` は `[package] lang` の言語として扱う（cuno 既定スタイルのポインタ位置が C と C++ で異なるため）。
-- `cuno fmt` と `cuno lint` は、同じ「パッケージのコードの置き場」から対象を決める。`[[bin]] path` で `src/` の外に置いたファイルとその隣のヘッダも対象になる。対象の一覧は `cuno-cli` が作り、fmt / lint の実装に渡す（[architecture.md](architecture.md#クレート間の依存)）。
+- `cuno fmt` と `cuno lint` は、同じ「パッケージのコードの置き場」から対象を決める。`[[bin]] path` で `src/` の外に置いたファイルとその隣のヘッダも対象になる。対象の一覧は `cuno-build` がソースの分類と同じ走査で作り、`cuno-cli` が受け取って fmt / lint の実装に渡す（[architecture.md](architecture.md#クレート間の依存)）。
   - 理由: fmt と lint で対象の決め方が違うと、同じファイルが一方では解析され他方では整形されない。固定のディレクトリだけを見ると、`src/` の外に置いたファイルが `build` と `lint` では使われるのに、未整形のまま `fmt --check` を通る。配置を強制しない方針（[concept.md](../concept.md) の設計原則 3）とも合わない。
 - `cuno fmt` はコンパイラなしで動く。対象を決めるのにコンパイラの検出も選択も使わない。
   - 理由: `fmt` は clang-format だけで動き、コンパイラが入っていない環境（整形だけを確かめる CI など）でも使えるべきため。compile_commands.json を `fmt` で生成しないのも同じ理由。

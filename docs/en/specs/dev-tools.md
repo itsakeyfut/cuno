@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 26a514c589ae41436bbf99c48629b2953aedb16e -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob c0b0f293640c504cbff7e022a088c9064b98254b -->
 
 # Development Tools
 
@@ -31,7 +31,7 @@
 
 - Target extensions: `.c` / `.h` / `.cpp` / `.cc` / `.cxx` / `.hpp` / `.hh` / `.hxx` / `.inl`.
 - `.h` is treated as the language given by `[package] lang` (because pointer placement in the cuno default style differs between C and C++).
-- `cuno fmt` and `cuno lint` decide what they act on from the same "places where the package's code lives". A file placed outside `src/` with `[[bin]] path`, and the headers next to it, are included. `cuno-cli` builds the list of targets and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
+- `cuno fmt` and `cuno lint` decide what they act on from the same "places where the package's code lives". A file placed outside `src/` with `[[bin]] path`, and the headers next to it, are included. `cuno-build` builds the list of targets with the same walk as classifying sources, and `cuno-cli` receives it and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
   - Rationale: if fmt and lint decided their targets differently, the same file could be analyzed by one and not formatted by the other. Looking only at fixed directories, a file placed outside `src/` would be used by `build` and `lint` yet pass `fmt --check` unformatted. It would also go against not enforcing a layout (design principle 3 in [concept.md](../concept.md)).
 - `cuno fmt` works without a compiler. Deciding its targets uses neither compiler detection nor selection.
   - Rationale: `fmt` runs with clang-format alone and should work where no compiler is installed (such as a CI job that only checks formatting). The same reason is why `fmt` does not generate compile_commands.json.

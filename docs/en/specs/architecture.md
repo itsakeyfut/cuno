@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob b22f9ebb72b374691348049a1e3263dcef905b53 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 34f811f43c5b1a39b945c8bac3e1c666a6528824 -->
 
 # Internal Structure of cuno Itself
 
@@ -91,7 +91,8 @@ The allowed directions of dependency are limited to the following. `tests/archit
   - Rationale: to keep the structure of TOML out of the compiler abstraction. Adding a compiler then takes a change to `cuno-toolchain` alone (design principle 5 in [concept.md](../concept.md)).
 - `cuno-test` holds only running tests and displaying their results. Building tests is one mode of `cuno-build`.
   - Rationale: it only runs the executables it is given and collects the results, so it needs no knowledge of settings or compilers.
-- `cuno-tools` is given the list of target files `cuno-cli` built from "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. What lint acts on is decided by the list; compile_commands.json only supplies each source's command. It does not depend on `cuno-build`.
+- `cuno-cli` gives `cuno-tools` the list of target files in "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. `cuno-build` builds the list with the same walk as classifying sources (the output directory, links to directories, how upper and lower case are treated). What lint acts on is decided by the list; compile_commands.json only supplies each source's command. `cuno-tools` does not depend on `cuno-build`.
+  - Rationale: with two walks, the handling of the output directory and of other spellings of the same name would diverge (the same kind of mistake has been fixed several times in classifying sources). The command module (`cuno-cli`) holds no rules, so the walk is placed where classifying sources is.
 - `cuno-build` does not depend on `cuno-deps` / `cuno-script`. Resolved dependencies and script results are passed by `cuno-cli` as data.
 - **Library crates do not read the process's environment variables, command-line arguments, current directory or the location of the temporary directory directly.** The cuno binary (`main.rs`) collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
   - Likewise, the OS cuno runs on (the host) is received as a value rather than decided directly with `cfg!` and the like. The OS being built for (the target) is distinguished from the host, as in [manifest.md](manifest.md). In the MVP, the binary passes target = host.
