@@ -14,6 +14,7 @@ use cuno_toolchain::flags::{Edition, Lang, OptLevel, Runtime, Subsystem, Warning
 use cuno_toolchain::select::{Constraints, VersionReq};
 use serde::Deserialize;
 
+use crate::glob::Glob;
 use crate::read::{Doc, key};
 use crate::{ConfigError, ConfigWarning, LocatedDir, Project, resolve_path, shown_path};
 
@@ -179,7 +180,7 @@ pub struct Fmt {
     /// `use-tabs`.
     pub use_tabs: Option<bool>,
     /// `exclude`: patterns of files not to format.
-    pub exclude: Vec<String>,
+    pub exclude: Vec<Glob>,
     /// `[fmt.clang-format]`, passed to clang-format as written.
     pub clang_format: toml::Table,
 }
@@ -209,7 +210,7 @@ pub struct Lint {
     /// `deny`: checks to report as errors.
     pub deny: Vec<String>,
     /// `exclude`: patterns of files not to analyse.
-    pub exclude: Vec<String>,
+    pub exclude: Vec<Glob>,
 }
 
 impl Default for Lint {
@@ -529,6 +530,26 @@ struct Check<'a> {
 }
 
 impl Check<'_> {
+    /// `exclude`'s patterns, a malformed one an error at its place.
+    fn globs(&self, path: &str, written: Option<Vec<String>>) -> Result<Vec<Glob>, ConfigError> {
+        written
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(i, pattern)| {
+                Glob::parse(pattern).map_err(|why| {
+                    self.error(
+                        &format!("{path}.{i}"),
+                        format!(
+                            "`{pattern}` in `{path}` in {} is not a pattern: {why}",
+                            self.doc.file.display()
+                        ),
+                    )
+                })
+            })
+            .collect()
+    }
+
     fn error(&self, path: &str, message: String) -> ConfigError {
         self.doc.error(path, message, None)
     }
@@ -727,7 +748,7 @@ impl Check<'_> {
             indent_width: raw_fmt.indent_width,
             column_limit: raw_fmt.column_limit,
             use_tabs: raw_fmt.use_tabs,
-            exclude: raw_fmt.exclude.unwrap_or_default(),
+            exclude: self.globs("fmt.exclude", raw_fmt.exclude)?,
             clang_format,
         };
         let raw_lint = raw.lint.unwrap_or_default();
@@ -743,7 +764,7 @@ impl Check<'_> {
             allow: raw_lint.allow.unwrap_or_default(),
             warn: raw_lint.warn.unwrap_or_default(),
             deny: raw_lint.deny.unwrap_or_default(),
-            exclude: raw_lint.exclude.unwrap_or_default(),
+            exclude: self.globs("lint.exclude", raw_lint.exclude)?,
         };
 
         Ok(Manifest {
@@ -1613,7 +1634,7 @@ indent-width = 2
             (m.fmt.indent_width, m.fmt.column_limit, m.fmt.use_tabs),
             (Some(3), Some(90), Some(true))
         );
-        assert_eq!(m.fmt.exclude, ["third_party/**"]);
+        assert_eq!(m.fmt.exclude, [Glob::parse("third_party/**").unwrap()]);
         assert_eq!(
             m.fmt.clang_format["PointerAlignment"].as_str(),
             Some("Left")
@@ -1625,7 +1646,7 @@ indent-width = 2
                 vec!["a-*".to_owned()],
                 vec!["w".to_owned()],
                 vec!["d".to_owned()],
-                vec!["x".to_owned()]
+                vec![Glob::parse("x").unwrap()]
             )
         );
         let empty = read(MINIMAL).unwrap().value;
@@ -1654,6 +1675,8 @@ indent-width = 2
             ("[lint]\npreset = \"loose\"\n", "lint.preset"),
             ("[fmt]\nindent-width = 0\n", "fmt.indent-width"),
             ("[fmt]\ncolumn-limit = 0\n", "fmt.column-limit"),
+            ("[fmt]\nexclude = [\"***\"]\n", "is not a pattern"),
+            ("[lint]\nexclude = [\"src\\\\x\"]\n", "is not a pattern"),
             // A wrong type names what was expected, at its line.
             ("[fmt]\nuse-tabs = \"no\"\n", "expected a boolean"),
         ] {
