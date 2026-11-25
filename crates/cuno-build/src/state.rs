@@ -160,8 +160,9 @@ impl Records {
         true
     }
 
-    /// Removes `step`'s record before it runs, so a step that then fails
-    /// has none and runs again next time.
+    /// Removes `step`'s record, and what it printed last time, before it
+    /// runs, so a step that then fails has none and runs again next time,
+    /// and one that then prints nothing shows nothing old.
     pub fn forget(&self, step: &Step) {
         let _ = fs::remove_file(state_path(&step.output));
         let _ = fs::remove_file(output_path(&step.output));
@@ -169,13 +170,11 @@ impl Records {
 
     /// Keeps what `step` printed when it succeeded, as it was shown, for
     /// [`Records::saved_output`]; nothing is kept for a step that printed
-    /// nothing (`docs/en/specs/build.md`, "Deciding what changed").
+    /// nothing, whose last output [`Records::forget`] has already removed
+    /// (`docs/en/specs/build.md`, "Deciding what changed").
     pub fn save_output(&self, step: &Step, shown: &[u8]) {
-        let path = output_path(&step.output);
-        if shown.is_empty() {
-            let _ = fs::remove_file(path);
-        } else {
-            let _ = fs::write(path, shown);
+        if !shown.is_empty() {
+            let _ = fs::write(output_path(&step.output), shown);
         }
     }
 
