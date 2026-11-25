@@ -260,16 +260,21 @@ impl Records {
     /// links, found or not, in `lib-dirs`.
     fn found_elsewhere(&self, step: &Step, read: &[PathBuf]) -> BTreeSet<PathBuf> {
         let mut found = BTreeSet::new();
-        if let StepKind::Link { .. } = step.kind {
-            for dir in &step.searched {
-                for name in &step.looked_for {
-                    let candidate = dir.join(name);
-                    if self.listed(dir, name) && !step.reads.contains(&candidate) {
-                        found.insert(candidate);
+        // A match, so a new kind has to say how its search is checked
+        // (`architecture.md`, "Crate layout").
+        match step.kind {
+            StepKind::Link { .. } => {
+                for dir in &step.searched {
+                    for name in &step.looked_for {
+                        let candidate = dir.join(name);
+                        if self.listed(dir, name) && !step.reads.contains(&candidate) {
+                            found.insert(candidate);
+                        }
                     }
                 }
+                return found;
             }
-            return found;
+            StepKind::Compile { .. } | StepKind::Check { .. } => {}
         }
         // The compiler's own directories: `INCLUDE`, and where it is
         // installed (Clang's own headers are under it).
