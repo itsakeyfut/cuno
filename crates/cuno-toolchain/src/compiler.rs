@@ -96,6 +96,18 @@ impl CompilerKind {
         }
     }
 
+    /// Whether `cuno check` compiles as the build does, without linking,
+    /// rather than checking syntax alone: cl's `/Zs` misses diagnostics
+    /// raised during code generation (C4716, and C4700, C4701 and C4715
+    /// under `warnings-as-errors`), which clang and clang-cl report when
+    /// checking (`docs/en/specs/build.md`, "Always-on flags").
+    pub fn checks_by_compiling(self) -> bool {
+        match self {
+            CompilerKind::Msvc => true,
+            CompilerKind::Clang | CompilerKind::ClangCl => false,
+        }
+    }
+
     /// How it says which headers a compile read.
     pub fn dependencies(self) -> Dependencies {
         match self {
