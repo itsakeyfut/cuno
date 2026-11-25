@@ -169,6 +169,12 @@ pub fn build(
         },
         spawner: &SystemSpawner,
     };
+    // Beside compile_commands.json, so editors format and analyse as cuno
+    // does (dev-tools.md, "Configuration"); a file that cannot be written
+    // only costs the editor.
+    for (file, e) in cuno_tools::write_editor_files(root, manifest) {
+        shell.warning(format!("could not write {file}: {e}"));
+    }
     let built = pipeline::build(&request, shell).map_err(boxed)?;
     if let Goal::Test { filter, nocapture } = &goal {
         let executables: Vec<cuno_test::TestExecutable> = built

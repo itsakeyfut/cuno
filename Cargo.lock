@@ -146,6 +146,7 @@ dependencies = [
  "cuno-manifest",
  "cuno-test",
  "cuno-toolchain",
+ "cuno-tools",
  "tempfile",
 ]
 
@@ -187,6 +188,10 @@ dependencies = [
 [[package]]
 name = "cuno-tools"
 version = "0.0.0"
+dependencies = [
+ "cuno-manifest",
+ "toml",
+]
 
 [[package]]
 name = "equivalent"

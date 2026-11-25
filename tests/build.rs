@@ -799,6 +799,64 @@ fn compile_commands(project: &Project) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+/// A build writes `.clang-format` from `[fmt]` at the root, over one
+/// already there, and clang-format reads it, `[fmt.clang-format]` included
+/// (docs/en/specs/dev-tools.md, "Configuration"). A `.clang-format` that
+/// cannot be written is a warning, and the build goes on.
+///
+/// Mutation: stop writing it, keep a hand-written one, write YAML
+/// clang-format refuses, or fail the build on a write error; this test
+/// fails.
+#[test]
+fn a_build_writes_the_clang_format_editors_read() {
+    let Some(clang_format) = support::compilers::require_llvm_tool("clang-format") else {
+        return;
+    };
+    let Some((name, _)) = COMPILERS.iter().find(|(_, c)| here(*c)) else {
+        return;
+    };
+    let project = package(
+        "[fmt]
+column-limit = 90
+[fmt.clang-format]
+IndentCaseLabels = true
+",
+    )
+    .file(
+        ".clang-format",
+        "BasedOnStyle: Google
+",
+    );
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+    let file = project.path().join(".clang-format");
+    let dumped = std::process::Command::new(&clang_format)
+        .arg("--dump-config")
+        .arg(format!("--style=file:{}", file.display()))
+        .output()
+        .unwrap();
+    let config = String::from_utf8_lossy(&dumped.stdout);
+    assert!(
+        dumped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dumped.stderr)
+    );
+    assert!(config.contains("ColumnLimit:     90"), "{config}");
+    assert!(config.contains("IndentWidth:     4"), "{config}");
+    assert!(config.contains("IndentCaseLabels: true"), "{config}");
+
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("warning: could not write .clang-format: "),
+        "{}",
+        run.stderr
+    );
+}
+
 /// On every compiler, `compile_commands.json` lists every source with the
 /// `dev` command and `CUNO_TEST` defined, even after a `--release` build,
 /// each naming the test build's object as its `output`, and is written when
