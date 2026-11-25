@@ -662,10 +662,19 @@ fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
 }
 
 /// A batch file standing in for an LLVM tool: it prints `version` (the
-/// lines `--version` would) and exits with `code`, whatever it is asked.
+/// lines `--version` would) and exits with `code`, whatever it is asked;
+/// but asked `/?`, it answers as the real tool does, clang-cl with its
+/// option list and the others by failing, so cuno takes it for the tool its
+/// file name says (`docs/en/specs/toolchain.md`, "LLVM (clang / clang-cl /
+/// clang-format / clang-tidy)").
 fn fake_tool(version: &str, code: i32) -> String {
     let lines: String = version.lines().map(|l| format!("echo {l}\r\n")).collect();
-    format!("@echo off\r\n{lines}exit /b {code}\r\n")
+    format!(
+        "@echo off\r\n\
+         if \"%~1\"==\"/?\" if /i \"%~n0\"==\"clang-cl\" (echo OVERVIEW: fake& exit /b 0)\r\n\
+         if \"%~1\"==\"/?\" exit /b 1\r\n\
+         {lines}exit /b {code}\r\n"
+    )
 }
 
 /// `[toolchain.paths]` entries for `tools` in `project`, each a batch file.
@@ -692,7 +701,10 @@ fn each_tool_line_names_its_own_configured_copy() {
     }
     let tools = [
         ("clang-format", "clang-format version 19.1.1"),
-        ("clang-tidy", "LLVM version 19.1.2"),
+        (
+            "clang-tidy",
+            "LLVM (http://llvm.org/):\n  LLVM version 19.1.2",
+        ),
         (
             "clang",
             "clang version 18.1.3\nTarget: x86_64-pc-windows-msvc",
@@ -1350,7 +1362,7 @@ fn quiet_shows_only_warnings_and_problems() {
 fn recording_tidy(version: &str) -> String {
     format!(
         "@echo off\r\n\
-         if \"%~1\"==\"--version\" (echo LLVM version {version}& exit /b 0)\r\n\
+         if \"%~1\"==\"--version\" (echo LLVM ^(http://llvm.org/^):& echo   LLVM version {version}& exit /b 0)\r\n\
          echo %*>> \"%~dp0args.txt\"\r\n\
          echo %INCLUDE%>> \"%~dp0include.txt\"\r\n\
          exit /b 0\r\n"
