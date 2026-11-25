@@ -141,10 +141,11 @@ fn code_language(path: &Path, package: Lang) -> Option<Lang> {
 }
 
 /// The files of the package's code at `root`: every C or C++ file under
-/// [`CODE_DIRS`] and under the directory of each `[[bin]] path` outside
-/// them, leaving out `target_dir` and any directory holding its own
-/// `cuno.toml` (another package), walked as [`classify`] walks
-/// (`docs/en/specs/project-layout.md`, "Where the package's code lives").
+/// [`CODE_DIRS`], and directly in the directory of each `[[bin]] path`
+/// outside them, leaving out `target_dir` and any directory but the root
+/// holding its own `cuno.toml` (another package), walked as [`classify`]
+/// walks (`docs/en/specs/project-layout.md`, "Where the package's code
+/// lives").
 pub fn code_files(
     root: &Path,
     manifest: &Manifest,
@@ -153,7 +154,11 @@ pub fn code_files(
 ) -> Result<Code, BuildError> {
     let case = host.name_case();
     let root = paths::lexical(root);
-    let mut dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
+    let dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
+    // The directory of a `[[bin]] path` outside them gives only the files
+    // directly in it: at the root, the whole tree would be `.git/` and
+    // `vendor/` too.
+    let mut bin_dirs: Vec<PathBuf> = Vec::new();
     let code_places: Vec<Place> = dirs.iter().map(|d| Place::of(d, case)).collect();
     // As classification refuses it: an entry file outside the project
     // would have fmt rewrite files that are not the package's.
@@ -170,21 +175,34 @@ pub fn code_files(
         if !code_places.iter().any(|dir| place.within(dir))
             && let Some(dir) = path.parent()
         {
-            dirs.push(dir.to_owned());
+            bin_dirs.push(dir.to_owned());
         }
     }
     let mut found = Vec::new();
     let mut warnings = Vec::new();
-    for dir in dirs.iter().filter(|d| d.is_dir()) {
-        Walk {
+    // A place that is itself a link is followed, as `src/` is; one holding
+    // its own cuno.toml is another package, unless it is the root.
+    let places = dirs.iter().map(|d| (d, true));
+    let places = places.chain(bin_dirs.iter().map(|d| (d, false)));
+    for (dir, below) in places {
+        let another_package =
+            dir.join("cuno.toml").is_file() && !Place::of(dir, case).same(&root_place);
+        if !dir.is_dir() || another_package {
+            continue;
+        }
+        let mut walk = Walk {
             root: &root,
             target_dir: Place::of(target_dir, case),
             case,
             found: &mut found,
             warnings: &mut warnings,
             keep: Keep::Code,
+        };
+        if below {
+            walk.dir(dir)?;
+        } else {
+            walk.files(dir)?;
         }
-        .dir(dir)?;
     }
     found.sort_by_cached_key(|p| case.fold(p.as_os_str()));
     let mut files: Vec<CodeFile> = Vec::new();
@@ -500,6 +518,34 @@ impl Walk<'_> {
     /// link to a directory is warned about and not followed, so a link
     /// cycle cannot make this run forever and no file outside the project
     /// joins the build unannounced.
+    /// The files directly in `dir`, none below it.
+    fn files(&mut self, dir: &Path) -> Result<(), BuildError> {
+        if Place::of(dir, self.case).same(&self.target_dir) {
+            return Ok(());
+        }
+        let unreadable = |e: std::io::Error| BuildError::Unreadable {
+            dir: shown(self.root, dir),
+            reason: e.to_string(),
+        };
+        for entry in std::fs::read_dir(dir).map_err(unreadable)? {
+            let path = entry.map_err(unreadable)?.path();
+            if path.is_file() && self.keeps(&path) {
+                self.found.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a file is one this walk collects.
+    fn keeps(&self, path: &Path) -> bool {
+        match self.keep {
+            Keep::Sources => language(path).is_some(),
+            // The package's language does not decide whether a file is
+            // kept, only what a `.h` is read as.
+            Keep::Code => code_language(path, Lang::Cxx).is_some(),
+        }
+    }
+
     fn dir(&mut self, dir: &Path) -> Result<(), BuildError> {
         if Place::of(dir, self.case).same(&self.target_dir) {
             return Ok(());
@@ -528,16 +574,8 @@ impl Walk<'_> {
                 if !other_package {
                     self.dir(&path)?;
                 }
-            } else if path.is_file() {
-                let kept = match self.keep {
-                    Keep::Sources => language(&path).is_some(),
-                    // The package's language does not decide whether a file
-                    // is kept, only what a `.h` is read as.
-                    Keep::Code => code_language(&path, Lang::Cxx).is_some(),
-                };
-                if kept {
-                    self.found.push(path);
-                }
+            } else if path.is_file() && self.keeps(&path) {
+                self.found.push(path);
             }
         }
         Ok(())
@@ -773,8 +811,65 @@ path = \"../elsewhere/x.cpp\"
         assert!(matches!(err, BuildError::OutsideProject { .. }), "{err:?}");
     }
 
-    /// A `[[bin]] path` at the root walks the root, which holds `src/` too:
-    /// each file is still listed once.
+    /// A `[[bin]] path` outside the code directories gives the files directly
+    /// beside it and nothing below them: at the root, not `.git/` or
+    /// `vendor/` (`project-layout.md`, "Where the package's code lives").
+    ///
+    /// Mutation: walk the directory of such an entry file recursively; this
+    /// test fails.
+    #[test]
+    fn an_entry_outside_the_code_directories_brings_only_its_neighbours() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]
+name = \"app\"
+path = \"main.cpp\"
+",
+            &[
+                "main.cpp",
+                "util.hpp",
+                ".git/x.cpp",
+                "vendor/v.c",
+                "src/a.cpp",
+            ],
+        );
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["main.cpp", "src/a.cpp", "util.hpp"]);
+    }
+
+    /// A code directory, or the directory of a `[[bin]] path`, that holds its
+    /// own `cuno.toml` is another package and is left out; the root's own
+    /// `cuno.toml` does not leave out the files beside it.
+    ///
+    /// Mutation: check `cuno.toml` only below the directories walked, or
+    /// leave out the root for its own; this test fails.
+    #[test]
+    fn a_place_holding_its_own_manifest_is_another_package() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]
+name = \"x\"
+path = \"sub/pkg/main.cpp\"
+             [[bin]]
+name = \"app\"
+path = \"main.cpp\"
+",
+            &[
+                "main.cpp",
+                "src/a.cpp",
+                "sub/pkg/cuno.toml",
+                "sub/pkg/main.cpp",
+                "examples/cuno.toml",
+                "examples/e.cpp",
+            ],
+        );
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["main.cpp", "src/a.cpp"]);
+    }
+
+    /// Two `[[bin]] path`s in one directory bring its files once.
     ///
     /// Mutation: list a file reached twice twice; this test fails.
     #[test]
@@ -782,14 +877,17 @@ path = \"../elsewhere/x.cpp\"
         let (_d, root, m) = project(
             "c++",
             "[[bin]]
-name = \"app\"
-path = \"main.cpp\"
+name = \"a\"
+path = \"tools/a.cpp\"
+             [[bin]]
+name = \"b\"
+path = \"tools/b.cpp\"
 ",
-            &["main.cpp", "src/a.cpp"],
+            &["tools/a.cpp", "tools/b.cpp"],
         );
         let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
         let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
-        assert_eq!(got, ["main.cpp", "src/a.cpp"]);
+        assert_eq!(got, ["tools/a.cpp", "tools/b.cpp"]);
     }
 
     /// Classification keeps sources and nothing else: a header in `src/` or
@@ -1093,6 +1191,31 @@ path = \"main.cpp\"
             .output()
             .unwrap();
         assert!(made.status.success(), "{made:?}");
+    }
+
+    /// `examples/` that is itself a junction is followed, as `src/` is, and
+    /// a junction inside it is warned about and not read
+    /// (`project-layout.md`, "Where the package's code lives").
+    ///
+    /// Mutation: skip a code directory that is a link, or read a link inside
+    /// one; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_code_directory_that_is_a_link_is_followed() {
+        let (_d, root, m) = project("c++", "", &["src/main.cpp"]);
+        let shared = tempfile::tempdir().unwrap();
+        std::fs::write(shared.path().join("e.cpp"), "").unwrap();
+        std::fs::create_dir(shared.path().join("inner")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("o.cpp"), "").unwrap();
+        junction(&shared.path().join("inner").join("deep"), outside.path());
+        junction(&root.join("examples"), shared.path());
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["examples/e.cpp", "src/main.cpp"]);
+        assert_eq!(code.warnings.len(), 1, "{:?}", code.warnings);
+        std::fs::remove_dir(root.join("examples")).unwrap();
+        std::fs::remove_dir(shared.path().join("inner").join("deep")).unwrap();
     }
 
     /// The target directory named through a junction to it is still not read

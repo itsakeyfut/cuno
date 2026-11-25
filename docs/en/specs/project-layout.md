@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 799c2ca81f80c517f0e87619329ac2d230b37566 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 7de1c1e0adc627b27199dac97996d3fdfbf0e719 -->
 
 # Project Kinds and Layout
 
@@ -89,15 +89,17 @@ sources = ["Private"]
 The places where the package's code (the C/C++ sources and headers the user writes) lives are the following directories. What `cuno fmt` / `cuno lint` act on is decided from these ([dev-tools.md](dev-tools.md#target-files)).
 
 - `src/`, `tests/`, `examples/`, `benches/`
-- For a file given by `[[bin]] path` that is in none of the above, the directory that contains it
+- For a file given by `[[bin]] path` that is in none of the above, the files directly in the directory that contains it (not the directories below it)
+  - Rationale: when that directory is the project root, including everything below it would bring `.git/`, `vendor/` and even `build/` into formatting. The build uses only the entry file from there, so the headers placed beside it are enough.
 
 The following are excluded:
 
 - The output directory (judged by the absolute path of the output directory actually used, including when it is changed with `--target-dir` and the like; [build.md](build.md#output-directory))
-- A subdirectory with its own `cuno.toml` (another package)
+- A directory with its own `cuno.toml` (another package). This includes one of the places listed above that has one itself. The project root is not excluded.
 
 - `include-dirs` is not part of these places.
   - Rationale: `include-dirs` often points at third-party headers (`third_party/include` and the like), and formatting them would rewrite files that do not belong to the user. Also, `include-dirs` can be added in `[platform.<OS>.build]` / `[profile.<name>.build]`, so deciding its value needs the compiler and profile selected, whereas `cuno fmt` must work without a compiler.
+- When a place is itself a link (a symbolic link or a junction), it is followed as `src/` and `tests/` are, and what is in it is treated as the package's. A link to a directory inside a place is not read, and cuno warns about it ([Source collection and linking](#source-collection-and-linking)).
 - These places are decided by directories alone, not by the selected compiler, profile or target.
 
 ### Linking rules
