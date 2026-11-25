@@ -1007,8 +1007,8 @@ mod tests {
     /// `write_compile_commands` alone writes the file a build writes, byte for
     /// byte, and a layout the build refuses is its error too.
     ///
-    /// Mutation: plan another product, layout, profile or settings in the
-    /// function than in the build, or skip classifying; this test fails.
+    /// Mutation: plan the file with another profile, without the manifest's
+    /// settings, or without classifying; this test fails.
     #[test]
     fn compile_commands_are_written_alone_as_a_build_writes_them() {
         let (root, manifest) = package_with(
@@ -1021,6 +1021,12 @@ defines = [\"X=1\"]
         run(root.path(), &manifest, Goal::Build, &Fake::default()).unwrap();
         let file = root.path().join(compdb::FILE);
         let built = std::fs::read_to_string(&file).unwrap();
+        // What both describe: the manifest's settings, and the dev profile's
+        // test objects (`build.md`, "Output").
+        assert!(built.contains("X=1"), "{built}");
+        // A backslash is escaped in JSON.
+        assert!(built.contains(r"target\\debug"), "{built}");
+        assert!(!built.contains("release"), "{built}");
         std::fs::remove_file(&file).unwrap();
         let env = Env::from_pairs([], NameCase::Insensitive);
         let version = Version::find_in("22.1.8").unwrap();
