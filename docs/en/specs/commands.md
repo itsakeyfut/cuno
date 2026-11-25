@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob f352fa5d0ae4d2cdba42b47630536ac2236be99c -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 647754ba2ec389bca9d52513c3760a3d60fb6957 -->
 
 # Commands
 
@@ -12,7 +12,7 @@ The command structure is based on cargo, with additions for C/C++ and for circum
 | | `init` | Turn an existing directory into a project | Right after MVP |
 | Build | `build` | Build only | MVP |
 | | `run` | Build and run | MVP |
-| | `check` | Syntax and type check only (flags in [build.md](build.md#settings-and-flags)). Fast, since no object files are produced. Also checks test code (with `CUNO_TEST` defined, and `tests/`) and entry files | MVP |
+| | `check` | Syntax and type check only (flags in [build.md](build.md#settings-and-flags)). Fast, since no object files are produced (MSVC alone runs the build's own compile without linking). Also checks test code (with `CUNO_TEST` defined, and `tests/`) and entry files | MVP |
 | | `clean` | Delete the output directory | MVP |
 | Test | `test` | Run tests | MVP |
 | | `bench` | Run benchmarks | Later |
@@ -241,9 +241,9 @@ Common options only.
 - When a compile or a link fails, the compiler's output is followed by an `error: could not compile` line (`could not link` for a link; both followed by the package's name), exit code 1. After the first failure no new step starts; the steps running are waited for and their output shown too.
 - The output of steps run in parallel is shown step by step, each when it finishes, so their lines do not mix.
 - `--target` is reserved for cross-compiling; giving it is an error (`error: --target is not supported yet`, exit code 3).
-- `cuno check` checks the same sources as the build with syntax-and-type-check-only flags ([build.md](build.md#settings-and-flags)); it produces no object files and does not link. Its output has a `Checking` line instead of `Compiling`, and the same `Finished` line. A failure ends, as a failed compile in a build does, with a `could not compile` line (followed by the package's name), exit code 1.
+- `cuno check` checks the same sources as the build with syntax-and-type-check-only flags ([build.md](build.md#settings-and-flags)); it produces no object files and does not link (MSVC is the exception; see below). Its output has a `Checking` line instead of `Compiling`, and the same `Finished` line. A failure ends, as a failed compile in a build does, with a `could not compile` line (followed by the package's name), exit code 1.
   - By the same mechanism as the build, unchanged sources are not checked again ([build.md](build.md#deciding-what-changed)).
-  - On MSVC, `check` can succeed where the build fails (`/Zs` does not emit the diagnostics raised during code generation; [build.md](build.md#always-on-flags)).
+  - On MSVC, `check` runs the build's own compile without linking and produces the build's own objects (`/Zs` does not emit the diagnostics raised during code generation, so `check` could succeed where the build fails; [build.md](build.md#always-on-flags)). The build that follows only links.
 
 ### `cuno doctor`
 

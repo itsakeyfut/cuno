@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 1123621b2b4f51bb059f8cb54b430c55e68043d2 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 93c22b5490a423d03729b76a7a636101cad13c37 -->
 
 # Build
 
@@ -69,14 +69,15 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 |---|---|---|---|
 | Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` |
 | For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
-| Build / `check` | `/c` / `/Zs` | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
+| Build / `check` | `/c` / `/c` (the same as the build; see below) | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
 | Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
 | Header dependencies (when building and for `check`) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
 
 - The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang). `check` uses the same name (so that `check`, which produces no object file, also avoids rechecking unchanged sources by the same mechanism).
-- MSVC's `/Zs` does not emit the diagnostics raised during code generation. For example, C4716 for a function that returns no value, under the default settings, and C4700 and C4701 for uninitialized variables and C4715 for a function with a path that returns no value, under `warnings-as-errors`, fail a build but do not appear with `check`. So on MSVC, `check` can succeed where the build fails. clang-cl's `/Zs` and clang's `-fsyntax-only` do emit them.
-  - Rationale: `check` is fast because it does no code generation. Making its result match the build's on MSVC would mean compiling and throwing the output away, which would make `check` take about as long as the build.
+- MSVC's `check` runs the build's own compile (the same command, the same object file) without linking. The objects and records it produces are the build's own, so the build that follows only links.
+  - Rationale: MSVC's `/Zs` does not emit the diagnostics raised during code generation. For example, C4716 for a function that returns no value, under the default settings, and C4700 and C4701 for uninitialized variables and C4715 for a function with a path that returns no value, under `warnings-as-errors`, fail a build but do not appear with `/Zs`. With `/Zs`, `check` would report success and the build would then fail. clang-cl's `/Zs` and clang's `-fsyntax-only` do emit them, so there `check` stays fast and does no code generation.
+  - Cost: MSVC's `check` is slower than `/Zs`, since it does code generation. But the objects it produces are not thrown away; the build uses them, so the build after a `check` does not repeat the same work.
 - The flags of this table (the language, the source, the object file and the header dependencies) come after `[build.<compiler>] flags`, so that cuno's win over a user's `-MF` and the like: cuno reads the dependency file. When a dependency file holds several rules (a user's `-MP`, for example), only the first is read.
 
 ### Compiling
