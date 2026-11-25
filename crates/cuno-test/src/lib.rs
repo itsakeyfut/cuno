@@ -53,11 +53,7 @@ impl Launcher for SystemLauncher {
         env: &Env,
         cwd: &Path,
     ) -> io::Result<ProcessOutput> {
-        let output = std::process::Command::new(exe)
-            .args(args)
-            .env_clear()
-            .envs(env.vars())
-            .current_dir(cwd)
+        let output = cuno_core::program::command(exe, args, env, cwd)
             .stdin(std::process::Stdio::null())
             .output()?;
         Ok(ProcessOutput {
@@ -192,7 +188,10 @@ pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
     for (index, exe) in r.executables.iter().enumerate() {
         shell.status(
             "Running",
-            format!("`{}`", shown(&exe.path, r.cwd).display()),
+            format!(
+                "`{}`",
+                cuno_core::program::shown(&exe.path, r.cwd).display()
+            ),
         );
         match list(r, &results, index, exe) {
             Ok(names) => run_executable(r, &results, index, &names, shell, &mut summary),
@@ -227,12 +226,6 @@ fn own_directory(scratch: &Path) -> io::Result<PathBuf> {
     unreachable!("the counter runs out first")
 }
 
-/// `path` relative to `dir` when it lies there, and as it is otherwise, as
-/// the report shows executables' paths.
-fn shown<'a>(path: &'a Path, dir: &Path) -> &'a Path {
-    path.strip_prefix(dir).unwrap_or(path)
-}
-
 /// An exit code as a person reads it: a Windows crash code, which comes out
 /// negative, in hexadecimal (`0xC0000005`) as it is documented and searched
 /// for (`testing.md`, "Output").
@@ -264,7 +257,7 @@ fn list(
     let env = r
         .env
         .with("CUNO_TEST_RESULT", file.clone().into_os_string());
-    let path = shown(&exe.path, r.cwd).display();
+    let path = cuno_core::program::shown(&exe.path, r.cwd).display();
     let output = r
         .launcher
         .launch(&exe.path, &[OsString::from("--list")], &env, r.root)
@@ -404,7 +397,7 @@ fn run_test(r: &TestRun<'_>, exe: &TestExecutable, file: &Path, name: &str) -> O
                 verdict: Verdict::Failed,
                 note: Some(format!(
                     "cannot run {}: {e}",
-                    shown(&exe.path, r.cwd).display()
+                    cuno_core::program::shown(&exe.path, r.cwd).display()
                 )),
             };
         }
