@@ -118,7 +118,7 @@ pub fn language(path: &Path) -> Option<Lang> {
 /// `tests/`, both walked alike, skipping `target_dir` when it lies under
 /// either and warning about links to directories. On a Windows `host`, paths
 /// and names are compared without regard to case, as its file systems do
-/// (`project-layout.md`, "Entry files and the package body").
+/// (`project-layout.md`, "Entry files and package body").
 pub fn classify(
     root: &Path,
     manifest: &Manifest,
@@ -516,7 +516,8 @@ mod tests {
     }
 
     /// With `[[bin]]`: only what it lists is built, its entry files leave the
-    /// body, and each unlisted `src/main.*` / `src/bin/` source is warned about.
+    /// body, and each unlisted `src/main.*` / `src/bin/` source is warned
+    /// about.
     ///
     /// Mutation: keep detecting with `[[bin]]` written, leave a listed entry
     /// in the body, or warn about nothing; this test fails.
@@ -812,7 +813,8 @@ mod tests {
         assert_eq!(errors[5].to_string(), "cannot read src: denied");
     }
 
-    /// Makes `link` a junction to `target`, which needs no privilege on Windows.
+    /// Makes `link` a junction to `target`, which needs no privilege on
+    /// Windows.
     #[cfg(windows)]
     fn junction(link: &Path, target: &Path) {
         let made = std::process::Command::new("cmd")

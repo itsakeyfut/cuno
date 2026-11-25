@@ -1,7 +1,7 @@
-//! The build graph: every compile and link a build runs, with its command
-//! line and what it must wait for, built without running anything
-//! (`docs/en/specs/architecture.md`, "cuno-build"), so `compile_commands.json`
-//! and a later backend can be made from it too.
+//! The build graph: every compile and link a build runs, with its command line
+//! and what it must wait for, built without running anything
+//! (`docs/en/specs/architecture.md`, "Crate layout"), so
+//! `compile_commands.json` and a later backend can be made from it too.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -106,12 +106,12 @@ pub type SettingsFor<'a> = &'a dyn Fn(Lang) -> CompileSettings;
 #[derive(Clone, Copy)]
 pub enum Products<'a> {
     /// The package's executables: each entry file and the body, one link
-    /// per executable (`project-layout.md`, "Link rules").
+    /// per executable (`project-layout.md`, "Linking rules").
     Programs,
     /// The test executables (`testing.md`, "Execution"): the body, the
     /// sources under `tests/` and cuno's bundled runtime, all compiled with
     /// `CUNO_TEST` and once each, entry files left out, one link per
-    /// executable (`project-layout.md`, "Link rules"). Only with a test
+    /// executable (`project-layout.md`, "Linking rules"). Only with a test
     /// layout and [`Mode::Compile`].
     Tests {
         /// The executables, as [`crate::sources::test_executables`] gives.
@@ -155,7 +155,7 @@ pub struct Plan<'a> {
 /// Plans a build of `p.products`. For the programs: one compile per source
 /// of the package body and per entry file, each once, and one link per
 /// executable of its entry file's object and every body object
-/// (`project-layout.md`, "Link rules"); in [`Mode::Check`], one check per
+/// (`project-layout.md`, "Linking rules"); in [`Mode::Check`], one check per
 /// source instead, each with its stamp where the object would be, and no
 /// links (`commands.md`, "`cuno build` / `cuno check`"). For the tests and
 /// compile_commands.json, as [`Products`] says.
@@ -308,7 +308,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             for exe in executables {
                 // In-source tests: the body and the runtime. A file under
                 // `tests/`: that file, the helpers, the body and the runtime
-                // (`project-layout.md`, "Link rules").
+                // (`project-layout.md`, "Linking rules").
                 let own: Vec<usize> = match &exe.file {
                     None => Vec::new(),
                     Some(file) => {
@@ -893,7 +893,7 @@ mod tests {
     /// entry file. It links the in-source tests from the body and the
     /// runtime, and each test file with the helpers, the same body and the
     /// runtime, each into its own place as a console program
-    /// (`project-layout.md`, "Link rules"; `build.md`, "Output directory").
+    /// (`project-layout.md`, "Linking rules"; `build.md`, "Output directory").
     ///
     /// Mutation: compile an entry file, compile the body twice, leave out
     /// the helpers, the body or the runtime from a link, give a helper an

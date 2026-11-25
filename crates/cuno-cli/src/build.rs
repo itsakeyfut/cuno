@@ -16,7 +16,8 @@ use cuno_manifest::{ConfigError, Profile, Settings};
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::{HostOs, SystemRunner};
 
-/// The options of `cuno build` (`commands.md`, "Build commands").
+/// The options of `cuno build` (`commands.md`, "Available for build commands
+/// (`build` / `run` / `check` / `test`)").
 #[derive(Debug, Default)]
 pub struct BuildArgs {
     /// `--release`.
@@ -59,7 +60,7 @@ pub enum Goal {
         args: Vec<OsString>,
     },
     /// `cuno test`: build the test executables, then run their tests
-    /// (`commands.md`, "`cuno test`").
+    /// (`commands.md`, "`cuno test [filter]`").
     Test {
         /// The filter: run only the tests whose names contain it.
         filter: Option<String>,
@@ -188,8 +189,8 @@ pub fn build(
             },
             shell,
         );
-        // commands.md, "`cuno test`": 0 only when every test that was to
-        // run ran and none failed.
+        // commands.md, "`cuno test [filter]`": 0 only when every test that was
+        // to run ran and none failed.
         return Ok(if summary.succeeded() { 0 } else { 1 });
     }
     let (Some(exe), Some(args)) = (built.exe, run) else {

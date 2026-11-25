@@ -87,8 +87,9 @@ pub struct TestRun<'a> {
     /// The project's root: where tests run, what places in failures are
     /// shown relative to, and where `tests/` is.
     pub root: &'a Path,
-    /// The current directory, which executables' paths are shown relative
-    /// to, as `cuno run` shows its executable (`commands.md`, "`cuno test`").
+    /// The current directory, which executables' paths are shown relative to,
+    /// as `cuno run` shows its executable (`commands.md`, "`cuno test
+    /// [filter]`").
     pub cwd: &'a Path,
     /// The environment the tests get, as cuno was given it.
     pub env: &'a Env,
@@ -117,7 +118,7 @@ pub struct Summary {
 
 impl Summary {
     /// Whether everything that was to run ran and passed: what `cuno test`
-    /// turns into exit code 0 (`commands.md`, "`cuno test`").
+    /// turns into exit code 0 (`commands.md`, "`cuno test [filter]`").
     pub fn succeeded(&self) -> bool {
         self.failed == 0 && self.unlisted == 0
     }

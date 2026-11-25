@@ -206,7 +206,7 @@ cuno_test(sub_from_c) { cuno_check_eq(sub(2, 2), 0); }
 /// body, C and C++ alike, every source compiled once with `CUNO_TEST`; the
 /// tests cuno runs from each (the in-source ones from the first, those
 /// under `tests/` from the others) list and pass; the entry file and the
-/// program are left alone (`project-layout.md`, "Link rules").
+/// program are left alone (`project-layout.md`, "Linking rules").
 ///
 /// Mutations, each failing this test: link the entry file into a test
 /// executable (`main` twice); leave the helpers or the body out of a
@@ -263,7 +263,7 @@ fn each_test_executable_holds_its_own_tests() {
 
 /// A type whose shape changes under `CUNO_TEST` is the same type in a test
 /// under `tests/` and in the body it calls, so a correct program passes
-/// (`project-layout.md`, "Link rules").
+/// (`project-layout.md`, "Linking rules").
 ///
 /// Mutation: link the `tests/` executables to a body compiled without
 /// `CUNO_TEST`; `set` then writes where the test does not read, and this

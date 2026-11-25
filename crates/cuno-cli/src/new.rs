@@ -180,7 +180,7 @@ pub fn inside_repository(dir: &Path) -> bool {
 }
 
 /// The files of a new package named `name` in `lang` and `edition`, by
-/// their path in the package (`commands.md`, "What is generated"). The
+/// their path in the package (`commands.md`, "Generated files"). The
 /// sample's tests use the entry its standard selects
 /// (`testing.md`, "Writing tests: two entry points").
 pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, String)> {
@@ -276,9 +276,9 @@ pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError>
     for (relative, content) in files(&name, lang, edition) {
         write(relative, &content)?;
     }
-    // `commands.md`, "`--vcs`": a `.gitignore` goes with a repository, the
-    // package's own or the one it is in; with no repository (no git, or
-    // `git init` failing), neither is made, and a warning says why.
+    // `commands.md`, "`cuno new <path>`": a `.gitignore` goes with a
+    // repository, the package's own or the one it is in; with no repository (no
+    // git, or `git init` failing), neither is made, and a warning says why.
     if args.vcs == Vcs::Git {
         if in_repository {
             // No repository of its own: it is part of the one it is in.

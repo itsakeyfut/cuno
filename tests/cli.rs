@@ -2,9 +2,9 @@
 //! errors.
 //!
 //! The output and exit codes asserted here are the user-facing interface
-//! described in `docs/en/specs/commands.md`, "Without a command" and "Exit
-//! codes", so each test compares the exact text and code rather than a
-//! substring.
+//! described in `docs/en/specs/commands.md`, "Without a command (`--version` /
+//! `--help` / no arguments)" and "Exit codes", so each test compares the exact
+//! text and code rather than a substring.
 //!
 //! The expected strings are clap's own layout and wording. They are expected to
 //! change when the first subcommand is added (the usage line gains
@@ -50,9 +50,8 @@ Options:
   -V, --version       Print version
 ";
 
-/// Mutation: drop `version` from `#[command(...)]` in `crates/cuno-cli/src/lib.rs`, or
-/// change
-/// the version format; this test fails.
+/// Mutation: drop `version` from `#[command(...)]` in
+/// `crates/cuno-cli/src/lib.rs`, or change the version format; this test fails.
 #[test]
 fn version_prints_the_name_and_the_package_version() {
     cuno(&["--version"]).assert(0, &format!("cuno {}\n", env!("CARGO_PKG_VERSION")), "");

@@ -220,10 +220,10 @@ fn the_output_directory_is_judged_as_the_file_system_names_it() {
     }
 }
 
-/// A `[toolchain.paths]` copy with no file there is reported by every
-/// command that runs a tool, even when another compiler is selected
-/// (`docs/en/specs/toolchain.md`, "A tool whose path is written in
-/// `[toolchain.paths]`").
+/// A `[toolchain.paths]` copy with no file there is reported by every command
+/// that runs a tool, even when another compiler is selected
+/// (`docs/en/specs/toolchain.md`, "LLVM (clang / clang-cl / clang-format /
+/// clang-tidy)").
 ///
 /// Mutation: skip the check that a configured copy is a file
 /// (`ConfiguredToolMissing` in `llvm::detect`); this test fails, naming
