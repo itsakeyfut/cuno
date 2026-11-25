@@ -132,6 +132,8 @@ mod tests {
         assert!(glob("third_party/**").matches("third_party", s));
         assert!(glob("src/*.cpp").matches("src/main.cpp", s));
         assert!(!glob("src/*.cpp").matches("src/a/main.cpp", s));
+        assert!(!glob("src/*.cpp").matches("src/main.c", s));
+        assert!(glob("src/m*n.cpp").matches("src/main.cpp", s));
         assert!(glob("**/gen/*.c").matches("gen/x.c", s));
         assert!(glob("**/gen/*.c").matches("a/b/gen/x.c", s));
         assert!(glob("src/?.c").matches("src/a.c", s));
