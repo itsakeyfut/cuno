@@ -189,7 +189,9 @@ dependencies = [
 name = "cuno-tools"
 version = "0.0.0"
 dependencies = [
+ "cuno-core",
  "cuno-manifest",
+ "cuno-toolchain",
  "tempfile",
  "toml",
 ]

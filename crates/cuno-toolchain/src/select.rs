@@ -442,13 +442,22 @@ pub struct LlvmChoice {
     pub version: Version,
 }
 
+/// The oldest clang-format and clang-tidy cuno supports
+/// (`docs/en/specs/dev-tools.md`, "Tool versions").
+pub const TOOL_MINIMUM: Version = Version {
+    major: 17,
+    minor: 0,
+    patch: 0,
+};
+
 /// The copy of `tool` to use among those detected (`toolchain.md`, "LLVM (clang
 /// / clang-cl / clang-format / clang-tidy)"): the one written in
 /// `[toolchain.paths]` when there is one, which must be eligible, or else the
 /// newest eligible copy; among equals, the first in search order. Eligible is a
 /// release that ran, and for clang and clang-cl on Windows one targeting MSVC;
 /// clang-format and clang-tidy have no target to check (clang-tidy prints
-/// none). No version requirement applies here.
+/// none), and must be at least [`TOOL_MINIMUM`]; the compilers' minimum and
+/// `[toolchain.version]` are the compiler selection's.
 pub fn select_tool(
     tool: Tool,
     llvm: &[LlvmTool],
@@ -456,7 +465,17 @@ pub fn select_tool(
 ) -> Result<LlvmChoice, ToolchainError> {
     let eligible = |t: &LlvmTool| match tool {
         Tool::Clang | Tool::ClangCl => release_for(t, host),
-        Tool::ClangFormat | Tool::ClangTidy => release(t),
+        // 17 at least, so formatting and analysis do not change from one
+        // machine to another (`dev-tools.md`, "Tool versions").
+        Tool::ClangFormat | Tool::ClangTidy => release(t).and_then(|version| {
+            if version >= TOOL_MINIMUM {
+                Ok(version)
+            } else {
+                Err(format!(
+                    "{version} does not satisfy >={TOOL_MINIMUM} (cuno's minimum)"
+                ))
+            }
+        }),
     };
     let copies = || llvm.iter().filter(|t| t.tool == tool);
     if let Some(configured) = copies().find(|t| t.origin == Origin::Configured) {
@@ -1189,6 +1208,37 @@ mod tests {
                     format!("[toolchain.paths] {name} is mine, but {why}")
                 );
             }
+        }
+    }
+
+    /// clang-format and clang-tidy below 17 are not used: a found one is
+    /// passed over for a newer, and a configured one is an error saying so
+    /// (`dev-tools.md`, "Tool versions").
+    ///
+    /// Mutation: drop the minimum, or apply it to one tool only; this test
+    /// fails.
+    #[test]
+    fn llvm_tools_below_17_are_not_used() {
+        for kind in [Tool::ClangFormat, Tool::ClangTidy] {
+            let old = tool(kind, "old", ran(v(16, 0, 6), false, None));
+            let new = tool(kind, "new", ran(v(17, 0, 1), false, None));
+            assert_eq!(
+                select_tool(kind, &[old.clone(), new], HostOs::Windows)
+                    .unwrap()
+                    .path,
+                PathBuf::from("new")
+            );
+            assert!(select_tool(kind, std::slice::from_ref(&old), HostOs::Windows).is_err());
+            let configured = LlvmTool {
+                origin: Origin::Configured,
+                ..old
+            };
+            let err = select_tool(kind, &[configured], HostOs::Windows).unwrap_err();
+            assert!(
+                err.to_string()
+                    .ends_with("16.0.6 does not satisfy >=17.0.0 (cuno's minimum)"),
+                "{err}"
+            );
         }
     }
 

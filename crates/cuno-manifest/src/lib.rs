@@ -4,6 +4,7 @@
 
 mod config;
 mod diagnostic;
+mod glob;
 mod manifest;
 mod project;
 mod read;
@@ -14,6 +15,7 @@ pub use cuno_toolchain::flags::{
     BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Subsystem, Warnings,
 };
 pub use diagnostic::{ConfigError, ConfigWarning, Location, shown_path};
+pub use glob::Glob;
 pub use manifest::{
     Bin, BuildTable, CompilerName, Fmt, FmtStyle, Framework, Lint, LintPreset, Loaded, Manifest,
     Os, Package, Profile, ProfileTable, Test, load_manifest, parse_manifest, valid_package_name,

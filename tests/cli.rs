@@ -38,6 +38,7 @@ Commands:
   check   Check the package for errors without building it
   run     Build the package and run one of its executables
   test    Build the package's tests and run them
+  fmt     Format the package's code with clang-format
   clean   Remove the build's output
   doctor  Diagnose the environment and show a fix for each problem
   help    Print this message or the help of the given subcommand(s)

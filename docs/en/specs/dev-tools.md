@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 76223cc86aa24ce9b6cf33e94244b51d0207d8dd -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 2ac4473f4cb068ff204f9bb6d5897c4f1d2df945 -->
 
 # Development Tools
 
@@ -42,6 +42,8 @@
   - Rationale: the .gitignore syntax (matching at any depth, negation with `!`) has intricate rules and can silently exclude files nobody meant to exclude.
 - `cuno fmt` and `cuno lint` decide what they act on from the same "places where the package's code lives". A file placed outside `src/` with `[[bin]] path`, and the headers next to it, are included. `cuno-build` builds the list of targets with the same walk as classifying sources, and `cuno-cli` receives it and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
   - Rationale: if fmt and lint decided their targets differently, the same file could be analyzed by one and not formatted by the other. Looking only at fixed directories, a file placed outside `src/` would be used by `build` and `lint` yet pass `fmt --check` unformatted. It would also go against not enforcing a layout (design principle 3 in [concept.md](../concept.md)).
+- `cuno fmt` does not rewrite a link to a file (a symbolic link). It leaves it out of its targets and prints ``warning: `src/x.cpp` is a link; cuno fmt leaves it``. A hard link cannot be told apart by its path. Because `cuno fmt` replaces a file rather than rewriting it, the link is broken and the file under the other name keeps its old content.
+  - Rationale: a link can point outside the project, and writing through it would silently rewrite a file that is not the user's. The build uses a link as a source ([project-layout.md](project-layout.md#source-collection-and-linking)), but only reads it.
 - `cuno fmt` works without a compiler. Deciding its targets uses neither compiler detection nor selection.
   - Rationale: `fmt` runs with clang-format alone and should work where no compiler is installed (such as a CI job that only checks formatting). The same reason is why `fmt` does not generate compile_commands.json.
 - `cuno lint` does not accept `--release` / `--profile`. Specifying one is an unknown option, exit code 2. It accepts `--compiler` and analyzes using commands for that compiler.
