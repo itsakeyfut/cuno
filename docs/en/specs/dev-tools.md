@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob f31775769f3ceed575d2571be459b7731dd8a884 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob ff97d39849613f205b5b292b264c7c79f3b83516 -->
 
 # Development Tools
 
@@ -159,12 +159,12 @@ Check names are clang-tidy group names.
   - `modernize-use-trailing-return-type`: Enforces the `auto f() -> int` style.
   - `readability-identifier-length`: Forbids short variable names.
 
-- In C projects, C++-only checks are automatically excluded.
+- In C projects, C++-only checks are automatically excluded. clang-tidy itself does not apply them to C files, so cuno does not drop whole groups (checks that also apply to C, such as `cppcoreguidelines-init-variables`, are enabled under `strict`).
 - Fine-tuning of the exclusion lists is done during implementation and written back into this specification.
 
 #### allow / warn / deny
 
-`allow` / `warn` / `deny` follow the same idea as clippy. Check names are clang-tidy names (e.g. `bugprone-use-after-move`). Wildcards (e.g. `modernize-*`) can also be used. A name may contain only letters, digits, `-`, `_`, `.` and `*`; a value with anything else is an error (exit code 3) that shows its line (this keeps the generated `.clang-tidy` from breaking).
+`allow` / `warn` / `deny` follow the same idea as clippy. Check names are clang-tidy names (e.g. `bugprone-use-after-move`). Wildcards (e.g. `modernize-*`) can also be used. A name starts with a letter or `*` and may contain only letters, digits, `-`, `_`, `.` and `*`; a value with anything else is an error (exit code 3) that shows its line (this keeps the generated `.clang-tidy` from breaking).
 
 - `allow`: Disables the check.
 - `warn`: Displays findings as warnings. Does not affect the exit code.
@@ -172,8 +172,10 @@ Check names are clang-tidy group names.
 
 **Precedence rules** (when the same check matches multiple lists):
 
-1. A specific name (`modernize-use-auto`) takes precedence over a wildcard (`modernize-*`).
+1. A specific name (`modernize-use-auto`) takes precedence over a wildcard (`modernize-*`). Between wildcards, the one with the longer text before `*` (the narrower match) takes precedence (`modernize-use-*` takes precedence over `modernize-*`).
 2. At the same specificity, precedence is `deny` > `warn` > `allow`.
+3. A check the preset excluded (the "Excluded" items above) is not re-enabled by a wildcard. It is enabled only when written by name (even with `deny = ["bugprone-*"]`, `bugprone-easily-swappable-parameters` does not run).
+   - Rationale: exclusions are made for frequent false positives or for taste, and naming a group alone should not add checks that produce exit code 1.
 
 Example: with `warn = ["modernize-*"]` and `allow = ["modernize-use-auto"]`, only `modernize-use-auto` is disabled, and the other `modernize-*` checks are warnings.
 

@@ -541,7 +541,8 @@ impl Check<'_> {
     ) -> Result<Vec<String>, ConfigError> {
         let names = written.unwrap_or_default();
         for (i, name) in names.iter().enumerate() {
-            let ok = !name.is_empty()
+            // A leading `-` would turn a name into its negation.
+            let ok = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '*')
                 && name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '*'));
@@ -1710,6 +1711,10 @@ indent-width = 2
             ),
             (
                 "[lint]\ndeny = [\"x'y\"]\n",
+                "is not a clang-tidy check name",
+            ),
+            (
+                "[lint]\ndeny = [\"-bugprone-*\"]\n",
                 "is not a clang-tidy check name",
             ),
             ("[lint]\nexclude = [\"src\\\\x\"]\n", "is not a pattern"),

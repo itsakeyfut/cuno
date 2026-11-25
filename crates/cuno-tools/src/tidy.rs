@@ -1,7 +1,7 @@
 //! clang-tidy's configuration from `[lint]`
 //! (`docs/en/specs/dev-tools.md`, "`[lint]`").
 
-use cuno_manifest::{Lang, Lint, LintPreset};
+use cuno_manifest::{Lint, LintPreset};
 
 /// The file editors read, at the project root.
 pub const FILE: &str = ".clang-tidy";
@@ -34,11 +34,7 @@ const STRICT: &[&str] = &[
     "-readability-identifier-length",
 ];
 
-/// Groups of C++ checks a C package's configuration leaves out.
-const CXX_ONLY: &[&str] = &["modernize-", "cppcoreguidelines-"];
-
-/// clang-tidy's `Checks` and `WarningsAsErrors` for `lint` in a package of
-/// `lang`, each a list of globs that clang-tidy applies in order, the last
+/// clang-tidy's `Checks` and `WarningsAsErrors` for `lint`, each a list of globs that clang-tidy applies in order, the last
 /// that matches a check deciding it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TidyConfig {
@@ -48,43 +44,65 @@ pub struct TidyConfig {
     pub warnings_as_errors: Vec<String>,
 }
 
-/// The configuration for `lint`: the preset, then `allow` / `warn` /
-/// `deny` in an order that makes clang-tidy's last-match-wins give the
-/// spec's precedence: a specific name over a wildcard, then `deny` over
-/// `warn` over `allow` (`dev-tools.md`, "allow / warn / deny").
-pub fn clang_tidy_config(lint: &Lint, lang: Lang) -> TidyConfig {
-    let mut checks: Vec<String> = vec!["-*".to_owned()];
-    let preset: &[&[&str]] = match lint.preset {
-        LintPreset::None => &[],
-        LintPreset::Recommended => &[RECOMMENDED],
-        LintPreset::Strict => &[RECOMMENDED, STRICT],
+/// The configuration for `lint` (`dev-tools.md`, "allow / warn / deny"),
+/// ordered so that clang-tidy's last-match-wins gives the spec's
+/// precedence: the preset's checks; the user's wildcards, broadest first;
+/// the preset's exclusions, which only a name brings back; the user's
+/// names. At each rank `allow`, then `warn`, then `deny`, so the stronger
+/// wins. C++-only checks in a C package are left to clang-tidy, which does
+/// not run them on C.
+pub fn clang_tidy_config(lint: &Lint) -> TidyConfig {
+    let preset: Vec<&str> = match lint.preset {
+        LintPreset::None => Vec::new(),
+        LintPreset::Recommended => RECOMMENDED.to_vec(),
+        LintPreset::Strict => RECOMMENDED.iter().chain(STRICT).copied().collect(),
     };
-    checks.extend(
-        preset
-            .iter()
-            .flat_map(|p| p.iter())
-            .map(|g| (*g).to_owned()),
-    );
-    if lang == Lang::C {
-        // Last of the preset, so only a name the user wrote brings one back.
-        checks.extend(CXX_ONLY.iter().map(|group| format!("-{group}*")));
+    let (excluded, enabled): (Vec<&str>, Vec<&str>) =
+        preset.into_iter().partition(|g| g.starts_with('-'));
+
+    // Every user pattern with its rank: wildcards by the length before `*`
+    // (narrower later), names last; then allow < warn < deny.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum List {
+        Allow,
+        Warn,
+        Deny,
     }
+    let mut written: Vec<(usize, List, &str)> = Vec::new();
+    for (list, patterns) in [
+        (List::Allow, &lint.allow),
+        (List::Warn, &lint.warn),
+        (List::Deny, &lint.deny),
+    ] {
+        for pattern in patterns {
+            let rank = pattern.find('*').unwrap_or(usize::MAX);
+            written.push((rank, list, pattern));
+        }
+    }
+    written.sort_by_key(|(rank, list, _)| (*rank, *list));
+    let (wildcards, names): (Vec<_>, Vec<_>) = written
+        .into_iter()
+        .partition(|(rank, _, _)| *rank != usize::MAX);
+
+    let mut checks: Vec<String> = vec!["-*".to_owned()];
+    checks.extend(enabled.iter().map(|g| (*g).to_owned()));
     let mut errors: Vec<String> = Vec::new();
-    // Wildcards first, so every specific name comes after and wins; within
-    // each, the weaker list first, so the stronger wins.
-    for specific in [false, true] {
-        let of = |list: &[String]| -> Vec<String> {
-            list.iter()
-                .filter(|p| p.contains('*') != specific)
-                .cloned()
-                .collect()
-        };
-        let (allow, warn, deny) = (of(&lint.allow), of(&lint.warn), of(&lint.deny));
-        checks.extend(allow.iter().map(|p| format!("-{p}")));
-        checks.extend(warn.iter().cloned());
-        checks.extend(deny.iter().cloned());
-        errors.extend(warn.iter().map(|p| format!("-{p}")));
-        errors.extend(deny.iter().cloned());
+    let mut add = |checks: &mut Vec<String>, (_, list, pattern): (usize, List, &str)| {
+        match list {
+            List::Allow => checks.push(format!("-{pattern}")),
+            List::Warn | List::Deny => checks.push(pattern.to_owned()),
+        }
+        match list {
+            List::Allow | List::Warn => errors.push(format!("-{pattern}")),
+            List::Deny => errors.push(pattern.to_owned()),
+        }
+    };
+    for w in wildcards {
+        add(&mut checks, w);
+    }
+    checks.extend(excluded.iter().map(|g| (*g).to_owned()));
+    for n in names {
+        add(&mut checks, n);
     }
     TidyConfig {
         checks,
@@ -92,10 +110,11 @@ pub fn clang_tidy_config(lint: &Lint, lang: Lang) -> TidyConfig {
     }
 }
 
-/// `.clang-tidy` for `lint` in a package of `lang`. Headers are not
-/// filtered here: `cuno lint` decides which findings are the package's.
-pub fn clang_tidy_file(lint: &Lint, lang: Lang) -> String {
-    let config = clang_tidy_config(lint, lang);
+/// `.clang-tidy` for `lint`. With an empty
+/// `HeaderFilterRegex`, clang-tidy reports no header's findings unless
+/// asked on its command line: `cuno lint` asks, and keeps the package's.
+pub fn clang_tidy_file(lint: &Lint) -> String {
+    let config = clang_tidy_config(lint);
     format!(
         "{MARKER}\nChecks: '{}'\nWarningsAsErrors: '{}'\nHeaderFilterRegex: ''\nFormatStyle: file\n",
         config.checks.join(","),
@@ -147,9 +166,9 @@ mod tests {
     /// Mutation: drop a glob or an exclusion from a preset; this test fails.
     #[test]
     fn presets_hold_what_the_spec_lists() {
-        let none = clang_tidy_config(&lint("[lint]\npreset = \"none\"\n"), Lang::Cxx);
+        let none = clang_tidy_config(&lint("[lint]\npreset = \"none\"\n"));
         assert_eq!(none.checks, ["-*"]);
-        let rec = clang_tidy_config(&lint(""), Lang::Cxx);
+        let rec = clang_tidy_config(&lint(""));
         for (check, on) in [
             ("bugprone-use-after-move", true),
             ("bugprone-easily-swappable-parameters", false),
@@ -165,7 +184,7 @@ mod tests {
         ] {
             assert_eq!(judge(&rec, check), (on, false), "recommended {check}");
         }
-        let strict = clang_tidy_config(&lint("[lint]\npreset = \"strict\"\n"), Lang::Cxx);
+        let strict = clang_tidy_config(&lint("[lint]\npreset = \"strict\"\n"));
         for (check, on) in [
             ("readability-braces-around-statements", true),
             ("cppcoreguidelines-avoid-goto", true),
@@ -187,20 +206,16 @@ mod tests {
     #[test]
     fn allow_warn_deny_follow_the_spec_s_precedence() {
         // The spec's own example.
-        let c = clang_tidy_config(
-            &lint("[lint]\nwarn = [\"modernize-*\"]\nallow = [\"modernize-use-auto\"]\n"),
-            Lang::Cxx,
-        );
+        let c = clang_tidy_config(&lint(
+            "[lint]\nwarn = [\"modernize-*\"]\nallow = [\"modernize-use-auto\"]\n",
+        ));
         assert_eq!(judge(&c, "modernize-use-auto"), (false, false));
         assert_eq!(judge(&c, "modernize-loop-convert"), (true, false));
 
-        let c = clang_tidy_config(
-            &lint(
-                "[lint]\ndeny = [\"bugprone-*\", \"x-a\"]\nwarn = [\"bugprone-use-after-move\", \"x-a\", \"y-*\"]\n\
+        let c = clang_tidy_config(&lint(
+            "[lint]\ndeny = [\"bugprone-*\", \"x-a\"]\nwarn = [\"bugprone-use-after-move\", \"x-a\", \"y-*\"]\n\
                  allow = [\"bugprone-*\", \"y-*\", \"x-a\"]\n",
-            ),
-            Lang::Cxx,
-        );
+        ));
         // Specific warn over wildcard deny.
         assert_eq!(judge(&c, "bugprone-use-after-move"), (true, false));
         // Wildcard deny over wildcard allow.
@@ -210,12 +225,9 @@ mod tests {
         assert_eq!(judge(&c, "y-b"), (true, false));
 
         // A specific allow beats a wildcard deny.
-        let c = clang_tidy_config(
-            &lint(
-                "[lint]\ndeny = [\"performance-*\"]\nallow = [\"performance-noexcept-move-constructor\"]\n",
-            ),
-            Lang::Cxx,
-        );
+        let c = clang_tidy_config(&lint(
+            "[lint]\ndeny = [\"performance-*\"]\nallow = [\"performance-noexcept-move-constructor\"]\n",
+        ));
         assert_eq!(
             judge(&c, "performance-noexcept-move-constructor"),
             (false, false)
@@ -223,22 +235,58 @@ mod tests {
         assert_eq!(judge(&c, "performance-for-range-copy"), (true, true));
     }
 
-    /// A C package's configuration leaves C++-only groups out, unless a
-    /// name in them is written.
+    /// Between wildcards the narrower wins, at any list; a check the preset
+    /// excluded comes back only by its name, never by a wildcard
+    /// (`dev-tools.md`, "allow / warn / deny").
     ///
-    /// Mutation: keep them for C, or let the exclusion beat a written name;
-    /// this test fails.
+    /// Mutation: rank wildcards equally, put the broader one last, or emit
+    /// the preset's exclusions before the user's wildcards; this test fails.
     #[test]
-    fn a_c_package_leaves_cxx_groups_out() {
-        let c = clang_tidy_config(&lint("[lint]\npreset = \"strict\"\n"), Lang::C);
-        assert!(!judge(&c, "modernize-use-nullptr").0);
-        assert!(!judge(&c, "cppcoreguidelines-avoid-goto").0);
-        assert!(judge(&c, "bugprone-macro-parentheses").0);
-        let c = clang_tidy_config(
-            &lint("[lint]\nwarn = [\"modernize-use-bool-literals\"]\n"),
-            Lang::C,
+    fn narrower_wildcards_win_and_exclusions_need_a_name() {
+        let c = clang_tidy_config(&lint(
+            "[lint]
+preset = \"none\"
+deny = [\"modernize-*\"]
+allow = [\"modernize-use-*\"]
+",
+        ));
+        assert_eq!(judge(&c, "modernize-use-nullptr"), (false, false));
+        assert_eq!(judge(&c, "modernize-loop-convert"), (true, true));
+        let c = clang_tidy_config(&lint(
+            "[lint]
+preset = \"none\"
+allow = [\"clang-analyzer-*\"]
+deny = [\"clang-analyzer-core.*\"]
+",
+        ));
+        assert_eq!(
+            judge(&c, "clang-analyzer-core.NullDereference"),
+            (true, true)
         );
-        assert!(judge(&c, "modernize-use-bool-literals").0);
+        assert_eq!(
+            judge(&c, "clang-analyzer-cplusplus.NewDelete"),
+            (false, false)
+        );
+
+        let c = clang_tidy_config(&lint(
+            "[lint]
+deny = [\"bugprone-*\"]
+",
+        ));
+        assert_eq!(
+            judge(&c, "bugprone-easily-swappable-parameters"),
+            (false, false)
+        );
+        assert_eq!(judge(&c, "bugprone-use-after-move"), (true, true));
+        let c = clang_tidy_config(&lint(
+            "[lint]
+warn = [\"bugprone-easily-swappable-parameters\"]
+",
+        ));
+        assert_eq!(
+            judge(&c, "bugprone-easily-swappable-parameters"),
+            (true, false)
+        );
     }
 
     /// The file carries the marker, both lists and no header filter.
@@ -246,7 +294,7 @@ mod tests {
     /// Mutation: drop the marker or a key; this test fails.
     #[test]
     fn the_file_holds_both_lists() {
-        let text = clang_tidy_file(&lint("[lint]\ndeny = [\"bugprone-*\"]\n"), Lang::Cxx);
+        let text = clang_tidy_file(&lint("[lint]\ndeny = [\"bugprone-*\"]\n"));
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], MARKER);
         assert!(lines[1].starts_with("Checks: '-*,bugprone-*,"), "{text}");

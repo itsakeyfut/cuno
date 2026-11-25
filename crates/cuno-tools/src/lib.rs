@@ -41,7 +41,7 @@ impl fmt::Display for EditorFileWarning {
 pub fn write_editor_files(root: &Path, manifest: &Manifest) -> Vec<EditorFileWarning> {
     let lang = manifest.package.lang;
     let format = format::clang_format_config(&manifest.fmt, lang);
-    let tidy = tidy::clang_tidy_file(&manifest.lint, lang);
+    let tidy = tidy::clang_tidy_file(&manifest.lint);
     [
         write_generated(root, format::FILE, format::MARKER, &format),
         write_generated(root, tidy::FILE, tidy::MARKER, &tidy),
