@@ -470,7 +470,13 @@ fn dispatch(
                 },
                 shell,
             );
-            clean::clean(clean::CleanArgs { release, profile }, resolved, &cwd, shell)?;
+            clean::clean(
+                clean::CleanArgs { release, profile },
+                resolved,
+                &cwd,
+                given.host,
+                shell,
+            )?;
             return Ok(0);
         }
         Some(Command::New {
