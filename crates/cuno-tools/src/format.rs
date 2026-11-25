@@ -1,7 +1,121 @@
 //! clang-format's configuration from `[fmt]`
 //! (`docs/en/specs/dev-tools.md`, "`[fmt]`").
 
+use std::ffi::OsStr;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use cuno_core::{CunoError, Env, ExitClass};
 use cuno_manifest::{Fmt, FmtStyle, Lang};
+use cuno_toolchain::Runner;
+
+/// clang-format, and what it is run with.
+pub struct ClangFormat<'a> {
+    /// The executable selection chose.
+    pub program: &'a Path,
+    /// The `.clang-format` to format with, whatever is at the root.
+    pub style: &'a Path,
+    /// The environment it runs in.
+    pub env: &'a Env,
+    /// How many files at once.
+    pub jobs: usize,
+}
+
+/// A file clang-format could not format, or cuno could not read or write.
+#[derive(Debug)]
+pub struct FormatError {
+    /// The file.
+    pub file: PathBuf,
+    /// What went wrong: clang-format's own message, or the I/O error.
+    pub reason: String,
+}
+
+impl fmt::Display for FormatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "could not format {}: {}",
+            self.file.display(),
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for FormatError {}
+
+impl CunoError for FormatError {
+    fn exit_class(&self) -> ExitClass {
+        ExitClass::Failure
+    }
+}
+
+/// Formats `files` with `tool`: each is run through clang-format and
+/// compared with what it holds. Returns the files whose formatting differs,
+/// in the order given; they are rewritten unless `check`
+/// (`docs/en/specs/commands.md`, "`cuno fmt`").
+pub fn format(
+    files: &[PathBuf],
+    tool: &ClangFormat<'_>,
+    check: bool,
+    runner: &(dyn Runner + Sync),
+) -> Result<Vec<PathBuf>, FormatError> {
+    let next = AtomicUsize::new(0);
+    let results: Mutex<Vec<(usize, Result<bool, FormatError>)>> = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..tool.jobs.clamp(1, files.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(file) = files.get(i) else { break };
+                    let result = format_one(file, tool, check, runner);
+                    results.lock().unwrap().push((i, result));
+                }
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap();
+    results.sort_by_key(|(i, _)| *i);
+    let mut changed = Vec::new();
+    for (i, result) in results {
+        if result? {
+            changed.push(files[i].clone());
+        }
+    }
+    Ok(changed)
+}
+
+/// Whether `file` differs from its formatting, writing it unless `check`.
+fn format_one(
+    file: &Path,
+    tool: &ClangFormat<'_>,
+    check: bool,
+    runner: &(dyn Runner + Sync),
+) -> Result<bool, FormatError> {
+    let failed = |reason: String| FormatError {
+        file: file.to_owned(),
+        reason,
+    };
+    let held = std::fs::read(file).map_err(|e| failed(e.to_string()))?;
+    let style = format!("--style=file:{}", tool.style.display());
+    let args: [&OsStr; 2] = [style.as_ref(), file.as_os_str()];
+    let output = runner
+        .run(tool.program, &args, tool.env)
+        .map_err(|e| failed(e.to_string()))?;
+    if !output.success {
+        return Err(failed(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    if output.stdout == held {
+        return Ok(false);
+    }
+    if !check {
+        std::fs::write(file, &output.stdout).map_err(|e| failed(e.to_string()))?;
+    }
+    Ok(true)
+}
 
 /// The file editors read, at the project root.
 pub const FILE: &str = ".clang-format";

@@ -10,6 +10,7 @@
 mod build;
 mod clean;
 mod doctor;
+mod fmt;
 mod new;
 
 use std::ffi::OsString;
@@ -141,6 +142,12 @@ enum Command {
         nocapture: bool,
         #[command(flatten)]
         opts: BuildOpts,
+    },
+    /// Format the package's code with clang-format
+    Fmt {
+        /// Do not format; fail if any file is not formatted (for CI)
+        #[arg(long)]
+        check: bool,
     },
     /// Remove the build's output
     Clean {
@@ -505,6 +512,18 @@ fn dispatch(
             };
             new::new(args, &cwd, shell).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
             return Ok(0);
+        }
+        Some(Command::Fmt { check }) => {
+            let cwd = given.cwd()?;
+            let resolved = resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cli: &CliSettings::default(),
+                },
+                shell,
+            );
+            return fmt::fmt(check, resolved, env, &cwd, given.host, given.temp, shell);
         }
         Some(Command::Doctor { compiler }) => {
             let cwd = given.cwd()?;

@@ -31,6 +31,7 @@ const COLOR: &[(&str, Row)] = &[
     ("check", Runs(&["check"])),
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
+    ("fmt", Runs(&["fmt"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
 ];
@@ -46,6 +47,7 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
     ("check", Runs(&["check"])),
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
+    ("fmt", Runs(&["fmt"])),
     ("clean", Runs(&["clean"])),
     (
         "doctor",
@@ -61,6 +63,7 @@ const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
     ("check", Runs(&["check"])),
     ("run", Runs(&["run"])),
     ("test", Runs(&["test"])),
+    ("fmt", Runs(&["fmt"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
 ];
@@ -73,6 +76,10 @@ const CONFIGURED_COPY: &[(&str, Row)] = &[
     ("check", Runs(&["check", "--compiler", "msvc"])),
     ("run", Runs(&["run", "--compiler", "msvc"])),
     ("test", Runs(&["test", "--compiler", "msvc"])),
+    (
+        "fmt",
+        DoesNotApply("it selects no compiler, only clang-format, whose own copy is its error"),
+    ),
     ("clean", DoesNotApply("it runs no tool")),
     ("doctor", Runs(&["doctor", "--compiler", "msvc"])),
 ];
