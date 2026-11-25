@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 7666c6b59e037b1501c52d05fa23dfa0eccbc9e2 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 45844f106c4a868b287a128b877853f60edfc5dd -->
 
 # Commands
 
@@ -30,7 +30,7 @@ The command structure is based on cargo, with additions for C/C++ and for circum
 | Environment diagnostics | `doctor` | Diagnose whether VS / Clang / clang-format, etc. are usable, and suggest fixes | MVP |
 | Distribution | `install` | Install built executables | Later |
 | | `package` / `publish` | Package / publish | Future (Dependency management stage 3) |
-| cuno itself | `self update` | Self-update cuno ([distribution.md](distribution.md)) | Later |
+| cuno itself | `self update` | Self-update cuno ([distribution.md](distribution.md)) | Right after MVP |
 | Information | `metadata` | Output project information as JSON (for IDE and external tool integration) | Later |
 
 See [dependencies.md](dependencies.md) for the stages of dependency management.

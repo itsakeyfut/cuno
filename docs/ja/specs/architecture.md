@@ -124,12 +124,12 @@ cuno/
 ├── Cargo.toml        # ワークスペース、かつ cuno パッケージ（バイナリ）
 ├── src/main.rs       # cuno バイナリ本体（src/ にはこれだけを置く）
 ├── crates/           # cuno 以外の上記クレート（ライブラリ。cuno-cli を含む）
-├── headers/cuno/     # 同梱ヘッダ（test.hpp / test.h）。ビルド時にバイナリへ埋め込む
-├── templates/        # cuno new が生成するサンプル
 ├── tests/            # cuno 自体の結合テスト（実際にコンパイラを呼ぶ）
 └── docs/specs/       # 仕様書
 ```
 
+- 同梱ヘッダ（`test.hpp` / `test.h` / `test_main.c`）は `crates/cuno-build/headers/cuno/` に、`cuno new` が生成するサンプルは `crates/cuno-cli/templates/` に置き、それぞれビルド時にバイナリへ埋め込む。
+  - 理由: crates.io に公開するパッケージには、そのクレートのディレクトリの中のファイルしか入らない。埋め込むファイルは、埋め込むクレートの中に置く必要がある。
 - ルートはワークスペースであると同時に `cuno` パッケージでもある。
   - 理由: ルートの `tests/` は、ルートがパッケージでなければどのパッケージのテストにもならず、ビルドされない。ルートを `cuno` パッケージにすることで、`tests/` が cuno バイナリの結合テストとして動く。
   - あわせて、ルートで `-p cuno` を付けずに `cargo run` / `cargo install --path .` が使える。

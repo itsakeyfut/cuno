@@ -12,6 +12,11 @@
 ## インストール方法
 
 - GitHub Releases でバイナリを配布する。
+  - リリースごとに `v<バージョン>` のタグを付け、`CHANGELOG.md` のそのバージョンの節をリリースノートにする。
+  - 添付するのは `cuno-<バージョン>-x86_64-pc-windows-msvc.zip`（`cuno.exe`、`README.md`、`LICENSE-MIT`、`LICENSE-APACHE` を直下に置く）と、その SHA-256 を書いた `cuno-<バージョン>-x86_64-pc-windows-msvc.zip.sha256`。
+  - バイナリにコード署名はしない。初めて実行するときに Windows の SmartScreen が警告することがある。
+    - 理由: 証明書の取得と管理が要り、それがリリースの前提になる。winget などに対応するときにあらためて検討する。
+  - 同じリリースで、全クレートを crates.io に公開する（`cargo install cuno` で入る）。
 - Windows: winget / Scoop / PowerShell のワンライナー。
 - Rust 利用者向け: `cargo install cuno`。
 

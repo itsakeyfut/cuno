@@ -84,6 +84,31 @@ jobs:
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo doc --workspace --no-deps
 
+  # Every crate packaged as crates.io would receive it, and built from that
+  # package alone, so a file embedded from outside its crate, or an internal
+  # dependency with no version, fails here and not at a release
+  # (docs/en/specs/architecture.md, "Repository layout").
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Compiler version
+        id: rustc
+        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo package --workspace
+
   test:
     runs-on: windows-latest
     steps:

@@ -84,7 +84,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
         select::select(&settings.compiler, found, &settings.constraints, host).expect("a compiler");
     let prepared = prepare::prepare(&selected, &env, &SystemRegistry).expect("its environment");
     let version = selected.version.to_string();
-    let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("headers");
+    let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/cuno-build/headers");
     let request = Request {
         root: &project.root,
         manifest,
@@ -306,7 +306,7 @@ fn a_test_and_the_body_see_one_definition() {
 
 /// A `main` in a file under `tests/` is refused by the linker rather than
 /// taking the runner's place, which would run no test at all
-/// (`headers/cuno/test_main.c`).
+/// (`crates/cuno-build/headers/cuno/test_main.c`).
 ///
 /// Mutation: give the runtime `wmain` again; the link succeeds and this
 /// test fails.

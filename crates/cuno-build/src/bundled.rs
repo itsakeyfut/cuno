@@ -13,14 +13,11 @@ use cuno_core::{CunoError, ExitClass};
 /// live in the repository's `headers/`, outside this crate's directory, as
 /// the integration tests read them there too.
 const FILES: [(&str, &str); 3] = [
-    ("cuno/test.h", include_str!("../../../headers/cuno/test.h")),
-    (
-        "cuno/test.hpp",
-        include_str!("../../../headers/cuno/test.hpp"),
-    ),
+    ("cuno/test.h", include_str!("../headers/cuno/test.h")),
+    ("cuno/test.hpp", include_str!("../headers/cuno/test.hpp")),
     (
         "cuno/test_main.c",
-        include_str!("../../../headers/cuno/test_main.c"),
+        include_str!("../headers/cuno/test_main.c"),
     ),
 ];
 
