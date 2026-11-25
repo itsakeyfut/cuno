@@ -54,7 +54,7 @@ jobs:
           version="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
           last="$(git tag -l 'v*' --sort=-v:refname | head -1)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          decision="$(.github/scripts/release-version.sh "$version" "${last#v}")"
+          decision="$(bash .github/scripts/release-version.sh "$version" "${last#v}")"
           echo "$version against ${last:-no release}: $decision"
           # A manual run only builds the binary.
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then decision=skip; fi
@@ -143,7 +143,7 @@ jobs:
             echo "v$VERSION is already released"
             exit 0
           fi
-          .github/scripts/changelog-section.sh "$VERSION" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          bash .github/scripts/changelog-section.sh "$VERSION" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" dist/* \
             --title "v$VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" \
