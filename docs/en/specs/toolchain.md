@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 65abd1f18aeb0f4ceb068189c6b6114298a013b2 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 5488f66062fb8d1806686718f09854670ec8cb9b -->
 
 # Toolchain
 
@@ -171,7 +171,7 @@ A compiler must accept a C++20 specification.
 - **A tool whose path is written in `[toolchain.paths]` is used from that file only.** Other copies found are not used, even if they are newer.
   - If the written path has no file, or the tool written does not meet the conditions above (it does not run, prints no version, is a pre-release, is a Clang not targeting MSVC, or does not satisfy the version conditions), it is an error (exit code 3; a problem in `cuno doctor`) naming the setting and the reason.
   - A written file that is a different LLVM tool than its key is likewise an error (e.g. a clang-cl path for `clang`). The tools are told apart as follows.
-    - For clang-format the `--version` output contains `clang-format version`; for clang-tidy it contains `LLVM (http://llvm.org`. For clang and clang-cl it contains `clang version`.
+    - For clang-format the `--version` output contains `clang-format version`; for clang and clang-cl it contains `clang version`. One that contains neither but contains `LLVM (http://llvm.org` or `LLVM version` (with a vendor's name in front, such as `Ubuntu LLVM version`) is clang-tidy. `--version` is run once, and its output gives both the kind of tool and its version.
     - clang and clang-cl are the same executable whose behavior is decided by its file name, so `--version` cannot tell them apart. The written path is run with `/?`; if it succeeds and returns output starting with `OVERVIEW:`, it is clang-cl, otherwise it is clang.
     - Rationale: using clang-cl in place of clang (or the reverse) passes flags in the other form, so it either fails with an error that does not point at the setting, or compiles with flags that mean something else and reports success. The tools are told apart by actual behavior rather than by name so that a wrapper with another name (such as `ccache`) is not wrongly rejected. A tool found by detection is not checked, because it was searched for by name.
   - Rationale: silently using another tool in place of the one written would build or lint with a tool other than the one the user named and report success.
