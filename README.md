@@ -1,6 +1,6 @@
 # cuno
 
-**One tool for C/C++ development, with the feel of Cargo.**
+**Everything C/C++ development needs, in one tool.**
 
 cuno brings package management, build management, toolchain management, and developer tools for C and C++ together under a single command.
 

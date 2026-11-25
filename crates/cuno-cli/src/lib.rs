@@ -787,7 +787,7 @@ mod tests {
         }
         let (code, out, _) = run_with(&["--help"], unreadable());
         assert_eq!(code, 0);
-        assert!(out.starts_with("One comfortable tool"), "{out}");
+        assert!(out.starts_with("Everything C/C++"), "{out}");
     }
 
     /// What clap makes is flushed, so it is not lost in a buffered stream
@@ -804,7 +804,7 @@ mod tests {
             },
         );
         assert_eq!(code, 0);
-        assert!(out.starts_with("One comfortable tool"), "{out:?}");
+        assert!(out.starts_with("Everything C/C++"), "{out:?}");
     }
 
     /// Mutation: swap any two arms of `From<Color> for ColorChoice`; this

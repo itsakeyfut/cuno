@@ -2,7 +2,7 @@
 name = "cuno-cli"
 # Also the first line of `cuno --help`: this crate's lib.rs reads it through
 # `about`. The root package's description says the same for its own metadata.
-description = "One comfortable tool for C/C++ development."
+description = "Everything C/C++ development needs, in one tool."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
