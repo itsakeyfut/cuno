@@ -176,6 +176,13 @@ pub fn plan(p: &Plan<'_>) -> Graph {
     // Decided here, once, from the products, so the layout and the
     // settings cannot be for another build than the one planned.
     let purpose = match p.products {
+        // A compiler that checks by compiling runs the build's own compile
+        // steps, so a later build finds them done; the products' `Check`
+        // still ends the plan before any link.
+        Products::Programs { mode: Mode::Check } if p.kind.checks_by_compiling() => Purpose {
+            test: false,
+            mode: Mode::Compile,
+        },
         Products::Programs { mode } => Purpose { test: false, mode },
         Products::Tests { .. } | Products::CompileCommands => Purpose {
             test: true,
@@ -753,14 +760,27 @@ mod tests {
 
     /// In check mode every source is checked, with the check switch and no
     /// object, each leaving its stamp beside where its object would be, and
-    /// nothing is linked.
+    /// nothing is linked; on MSVC, which checks by compiling, the check is
+    /// the build's own compile steps, and nothing is linked
+    /// (`docs/en/specs/build.md`, "Always-on flags").
     ///
     /// Mutation: keep the compile switch or the object, give the checks the
-    /// objects' paths, or keep the links; this test fails.
+    /// objects' paths, keep the links, or let MSVC check with `/Zs` or with
+    /// steps other than the build's; this test fails.
     #[test]
     fn a_check_checks_every_source_and_links_nothing() {
+        let check = planned(CompilerKind::Msvc, Mode::Check);
+        let build = planned(CompilerKind::Msvc, Mode::Compile);
+        assert_eq!(check.steps.len(), 4, "msvc");
+        assert_eq!(check.steps, build.steps[..4], "msvc");
+        assert!(
+            check
+                .steps
+                .iter()
+                .all(|s| matches!(s.kind, StepKind::Compile { .. })),
+            "msvc"
+        );
         for (kind, switch, object) in [
-            (CompilerKind::Msvc, "/Zs", "/Fo"),
             (CompilerKind::ClangCl, "/Zs", "/Fo"),
             (CompilerKind::Clang, "-fsyntax-only", "-o"),
         ] {

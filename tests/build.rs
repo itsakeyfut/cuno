@@ -611,11 +611,12 @@ fn run_chooses_with_bin() {
 
 /// On every compiler, `cuno check` reports a compile error with the
 /// compiler's message and exit 1; a clean package prints `Checking` and
-/// `Finished`, writes no object and no executable, and a second check with
+/// `Finished`, writes no executable, and no object but on MSVC, which checks
+/// by compiling (`build.md`, "Always-on flags"); and a second check with
 /// nothing changed checks nothing.
 ///
-/// Mutation: link in check mode, write objects, report success on an
-/// error, or check everything again; this test fails.
+/// Mutation: link in check mode, write objects on clang or clang-cl, report
+/// success on an error, or check everything again; this test fails.
 #[test]
 fn check_writes_no_object_and_checks_only_what_changed() {
     for (name, compiler) in COMPILERS {
@@ -655,11 +656,8 @@ fn check_writes_no_object_and_checks_only_what_changed() {
                 for entry in std::fs::read_dir(&dir).unwrap() {
                     let path = entry.unwrap().path();
                     let ext = path.extension().and_then(|e| e.to_str());
-                    assert!(
-                        !matches!(ext, Some("obj" | "exe")),
-                        "{name}: {}",
-                        path.display()
-                    );
+                    let object = ext == Some("obj") && compiler != Compiler::Msvc;
+                    assert!(!object && ext != Some("exe"), "{name}: {}", path.display());
                     if path.is_dir() {
                         stack.push(path);
                     }
@@ -1324,4 +1322,64 @@ fn a_replayed_warning_follows_the_color_and_the_status_line() {
     let compiling = partial.stderr.find("Compiling").expect(&partial.stderr);
     let warning = partial.stderr.find("unused").expect(&partial.stderr);
     assert!(compiling < warning, "{}", partial.stderr);
+}
+
+/// On MSVC, `cuno check` fails where `cuno build` fails on a diagnostic cl
+/// raises only while generating code: C4716 by default, C4715 under
+/// `warnings-as-errors` (`build.md`, "Always-on flags").
+///
+/// Mutation: let MSVC check with `/Zs`; this test fails.
+#[test]
+fn an_msvc_check_fails_where_the_build_does() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    for (extra, source) in [
+        ("", "int f() { }\nint main() { return f(); }\n"),
+        (
+            "[build]\nwarnings-as-errors = true\n",
+            "int f(int x) { if (x) return 1; }\nint main() { return f(0); }\n",
+        ),
+    ] {
+        let project = Project::new()
+            .file("cuno.toml", &format!("{MANIFEST}{extra}"))
+            .file("src/main.cpp", source);
+        for command in ["check", "build"] {
+            let run = project.cuno(&[command, "--compiler", "msvc"]);
+            assert_eq!(run.code, Some(1), "{command} {extra:?}: {}", run.stderr);
+            assert!(
+                run.stderr.ends_with("error: could not compile `app`\n"),
+                "{command} {extra:?}: {}",
+                run.stderr
+            );
+        }
+    }
+}
+
+/// On MSVC, a build after a successful check runs only the link: the check
+/// compiled with the build's own commands and objects.
+///
+/// Mutation: let the check compile with another command or object path
+/// than the build; this test fails.
+#[test]
+fn an_msvc_build_after_a_check_only_links() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("");
+    let check = project.cuno(&["check", "--compiler", "msvc"]);
+    assert_eq!(check.code, Some(0), "{}", check.stderr);
+    let build = project.cuno(&["-v", "build", "--compiler", "msvc"]);
+    assert_eq!(build.code, Some(0), "{}", build.stderr);
+    let running: Vec<&str> = build
+        .stderr
+        .lines()
+        .filter(|l| l.contains("Running `"))
+        .collect();
+    assert!(!running.is_empty(), "{}", build.stderr);
+    assert!(
+        running.iter().all(|l| !l.contains(" /c ")),
+        "{}",
+        build.stderr
+    );
 }
