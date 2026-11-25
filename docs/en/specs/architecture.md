@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 378b55602b34f886c58d023b8cf4ae791f7235ea -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob b22f9ebb72b374691348049a1e3263dcef905b53 -->
 
 # Internal Structure of cuno Itself
 
@@ -20,7 +20,9 @@ A Rust workspace, with crates split by role.
 | `cuno-deps` | Dependency resolution, fetching, and the lock file ([dependencies.md](dependencies.md)) | Dependency management stage 1 |
 
 - Within `cuno-build`, "building the build graph" and "executing the graph" are separated into modules (leaving room for a future Ninja backend).
-  - A node of the graph (one step, such as a compilation) is data holding the program to run, its arguments, environment variables, working directory, inputs and outputs, plus the kind of step (a compilation with its source, a link, a custom step) and how its header dependencies are discovered (none, a depfile, MSVC's JSON, `/showIncludes`). The kind and the discovery method are held as values decided by `cuno-toolchain`, not guessed by reading the arguments again.
+  - A node of the graph (one step, such as a compilation) is data holding the program to run, its arguments, inputs and outputs, plus the kind of step (a compilation with its source, a link, a custom step) and how its header dependencies are discovered (none, a depfile, MSVC's JSON, `/showIncludes`). The kind and the discovery method are held as values decided by `cuno-toolchain`, not guessed by reading the arguments again.
+    - Environment variables and the working directory are not held per step, because they are the same for every step today (the compiler's environment and the project root). Custom steps (M7) are the first to need them to differ per step, and they will be held by the step then.
+    - Every place that behaves differently by kind of step is written as a `match` covering every kind, so that adding a new kind (archives in M6, custom steps in M7) makes every place that does not answer for it a compile error.
     - Rationale: so that compile_commands.json and a future Ninja backend can be produced from the graph without executing it. Both need to know which step compiles which source, and how header dependencies are discovered.
 
 ### What goes in `cuno-core`
