@@ -5,9 +5,11 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use cuno_build::layout::{is_claimed, profile_dir_name};
+use cuno_build::layout::{Layout, is_claimed};
+use cuno_core::paths;
 use cuno_core::{CunoError, ExitClass, Shell};
 use cuno_manifest::{ConfigError, Settings};
+use cuno_toolchain::HostOs;
 
 use crate::build::{in_project, profile_named};
 
@@ -30,13 +32,21 @@ pub fn clean(
     args: CleanArgs,
     resolved: Result<Settings, ConfigError>,
     cwd: &Path,
+    host: HostOs,
     shell: &mut Shell,
 ) -> Result<(), Box<dyn CunoError>> {
     let profile = match (args.release, &args.profile) {
         (false, None) => None,
         (release, name) => Some(profile_named(release, name.as_deref())?),
     };
-    let target_dir = in_project(resolved, cwd)?.target_dir;
+    let settings = in_project(resolved, cwd)?;
+    let root = settings
+        .project
+        .as_ref()
+        .map_or_else(|| cwd.to_owned(), |(project, _)| project.root.clone());
+    // Normalized as the layout normalizes it, so the directory checked for
+    // cuno's mark is the one a profile is removed from.
+    let target_dir = paths::lexical(&settings.target_dir);
     let removed = if std::fs::symlink_metadata(&target_dir).is_err() {
         0
     } else if !is_claimed(&target_dir) {
@@ -44,7 +54,11 @@ pub fn clean(
     } else {
         let dir = match profile {
             None => target_dir,
-            Some(profile) => target_dir.join(profile_dir_name(profile)),
+            // The build's own layout names the directory, so clean removes
+            // what the build wrote wherever the layout puts it.
+            Some(profile) => Layout::new(&target_dir, profile, &root, host)
+                .profile_dir()
+                .to_owned(),
         };
         remove(&dir).map_err(|e| {
             Box::new(CleanError::Failed {

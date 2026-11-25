@@ -62,7 +62,7 @@ enum Variant {
 
 /// The directory a profile's output goes in: `debug` for `dev`, as cuno's
 /// users of Cargo expect, and the profile's own name otherwise.
-pub fn profile_dir_name(profile: Profile) -> &'static str {
+fn profile_dir_name(profile: Profile) -> &'static str {
     match profile {
         Profile::Dev => "debug",
         Profile::Release => "release",
