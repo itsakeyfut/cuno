@@ -17,7 +17,7 @@ use cuno_toolchain::{HostOs, Version};
 use crate::BuildError;
 use crate::compdb;
 use crate::exec::{self, Event, Spawner};
-use crate::graph::{self, Plan, Products, Purpose, Step, StepKind};
+use crate::graph::{self, Graph, Plan, Products, Purpose, Step, StepKind};
 use crate::input::{compile_settings, editor_settings};
 use crate::layout::{self, Layout};
 use crate::sources::{self, Bin};
@@ -45,8 +45,15 @@ pub struct Toolchain<'a> {
 pub enum Goal<'a> {
     /// `cuno build`: compile and link.
     Build,
-    /// `cuno check`: check every source, without objects or links.
-    Check,
+    /// `cuno check`: check the program's sources, the test build's, or both
+    /// (`--tests`, `--all-targets`), without links
+    /// (`docs/en/specs/commands.md`, "`cuno build` / `cuno check`").
+    Check {
+        /// The program's sources: the body and the entry files.
+        programs: bool,
+        /// The test build's: the body with `CUNO_TEST`, and `tests/`.
+        tests: bool,
+    },
     /// `cuno run`'s build: compile and link, having chosen the executable
     /// `bin` names, or the only one, before anything runs.
     Run {
@@ -123,7 +130,14 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     } = *request;
     let tool = &request.toolchain;
     let test = match goal {
-        Goal::Build | Goal::Check | Goal::Run { .. } => false,
+        Goal::Build | Goal::Check { .. } | Goal::Run { .. } => false,
+        Goal::Test => true,
+    };
+    // Whether the test executables are needed: to build them, or to check
+    // what they are made of.
+    let tests_planned = match goal {
+        Goal::Check { tests, .. } => tests,
+        Goal::Build | Goal::Run { .. } => false,
         Goal::Test => true,
     };
     let compile = |lang: Lang, purpose: Purpose| {
@@ -152,25 +166,37 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     // two test executables of one name cost nothing.
     let (mode, exe) = match goal {
         Goal::Build | Goal::Test => (Mode::Compile, None),
-        Goal::Check => (Mode::Check, None),
+        Goal::Check { .. } => (Mode::Check, None),
         Goal::Run { bin } => {
             let exe = layout.exe(&choose(&sources.bins, bin)?.name);
             (Mode::Compile, Some(exe))
         }
     };
-    let executables = if test {
+    let executables = if tests_planned {
         sources::test_executables(root, package, &sources, host)?
     } else {
         Vec::new()
     };
     let runtime = bundled.join("cuno").join("test_main.c");
+    let tests_products = Products::Tests {
+        executables: &executables,
+        runtime: &runtime,
+        mode,
+    };
     // A match, so a new goal has to say what it makes.
-    let products = match goal {
-        Goal::Build | Goal::Check | Goal::Run { .. } => Products::Programs { mode },
-        Goal::Test => Products::Tests {
-            executables: &executables,
-            runtime: &runtime,
-        },
+    let products: Vec<Products<'_>> = match goal {
+        Goal::Build | Goal::Run { .. } => vec![Products::Programs { mode }],
+        Goal::Check { programs, tests } => {
+            let mut products = Vec::new();
+            if programs {
+                products.push(Products::Programs { mode });
+            }
+            if tests {
+                products.push(tests_products);
+            }
+            products
+        }
+        Goal::Test => vec![tests_products],
     };
     let verb = match mode {
         Mode::Compile => "Compiling",
@@ -183,17 +209,31 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             mode: Mode::Compile,
         },
     );
-    let graph = graph::plan(&Plan {
-        package,
-        sources: &sources,
-        products,
-        layout: &layout,
-        kind: tool.kind,
-        program: tool.executable,
-        compile: &compile,
-        link: (&link.build, &link.profile),
-        color: shell.uses_color(),
-    });
+    // One graph for all: a check plans no links, so the steps of a second
+    // plan wait for none of the first's.
+    let mut graph = Graph::default();
+    for products in products {
+        let planned = graph::plan(&Plan {
+            package,
+            sources: &sources,
+            products,
+            layout: &Layout::new(target_dir, profile, root, host),
+            kind: tool.kind,
+            program: tool.executable,
+            compile: &compile,
+            link: (&link.build, &link.profile),
+            color: shell.uses_color(),
+        });
+        let offset = graph.steps.len();
+        graph
+            .steps
+            .extend(planned.steps.into_iter().map(|mut step| {
+                for after in &mut step.after {
+                    *after += offset;
+                }
+                step
+            }));
+    }
 
     // Written before anything runs, so it is current even when a compile
     // fails, with the same settings whatever is built (`editor_settings`).
@@ -328,8 +368,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             request.started.elapsed().as_secs_f64()
         ),
     );
+    // Only a test build leaves executables; a check of the tests links none.
     let test_executables = executables
         .into_iter()
+        .filter(|_| test)
         .map(|exe| BuiltTest {
             path: layout.test_exe(package, &exe.name),
             name: exe.name,

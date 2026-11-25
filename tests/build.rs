@@ -1383,3 +1383,113 @@ fn an_msvc_build_after_a_check_only_links() {
         build.stderr
     );
 }
+
+/// A package whose body, entry and integration test are all valid, with
+/// `broken` replaced by a line that does not compile: `entry`, `test`, or
+/// `body under CUNO_TEST`.
+fn check_targets_package(broken: &str) -> Project {
+    let bad = "int bad = undeclared;\n";
+    let body = if broken == "body under CUNO_TEST" {
+        format!("int helper() {{ return 0; }}\n#ifdef CUNO_TEST\n{bad}#endif\n")
+    } else {
+        "int helper() { return 0; }\n".to_owned()
+    };
+    let entry = if broken == "entry" { bad } else { "" };
+    let test = if broken == "test" { bad } else { "" };
+    Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/util.cpp", &body)
+        .file(
+            "src/main.cpp",
+            &format!("{entry}int helper();\nint main() {{ return helper(); }}\n"),
+        )
+        .file(
+            "tests/t.cpp",
+            &format!("{test}#include <cuno/test.hpp>\nstatic cuno::test::suite tests = [] {{\n    cuno::test::test(\"passes\", [] {{}});\n}};\n"),
+        )
+}
+
+/// `cuno check` checks the program, `--tests` the test build (`tests/` and
+/// the body with `CUNO_TEST`), and `--all-targets` both, as `cargo check`
+/// chooses its targets (`commands.md`, "`cuno build` / `cuno check`").
+///
+/// Mutation: ignore `--tests` or `--all-targets`, check the tests by
+/// default, check the program under `--tests`, or check the test build
+/// without `CUNO_TEST`; this test fails.
+#[test]
+fn check_chooses_its_targets_as_cargo_check_does() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        for (broken, default, tests, all) in [
+            ("test", 0, 1, 1),
+            ("body under CUNO_TEST", 0, 1, 1),
+            ("entry", 1, 0, 1),
+        ] {
+            let project = check_targets_package(broken);
+            for (flags, want) in [
+                (&[][..], default),
+                (&["--tests"][..], tests),
+                (&["--all-targets"][..], all),
+            ] {
+                let args = [&["check", "--compiler", name][..], flags].concat();
+                let run = project.cuno(&args);
+                assert_eq!(
+                    run.code,
+                    Some(want),
+                    "{name}, {broken}, {flags:?}: {}",
+                    run.stderr
+                );
+            }
+        }
+    }
+}
+
+/// On MSVC, `cuno check --tests` compiles as `cuno test` does, so the test
+/// run that follows compiles nothing.
+///
+/// Mutation: let the test check compile with another command or object
+/// than `cuno test`; this test fails.
+#[test]
+fn an_msvc_test_run_after_a_test_check_compiles_nothing() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = check_targets_package("none");
+    // A first run installs the bundled headers in the fresh cuno home, just
+    // now, inside the margin a step is not recorded in; dated back, they are
+    // as a user's long-installed headers are.
+    let first = project.cuno(&["check", "--compiler", "msvc"]);
+    assert_eq!(first.code, Some(0), "{}", first.stderr);
+    let mut dirs = vec![project.home().to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_modified(
+                        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+                    )
+                    .unwrap();
+            }
+        }
+    }
+    let check = project.cuno(&["check", "--tests", "--compiler", "msvc"]);
+    assert_eq!(check.code, Some(0), "{}", check.stderr);
+    let test = project.cuno(&["-v", "test", "--compiler", "msvc"]);
+    assert_eq!(test.code, Some(0), "{}", test.stderr);
+    assert!(
+        test.stderr
+            .lines()
+            .filter(|l| l.contains("Running `"))
+            .all(|l| !l.contains(" /c ")),
+        "{}",
+        test.stderr
+    );
+}
