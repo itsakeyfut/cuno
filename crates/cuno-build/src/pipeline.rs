@@ -17,7 +17,7 @@ use cuno_toolchain::{HostOs, Version};
 use crate::BuildError;
 use crate::compdb;
 use crate::exec::{self, Event, Spawner};
-use crate::graph::{self, Plan, Products, Step, StepKind};
+use crate::graph::{self, Plan, Products, Purpose, Step, StepKind};
 use crate::input::{compile_settings, editor_settings};
 use crate::layout::{self, Layout};
 use crate::sources::{self, Bin};
@@ -126,7 +126,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Goal::Build | Goal::Check | Goal::Run { .. } => false,
         Goal::Test => true,
     };
-    let compile = |lang: Lang, mode: Mode| {
+    let compile = |lang: Lang, purpose: Purpose| {
         compile_settings(
             Some((root, manifest)),
             tool.kind,
@@ -134,8 +134,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             lang,
             host,
             bundled,
-            test,
-            mode,
+            purpose.test,
+            purpose.mode,
         )
     };
 
@@ -144,6 +144,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         shell.warning(warning);
     }
     let package = &manifest.package.name;
+    // The plan takes the program or test variant itself; this one names
+    // the executables the build leaves.
     let layout = Layout::new(target_dir, profile, root, host);
     let layout = if test { layout.for_tests() } else { layout };
     // Chosen, and named, before anything is built, so a wrong `--bin` or
@@ -164,7 +166,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let runtime = bundled.join("cuno").join("test_main.c");
     // A match, so a new goal has to say what it makes.
     let products = match goal {
-        Goal::Build | Goal::Check | Goal::Run { .. } => Products::Programs,
+        Goal::Build | Goal::Check | Goal::Run { .. } => Products::Programs { mode },
         Goal::Test => Products::Tests {
             executables: &executables,
             runtime: &runtime,
@@ -174,8 +176,13 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Mode::Compile => "Compiling",
         Mode::Check => "Checking",
     };
-    let link = compile(manifest.package.lang, Mode::Compile);
-    let compile_for = |lang| compile(lang, mode);
+    let link = compile(
+        manifest.package.lang,
+        Purpose {
+            test,
+            mode: Mode::Compile,
+        },
+    );
     let graph = graph::plan(&Plan {
         package,
         sources: &sources,
@@ -183,8 +190,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         layout: &layout,
         kind: tool.kind,
         program: tool.executable,
-        mode,
-        compile: &compile_for,
+        compile: &compile,
         link: (&link.build, &link.profile),
         color: shell.uses_color(),
     });
@@ -192,17 +198,16 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     // Written before anything runs, so it is current even when a compile
     // fails, with the same settings whatever is built (`editor_settings`).
     let for_editors =
-        |lang| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
+        |lang, _: Purpose| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
     let editors = graph::plan(&Plan {
         package,
         sources: &sources,
         products: Products::CompileCommands,
         // The test build's objects: what compile_commands.json describes is
         // compiled with `CUNO_TEST` (build.md, "Output").
-        layout: &Layout::new(target_dir, Profile::Dev, root, host).for_tests(),
+        layout: &Layout::new(target_dir, Profile::Dev, root, host),
         kind: tool.kind,
         program: tool.executable,
-        mode: Mode::Compile,
         compile: &for_editors,
         link: (&link.build, &link.profile),
         // compile_commands.json never carries the color flags.
