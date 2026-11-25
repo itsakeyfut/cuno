@@ -37,10 +37,11 @@ const SETTLE: Duration = Duration::from_secs(2);
 /// Why a step was left unrecorded, and so runs again next time.
 #[derive(Debug)]
 pub enum NotRecorded {
-    /// An input is dated later than when the step was recorded: in the
-    /// future, so nothing tells whether it changed while the step ran
-    /// (`docs/en/specs/build.md`, "Deciding what changed").
-    DatedAhead(PathBuf),
+    /// Inputs, or same-named files its search could find, dated later than
+    /// when the step was recorded: in the future, so nothing tells whether
+    /// they changed while the step ran (`docs/en/specs/build.md`, "Deciding
+    /// what changed"). Every one, so each can be named.
+    DatedAhead(Vec<PathBuf>),
     /// Anything else: an input that changed while the step ran, one that
     /// cannot be read or written in the record, or a failed write.
     Other(io::Error),
@@ -190,10 +191,11 @@ impl Records {
     }
 
     /// Writes `step`'s record. When `started` is given, an input modified
-    /// later than its margin before `started` is refused, as
-    /// [`NotRecorded::DatedAhead`] when it is dated after now. The record
-    /// is written beside and then renamed over the old one, so it is never
-    /// seen half written.
+    /// later than its margin before `started` is refused, as are the
+    /// same-named files its search could find; when any of them is dated
+    /// after now, as [`NotRecorded::DatedAhead`] naming all such. The
+    /// record is written beside and then renamed over the old one, so it is
+    /// never seen half written.
     fn write(
         &self,
         step: &Step,
@@ -208,6 +210,17 @@ impl Records {
                     .map_or(0, |d| d.as_nanos())
             })
         };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        // Every refused file is looked at, so all those dated ahead are
+        // named at once rather than one a build.
+        let mut ahead = Vec::new();
+        let mut changed = None;
+        let mut refuse = |path: &Path, modified: Option<u128>, why: &'static str| match modified {
+            Some(modified) if modified > now => ahead.push(path.to_owned()),
+            _ => changed = Some(why),
+        };
         let mut text = format!("{HEADER}\ncommand {:016x}\n", self.command(step));
         let mut seen = std::collections::HashSet::new();
         for (path, margin) in inputs {
@@ -216,14 +229,12 @@ impl Records {
             }
             let stamp = self.stamp(path)?;
             if limit(*margin).is_some_and(|limit| stamp.modified >= limit) {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| d.as_nanos());
-                return Err(if stamp.modified > now {
-                    NotRecorded::DatedAhead(path.clone())
-                } else {
-                    io::Error::other("an input changed while the step ran").into()
-                });
+                refuse(
+                    path,
+                    Some(stamp.modified),
+                    "an input changed while the step ran",
+                );
+                continue;
             }
             // A path that is not Unicode cannot be written. (A line break,
             // which no Windows path has, would leave the record unreadable,
@@ -240,18 +251,29 @@ impl Records {
         for path in self.found_elsewhere(step, &read) {
             // One that appeared while the step ran, or just before, may lie
             // ahead of what was read without the compiler having seen it.
+            // A time that cannot be read is taken as just now.
             let modified = fs::metadata(&path)
                 .and_then(|meta| meta.modified())
-                .map_or(u128::MAX, |t| {
-                    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos())
-                });
-            if limit(SETTLE).is_some_and(|limit| modified >= limit) {
-                return Err(io::Error::other("a same-named file appeared as the step ran").into());
+                .ok()
+                .map(|t| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+            if limit(SETTLE).is_some_and(|limit| modified.is_none_or(|m| m >= limit)) {
+                refuse(
+                    &path,
+                    modified,
+                    "a same-named file appeared as the step ran",
+                );
+                continue;
             }
             let Some(name) = path.to_str() else {
                 return Err(io::Error::other("a path cannot be recorded").into());
             };
             text.push_str(&format!("present {name}\n"));
+        }
+        if !ahead.is_empty() {
+            return Err(NotRecorded::DatedAhead(ahead));
+        }
+        if let Some(why) = changed {
+            return Err(io::Error::other(why).into());
         }
         text.push_str(&format!("end {}\n", seen.len()));
         let path = state_path(&step.output);

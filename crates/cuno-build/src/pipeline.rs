@@ -266,7 +266,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             // as the file system names it.
             Event::DatedAhead(path) => {
                 let shown = cuno_core::paths::relative(path, root, host.name_case())
-                    .unwrap_or_else(|| path.to_owned());
+                    .unwrap_or_else(|| cuno_core::paths::lexical(path));
                 if dated_ahead.insert(shown.clone()) {
                     shell.warning(format!(
                         "{} is dated in the future, so what reads it is built again on every build until then",

@@ -84,9 +84,9 @@ enum State {
 enum Report {
     /// It is not up to date and is starting.
     Starting,
-    /// It ran, and was left unrecorded for an input dated in the future
-    /// when that path is given.
-    Ran(Output, Option<PathBuf>),
+    /// It ran, and was left unrecorded for the files dated in the future
+    /// given, if any.
+    Ran(Output, Vec<PathBuf>),
     /// It was up to date and did not run.
     UpToDate,
 }
@@ -155,7 +155,7 @@ pub fn execute(
                                     )
                                     .into_bytes(),
                                 },
-                                None,
+                                Vec::new(),
                             )
                         });
                         // The receiver outlives every sender in this scope.
@@ -178,7 +178,7 @@ pub fn execute(
                     running -= 1;
                     let output = without_echo(step, output);
                     on(Event::Finished(step, &output));
-                    if let Some(path) = &ahead {
+                    for path in &ahead {
                         on(Event::DatedAhead(path));
                     }
                     if output.success {
@@ -200,8 +200,8 @@ pub fn execute(
 
 /// Runs `step` and, with `records`, records it when it succeeds, as
 /// having read what it [`Step::reads`], the outputs of the steps it
-/// `waited` for, and every header its compiler named; with the input dated
-/// in the future that kept it unrecorded, if one did.
+/// `waited` for, and every header its compiler named; with the files dated
+/// in the future that kept it unrecorded.
 fn perform(
     step: &Step,
     waited: &[&Path],
@@ -209,17 +209,17 @@ fn perform(
     cwd: &Path,
     spawner: &dyn Spawner,
     records: Option<&Records>,
-) -> (Output, Option<PathBuf>) {
+) -> (Output, Vec<PathBuf>) {
     if let Some(records) = records {
         records.forget(step);
     }
     let started = SystemTime::now();
     let output = run(step, env, cwd, spawner);
     if !output.success {
-        return (output, None);
+        return (output, Vec::new());
     }
     let Some(records) = records else {
-        return (output, None);
+        return (output, Vec::new());
     };
     let headers = match &step.headers {
         Some(headers) => std::fs::read(headers.file())
@@ -237,11 +237,12 @@ fn perform(
             .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
             .collect();
         let built: Vec<PathBuf> = waited.iter().map(|p| p.to_path_buf()).collect();
-        if let Err(NotRecorded::DatedAhead(path)) = records.record(step, &inputs, &built, started) {
-            return (output, Some(path));
+        if let Err(NotRecorded::DatedAhead(ahead)) = records.record(step, &inputs, &built, started)
+        {
+            return (output, ahead);
         }
     }
-    (output, None)
+    (output, Vec::new())
 }
 
 /// Runs one step, its output directory made first. A step that cannot
