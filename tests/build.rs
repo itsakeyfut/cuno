@@ -1307,7 +1307,17 @@ fn a_replayed_warning_follows_the_color_and_the_status_line() {
         "int helper() { return 1; }\n",
     )
     .unwrap();
-    let partial = project.cuno(&["--color", "never", "build", "--compiler", "clang"]);
+    // One step at a time, in plan order: the up-to-date entry is judged
+    // before the body runs, so a replay printed at once would come first.
+    let partial = project.cuno(&[
+        "--color",
+        "never",
+        "build",
+        "--compiler",
+        "clang",
+        "-j",
+        "1",
+    ]);
     let compiling = partial.stderr.find("Compiling").expect(&partial.stderr);
     let warning = partial.stderr.find("unused").expect(&partial.stderr);
     assert!(compiling < warning, "{}", partial.stderr);
