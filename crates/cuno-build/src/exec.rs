@@ -13,7 +13,7 @@ use cuno_core::Env;
 
 use crate::deps;
 use crate::graph::{Graph, Step, StepKind};
-use crate::state::Records;
+use crate::state::{NotRecorded, Records};
 
 /// What a step's process did.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +62,10 @@ pub enum Event<'a> {
     Started(&'a Step),
     /// A step finished, with what it printed.
     Finished(&'a Step, &'a Output),
+    /// A step that succeeded read an input dated in the future, so it was
+    /// left unrecorded and runs again (`docs/en/specs/build.md`, "Deciding
+    /// what changed"). Heard after the step's `Finished`.
+    DatedAhead(&'a Path),
 }
 
 /// The steps that failed, by index, in the order they finished.
@@ -80,8 +84,9 @@ enum State {
 enum Report {
     /// It is not up to date and is starting.
     Starting,
-    /// It ran.
-    Ran(Output),
+    /// It ran, and was left unrecorded for an input dated in the future
+    /// when that path is given.
+    Ran(Output, Option<PathBuf>),
     /// It was up to date and did not run.
     UpToDate,
 }
@@ -135,18 +140,23 @@ pub fn execute(
                                 return Report::UpToDate;
                             }
                             let _ = done.send((i, Report::Starting));
-                            Report::Ran(perform(step, &waited, env, cwd, spawner, records))
+                            let (output, ahead) =
+                                perform(step, &waited, env, cwd, spawner, records);
+                            Report::Ran(output, ahead)
                         }))
                         .unwrap_or_else(|_| {
-                            Report::Ran(Output {
-                                success: false,
-                                stdout: Vec::new(),
-                                stderr: format!(
-                                    "cuno failed while running {}\n",
-                                    step.program.display()
-                                )
-                                .into_bytes(),
-                            })
+                            Report::Ran(
+                                Output {
+                                    success: false,
+                                    stdout: Vec::new(),
+                                    stderr: format!(
+                                        "cuno failed while running {}\n",
+                                        step.program.display()
+                                    )
+                                    .into_bytes(),
+                                },
+                                None,
+                            )
                         });
                         // The receiver outlives every sender in this scope.
                         let _ = done.send((i, report));
@@ -164,10 +174,13 @@ pub fn execute(
                     running -= 1;
                     state[i] = State::Done;
                 }
-                Report::Ran(output) => {
+                Report::Ran(output, ahead) => {
                     running -= 1;
                     let output = without_echo(step, output);
                     on(Event::Finished(step, &output));
+                    if let Some(path) = &ahead {
+                        on(Event::DatedAhead(path));
+                    }
                     if output.success {
                         state[i] = State::Done;
                     } else {
@@ -187,7 +200,8 @@ pub fn execute(
 
 /// Runs `step` and, with `records`, records it when it succeeds, as
 /// having read what it [`Step::reads`], the outputs of the steps it
-/// `waited` for, and every header its compiler named.
+/// `waited` for, and every header its compiler named; with the input dated
+/// in the future that kept it unrecorded, if one did.
 fn perform(
     step: &Step,
     waited: &[&Path],
@@ -195,17 +209,17 @@ fn perform(
     cwd: &Path,
     spawner: &dyn Spawner,
     records: Option<&Records>,
-) -> Output {
+) -> (Output, Option<PathBuf>) {
     if let Some(records) = records {
         records.forget(step);
     }
     let started = SystemTime::now();
     let output = run(step, env, cwd, spawner);
     if !output.success {
-        return output;
+        return (output, None);
     }
     let Some(records) = records else {
-        return output;
+        return (output, None);
     };
     let headers = match &step.headers {
         Some(headers) => std::fs::read(headers.file())
@@ -223,9 +237,11 @@ fn perform(
             .chain(headers.into_iter().map(|h| deps::resolve(cwd, h)))
             .collect();
         let built: Vec<PathBuf> = waited.iter().map(|p| p.to_path_buf()).collect();
-        let _ = records.record(step, &inputs, &built, started);
+        if let Err(NotRecorded::DatedAhead(path)) = records.record(step, &inputs, &built, started) {
+            return (output, Some(path));
+        }
     }
-    output
+    (output, None)
 }
 
 /// Runs one step, its output directory made first. A step that cannot
@@ -373,6 +389,7 @@ mod tests {
                     s.program.display(),
                     String::from_utf8_lossy(&out.stdout).trim_end()
                 )),
+                Event::DatedAhead(path) => seen.push(format!("ahead {}", path.display())),
             },
         );
         (result, seen)

@@ -443,3 +443,68 @@ fn changing_the_color_rebuilds_nothing() {
         assert_eq!(ran(&run("never")), (vec![], false), "{name}");
     }
 }
+
+/// The warning lines a build printed about inputs dated in the future.
+fn dated_ahead(run: &Run) -> Vec<&str> {
+    run.stderr
+        .lines()
+        .filter(|l| l.contains("is dated in the future"))
+        .collect()
+}
+
+/// A source dated a day ahead is compiled on every build, and each build
+/// says why, once (`build.md`, "Deciding what changed").
+///
+/// Mutation: record a step whose input is dated in the future (the second
+/// build compiles nothing), or drop the warning; this test fails.
+#[test]
+fn a_source_dated_in_the_future_is_rebuilt_and_said_so() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("");
+    let two = project.path().join("src/two.cpp");
+    set_time(&two, SystemTime::now() + Duration::from_secs(86_400));
+    for build_number in [1, 2] {
+        let run = build(&project, "msvc");
+        assert!(
+            ran(&run).0.contains(&"two"),
+            "build {build_number}: {}",
+            run.stderr
+        );
+        assert_eq!(
+            dated_ahead(&run),
+            [
+                r"warning: src\two.cpp is dated in the future, so what reads it is built again on every build until then"
+            ],
+            "build {build_number}"
+        );
+    }
+}
+
+/// A header dated a day ahead and read by two sources is warned about once
+/// per build, not once per source that read it.
+///
+/// Mutation: warn once per step instead of once per file; this test
+/// fails.
+#[test]
+fn a_header_dated_in_the_future_is_warned_about_once() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = package("");
+    let inner = project.path().join("src/inc dir/内側.h");
+    set_time(&inner, SystemTime::now() + Duration::from_secs(86_400));
+    for build_number in [1, 2] {
+        let run = build(&project, "msvc");
+        assert_eq!(
+            dated_ahead(&run),
+            [
+                r"warning: src\inc dir\内側.h is dated in the future, so what reads it is built again on every build until then"
+            ],
+            "build {build_number}"
+        );
+    }
+    // The two sources that read it, and only those, run again.
+    assert_eq!(ran(&build(&project, "msvc")).0, ["main", "one"]);
+}

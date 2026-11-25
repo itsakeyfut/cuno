@@ -34,6 +34,24 @@ use crate::graph::{Step, StepKind};
 /// "Deciding what changed").
 const SETTLE: Duration = Duration::from_secs(2);
 
+/// Why a step was left unrecorded, and so runs again next time.
+#[derive(Debug)]
+pub enum NotRecorded {
+    /// An input is dated later than when the step was recorded: in the
+    /// future, so nothing tells whether it changed while the step ran
+    /// (`docs/en/specs/build.md`, "Deciding what changed").
+    DatedAhead(PathBuf),
+    /// Anything else: an input that changed while the step ran, one that
+    /// cannot be read or written in the record, or a failed write.
+    Other(io::Error),
+}
+
+impl From<io::Error> for NotRecorded {
+    fn from(e: io::Error) -> NotRecorded {
+        NotRecorded::Other(e)
+    }
+}
+
 /// The first line of every record.
 const HEADER: &str = concat!("cuno-state ", env!("CARGO_PKG_VERSION"));
 
@@ -162,7 +180,7 @@ impl Records {
         inputs: &[PathBuf],
         built: &[PathBuf],
         started: SystemTime,
-    ) -> io::Result<()> {
+    ) -> Result<(), NotRecorded> {
         let read: Vec<(PathBuf, Duration)> = inputs
             .iter()
             .map(|p| (p.clone(), SETTLE))
@@ -172,15 +190,16 @@ impl Records {
     }
 
     /// Writes `step`'s record. When `started` is given, an input modified
-    /// later than its margin before `started` is refused. The record is
-    /// written beside and then renamed over the old one, so it is never
+    /// later than its margin before `started` is refused, as
+    /// [`NotRecorded::DatedAhead`] when it is dated after now. The record
+    /// is written beside and then renamed over the old one, so it is never
     /// seen half written.
     fn write(
         &self,
         step: &Step,
         inputs: &[(PathBuf, Duration)],
         started: Option<SystemTime>,
-    ) -> io::Result<()> {
+    ) -> Result<(), NotRecorded> {
         let limit = |margin: Duration| {
             started.map(|t| {
                 t.checked_sub(margin)
@@ -197,13 +216,20 @@ impl Records {
             }
             let stamp = self.stamp(path)?;
             if limit(*margin).is_some_and(|limit| stamp.modified >= limit) {
-                return Err(io::Error::other("an input changed while the step ran"));
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
+                return Err(if stamp.modified > now {
+                    NotRecorded::DatedAhead(path.clone())
+                } else {
+                    io::Error::other("an input changed while the step ran").into()
+                });
             }
             // A path that is not Unicode cannot be written. (A line break,
             // which no Windows path has, would leave the record unreadable,
             // and so the step would run again.)
             let Some(name) = path.to_str() else {
-                return Err(io::Error::other("an input's path cannot be recorded"));
+                return Err(io::Error::other("an input's path cannot be recorded").into());
             };
             text.push_str(&format!(
                 "{} {} {:016x} {name}\n",
@@ -220,12 +246,10 @@ impl Records {
                     t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos())
                 });
             if limit(SETTLE).is_some_and(|limit| modified >= limit) {
-                return Err(io::Error::other(
-                    "a same-named file appeared as the step ran",
-                ));
+                return Err(io::Error::other("a same-named file appeared as the step ran").into());
             }
             let Some(name) = path.to_str() else {
-                return Err(io::Error::other("a path cannot be recorded"));
+                return Err(io::Error::other("a path cannot be recorded").into());
             };
             text.push_str(&format!("present {name}\n"));
         }
@@ -234,7 +258,8 @@ impl Records {
         let mut partial = path.clone().into_os_string();
         partial.push(".partial");
         fs::write(&partial, text)?;
-        fs::rename(&partial, &path)
+        fs::rename(&partial, &path)?;
+        Ok(())
     }
 
     /// The hash of everything that identifies `step`'s command: cuno's
