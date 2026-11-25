@@ -155,10 +155,20 @@ pub fn code_files(
     let root = paths::lexical(root);
     let mut dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
     let code_places: Vec<Place> = dirs.iter().map(|d| Place::of(d, case)).collect();
+    // As classification refuses it: an entry file outside the project
+    // would have fmt rewrite files that are not the package's.
+    let (root_place, src_place) = (Place::of(&root, case), Place::of(&root.join(SRC_DIR), case));
     for bin in manifest.bins.iter().flatten() {
-        let place = Place::of(&bin.path, case);
+        let path = paths::lexical(&bin.path);
+        let place = Place::of(&path, case);
+        if !place.within(&root_place) && !place.within(&src_place) {
+            return Err(BuildError::OutsideProject {
+                name: bin.name.clone(),
+                path,
+            });
+        }
         if !code_places.iter().any(|dir| place.within(dir))
-            && let Some(dir) = paths::lexical(&bin.path).parent()
+            && let Some(dir) = path.parent()
         {
             dirs.push(dir.to_owned());
         }
@@ -741,6 +751,26 @@ path = \"tools/tool.c\"
         let code = code_files(&root, &m, &root.join("SRC/OUT"), HostOs::Windows).unwrap();
         let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
         assert_eq!(got, ["src/main.cpp"]);
+    }
+
+    /// A `[[bin]] path` outside the project is refused, as classification
+    /// refuses it, rather than its directory walked: fmt would rewrite files
+    /// that are not the package's.
+    ///
+    /// Mutation: walk the directory of an entry file outside the project;
+    /// this test fails.
+    #[test]
+    fn the_code_refuses_an_entry_file_outside_the_project() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]
+name = \"x\"
+path = \"../elsewhere/x.cpp\"
+",
+            &["src/main.cpp"],
+        );
+        let err = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap_err();
+        assert!(matches!(err, BuildError::OutsideProject { .. }), "{err:?}");
     }
 
     /// A `[[bin]] path` at the root walks the root, which holds `src/` too:
