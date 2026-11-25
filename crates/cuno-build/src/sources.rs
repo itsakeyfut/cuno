@@ -743,6 +743,49 @@ path = \"tools/tool.c\"
         assert_eq!(got, ["src/main.cpp"]);
     }
 
+    /// A `[[bin]] path` at the root walks the root, which holds `src/` too:
+    /// each file is still listed once.
+    ///
+    /// Mutation: list a file reached twice twice; this test fails.
+    #[test]
+    fn the_code_lists_each_file_once() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]
+name = \"app\"
+path = \"main.cpp\"
+",
+            &["main.cpp", "src/a.cpp"],
+        );
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["main.cpp", "src/a.cpp"]);
+    }
+
+    /// Classification keeps sources and nothing else: a header in `src/` or
+    /// under `tests/` is not a source, though the package's code lists it.
+    ///
+    /// Mutation: let classification keep what the code list keeps; this
+    /// test fails.
+    #[test]
+    fn classification_keeps_no_header() {
+        let (_d, root, m) = project(
+            "c++",
+            "",
+            &[
+                "src/main.cpp",
+                "src/a.h",
+                "src/b.hpp",
+                "tests/t.cpp",
+                "tests/common/h.hpp",
+            ],
+        );
+        let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        assert!(s.body.is_empty(), "{:?}", s.body);
+        assert!(s.test_helpers.is_empty(), "{:?}", s.test_helpers);
+        assert_eq!(s.integration_tests.len(), 1);
+    }
+
     /// A target directory under `src/` is not read as sources.
     ///
     /// Mutation: walk into the target directory; this test fails.
