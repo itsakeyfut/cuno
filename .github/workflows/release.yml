@@ -9,9 +9,12 @@
 # 3. `release`, in the `crates-io` environment (which asks the owner to
 #    approve), publishes every crate not yet on crates.io, then tags
 #    `v<version>` and creates the GitHub release with CHANGELOG.md's section
-#    as its notes and the zip and checksum attached. A re-run skips what is
-#    done: release-plz publishes only what crates.io lacks, and an existing
-#    release is left alone.
+#    as its notes and the zip and checksum attached. A re-run finishes what
+#    is not done: release-plz publishes only what crates.io lacks, and a
+#    release is completed and published rather than taken for done.
+#
+# Only `x.y.z` is released, never 0.0.0 (docs/en/specs/distribution.md,
+# "Versioning policy"); the notes are checked before anything is published.
 #
 # `workflow_dispatch` runs `binary` alone on any branch, to check the zip
 # before a release depends on it: `gh workflow run release.yml --ref <branch>`.
@@ -52,12 +55,17 @@ jobs:
         id: check
         run: |
           version="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
-          last="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+          last="$(git tag -l | bash .github/scripts/last-release.sh)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          decision="$(bash .github/scripts/release-version.sh "$version" "${last#v}")"
+          decision="$(bash .github/scripts/release-version.sh "$version" "$last")"
           echo "$version against ${last:-no release}: $decision"
           # A manual run only builds the binary.
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then decision=skip; fi
+          # The notes are checked before anything is built or published: a
+          # release with no notes stops here, not after crates.io has it.
+          if [ "$decision" = release ]; then
+            bash .github/scripts/changelog-section.sh "$version" CHANGELOG.md > /dev/null
+          fi
           echo "release=$([ "$decision" = release ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
   binary:
@@ -112,6 +120,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Checked again under the lock, against the tags as they are when the
+      # job starts (after approval; the checkout above has every tag): a
+      # release approved after a later one is refused, not published.
+      - name: The version is still the next release
+        run: |
+          last="$(git tag -l | bash .github/scripts/last-release.sh)"
+          decision="$(bash .github/scripts/release-version.sh "$VERSION" "$last")"
+          if [ "$decision" != release ]; then
+            echo "$VERSION is no longer the next release (last: ${last:-none})" >&2
+            exit 1
+          fi
+          bash .github/scripts/changelog-section.sh "$VERSION" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
       - name: Install toolchain
         run: |
           rustup toolchain install stable --profile minimal
@@ -135,16 +155,24 @@ jobs:
         with:
           name: release-binary
           path: dist
+      # A draft first, published only once both files are attached; a re-run
+      # completes a draft or a release that lacks them rather than taking it
+      # for done. A tag made by hand elsewhere is refused.
       - name: Tag and create the GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "v$VERSION is already released"
-            exit 0
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            at="$(git rev-parse "$tag^{commit}")"
+            if [ "$at" != "$GITHUB_SHA" ]; then
+              echo "$tag already points at $at, not $GITHUB_SHA" >&2
+              exit 1
+            fi
           fi
-          bash .github/scripts/changelog-section.sh "$VERSION" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          gh release create "v$VERSION" dist/* \
-            --title "v$VERSION" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            --target "$GITHUB_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --draft               --title "$tag"               --notes-file "$RUNNER_TEMP/notes.md"               --target "$GITHUB_SHA"
+          fi
+          gh release edit "$tag" --draft=false --latest

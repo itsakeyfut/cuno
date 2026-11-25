@@ -19,15 +19,28 @@ expect() {
 }
 
 version() {
-    out="$("$here/release-version.sh" "$@" 2>/dev/null)"
+    out="$(bash "$here/release-version.sh" "$@" 2>/dev/null)"
     echo "$out:$?"
 }
 
 expect "the first release is released" "release:0" "$(version 0.1.0 '')"
+expect "0.0.0 is never released" "skip:0" "$(version 0.0.0 '')"
 expect "an unchanged version is skipped" "skip:0" "$(version 0.1.0 0.1.0)"
 expect "a higher version is released" "release:0" "$(version 0.2.0 0.1.0)"
 expect "versions compare as numbers" "release:0" "$(version 0.10.0 0.9.0)"
+expect "a higher major beats a higher minor" "release:0" "$(version 1.0.0 0.99.0)"
 expect "a lower version fails" ":1" "$(version 0.1.0 0.2.0)"
+expect "a lower patch fails" ":1" "$(version 0.2.1 0.2.10)"
+expect "a pre-release is not a release version" ":1" "$(version 0.2.0-rc.1 0.1.0)"
+expect "build metadata is not a release version" ":1" "$(version 0.2.0+b1 0.1.0)"
+
+last() {
+    printf '%s\n' "$@" | bash "$here/last-release.sh"
+}
+
+expect "the newest x.y.z tag is the last release" "0.10.0" "$(last v0.1.0 v0.9.0 v0.10.0 v0.2.0)"
+expect "tags that are not x.y.z are ignored" "0.1.0" "$(last vnext v1 v0.1.0 v0.2.0-rc.1 v0.3.0+b)"
+expect "no release tag gives nothing" "" "$(last vnext other)"
 
 changelog="$(mktemp)"
 trap 'rm -f "$changelog"' EXIT
@@ -51,7 +64,7 @@ cat > "$changelog" <<'EOF'
 EOF
 
 section() {
-    out="$("$here/changelog-section.sh" "$1" "$changelog" 2>/dev/null)"
+    out="$(bash "$here/changelog-section.sh" "$1" "$changelog" 2>/dev/null)"
     echo "$out:$?"
 }
 
