@@ -158,3 +158,38 @@ fn clang_version(clang: &std::path::Path) -> String {
         .expect("a clang version line");
     after.split_whitespace().next().unwrap().to_owned()
 }
+
+/// A `[toolchain.paths] clang` that names the installed clang-cl is refused
+/// before anything is built, naming the setting and what the file is
+/// (`docs/en/specs/toolchain.md`, "LLVM (clang / clang-cl / clang-format /
+/// clang-tidy)").
+///
+/// Mutation: take a configured file for the tool its key names without
+/// running it with `/?`; this test fails.
+#[cfg(windows)]
+#[test]
+fn a_configured_clang_that_is_clang_cl_is_refused() {
+    let Some(driver) = support::compilers::require_driver(Compiler::ClangCl, Language::C) else {
+        return;
+    };
+    let path = driver.get_program().to_string_lossy().replace('\\', "/");
+    let project = support::Project::new()
+        .file(
+            "cuno.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c\"\n",
+        )
+        .file("src/main.c", "int main(void) { return 0; }\n")
+        .file(
+            ".cuno/config.toml",
+            &format!("[toolchain.paths]\nclang = \"{path}\"\n"),
+        );
+    let run = project.cuno(&["build", "--compiler", "clang"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.starts_with(&format!(
+            "error: [toolchain.paths] clang is {path}, but it is clang-cl, not clang\n"
+        )),
+        "{}",
+        run.stderr
+    );
+}

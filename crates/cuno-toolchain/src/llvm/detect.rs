@@ -169,6 +169,13 @@ pub fn find_llvm_tools(
                     path: path.to_owned(),
                 });
             }
+            if let Err(why) = identity(tool, path, run, env) {
+                return Err(ToolchainError::ConfiguredToolUnusable {
+                    setting: format!("[toolchain.paths] {}", tool.name()),
+                    path: path.to_owned(),
+                    why,
+                });
+            }
             candidates.push((path.to_owned(), Origin::Configured));
         }
         let file = host.executable(tool.name());
@@ -192,6 +199,40 @@ pub fn find_llvm_tools(
         }
     }
     Ok(found)
+}
+
+/// Whether the configured file `path` is `tool` and not another LLVM tool
+/// (`docs/en/specs/toolchain.md`, "LLVM (clang / clang-cl / clang-format /
+/// clang-tidy)"): its `--version` names the kind, and clang and clang-cl,
+/// one program whose mode follows its file name, are told apart by how
+/// `/?` answers. One that cannot run is left to the probe, which says so.
+fn identity(tool: Tool, path: &Path, run: &dyn Runner, env: &Env) -> Result<(), String> {
+    let Ok(output) = run.run(path, &[OsStr::new("--version")], env) else {
+        return Ok(());
+    };
+    if !output.success {
+        return Ok(());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let is = if text.contains("clang-format version") {
+        Tool::ClangFormat
+    } else if text.contains("LLVM (http://llvm.org") {
+        Tool::ClangTidy
+    } else if text.contains("clang version") {
+        // clang-cl answers `/?` with its option list; clang takes it for a
+        // file and fails.
+        let cl = run
+            .run(path, &[OsStr::new("/?")], env)
+            .is_ok_and(|o| o.success && o.stdout.starts_with(b"OVERVIEW:"));
+        if cl { Tool::ClangCl } else { Tool::Clang }
+    } else {
+        return Err("it is not an LLVM tool cuno knows".to_owned());
+    };
+    if is == tool {
+        Ok(())
+    } else {
+        Err(format!("it is {}, not {}", is.name(), tool.name()))
+    }
 }
 
 /// The directories on `PATH` that are searched: only absolute ones. An empty
@@ -478,6 +519,135 @@ mod tests {
     }
 
     /// A runner that answers every `--version` with the same output.
+    /// Answers as each real LLVM tool does, by its file name: what
+    /// `--version` prints, and for clang-cl alone, `/?` succeeding with its
+    /// option list.
+    struct ByName;
+    impl Runner for ByName {
+        fn run(&self, program: &Path, args: &[&OsStr], _env: &Env) -> std::io::Result<Output> {
+            let name = program.file_stem().unwrap().to_string_lossy().into_owned();
+            let help = args.first().is_some_and(|a| *a == OsStr::new("/?"));
+            let (success, stdout) = match (name.as_str(), help) {
+                ("clang-cl", true) => (
+                    true,
+                    "OVERVIEW: clang LLVM compiler
+",
+                ),
+                (_, true) => (false, ""),
+                ("clang" | "clang-cl", false) => (
+                    true,
+                    "clang version 22.1.8 (x)
+Target: x86_64-pc-windows-msvc
+",
+                ),
+                ("clang-format", false) => (
+                    true,
+                    "clang-format version 22.1.8 (x)
+",
+                ),
+                ("clang-tidy", false) => (
+                    true,
+                    "LLVM (http://llvm.org/):
+  LLVM version 22.1.8
+",
+                ),
+                _ => (
+                    true,
+                    "some tool 1.0.0
+",
+                ),
+            };
+            Ok(Output {
+                success,
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    /// A configured file that is another LLVM tool than its key is refused,
+    /// naming what it is; the right tool is taken. clang and clang-cl are
+    /// told apart by `/?`, the rest by `--version`.
+    ///
+    /// Mutation: skip the `/?` check, skip the `--version` kinds, or check
+    /// nothing; this test fails.
+    #[test]
+    fn a_configured_path_must_be_the_tool_its_key_names() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        files(
+            r,
+            &[
+                ("a", "clang.exe"),
+                ("a", "clang-cl.exe"),
+                ("a", "clang-format.exe"),
+                ("a", "clang-tidy.exe"),
+                ("a", "other.exe"),
+            ],
+        );
+        let at = |name: &str| Some(r.join("a").join(name));
+        let refused = |explicit: ExplicitPaths| match find_llvm_tools(
+            &env(r, &[]),
+            HostOs::Windows,
+            &explicit,
+            &[],
+            &ByName,
+        ) {
+            Err(ToolchainError::ConfiguredToolUnusable { setting, why, .. }) => {
+                Some(format!("{setting}: {why}"))
+            }
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => None,
+        };
+        let cases = [
+            (
+                ExplicitPaths {
+                    clang: at("clang-cl.exe"),
+                    ..Default::default()
+                },
+                "[toolchain.paths] clang: it is clang-cl, not clang",
+            ),
+            (
+                ExplicitPaths {
+                    clang_cl: at("clang.exe"),
+                    ..Default::default()
+                },
+                "[toolchain.paths] clang-cl: it is clang, not clang-cl",
+            ),
+            (
+                ExplicitPaths {
+                    clang: at("clang-format.exe"),
+                    ..Default::default()
+                },
+                "[toolchain.paths] clang: it is clang-format, not clang",
+            ),
+            (
+                ExplicitPaths {
+                    clang_format: at("clang-tidy.exe"),
+                    ..Default::default()
+                },
+                "[toolchain.paths] clang-format: it is clang-tidy, not clang-format",
+            ),
+            (
+                ExplicitPaths {
+                    clang_tidy: at("other.exe"),
+                    ..Default::default()
+                },
+                "[toolchain.paths] clang-tidy: it is not an LLVM tool cuno knows",
+            ),
+        ];
+        for (explicit, want) in cases {
+            assert_eq!(refused(explicit).as_deref(), Some(want));
+        }
+        let right = ExplicitPaths {
+            clang: at("clang.exe"),
+            clang_cl: at("clang-cl.exe"),
+            clang_format: at("clang-format.exe"),
+            clang_tidy: at("clang-tidy.exe"),
+        };
+        assert_eq!(refused(right), None);
+    }
+
     struct Says(bool, &'static str);
     impl Runner for Says {
         fn run(&self, _p: &Path, _a: &[&OsStr], _e: &Env) -> std::io::Result<Output> {
@@ -614,7 +784,8 @@ mod tests {
             clang_format: Some(r.join("c/clang-format.exe")),
             clang_tidy: Some(r.join("d/clang-tidy.exe")),
         };
-        let found = find_llvm_tools(&env(r, &[]), HostOs::Windows, &explicit, &[], &ByDir).unwrap();
+        let found =
+            find_llvm_tools(&env(r, &[]), HostOs::Windows, &explicit, &[], &ByName).unwrap();
         let got: Vec<_> = found
             .iter()
             .map(|t| {
