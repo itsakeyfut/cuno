@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 4e1b7623a11b7562daedc05eee798804b8b5772a -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 1055343d77fb6c5c83cdf2608212085886d6fe54 -->
 
 # Configuration Files
 
@@ -387,6 +387,8 @@ Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags
   6. Default values
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
 - Exception: for coloring, `[term] color` in a configuration file takes precedence over the `NO_COLOR` environment variable ([commands.md](commands.md#available-for-all-commands)).
+- cuno's environment variables (`CUNO_HOME`, `CUNO_COMPILER`, `CUNO_TARGET_DIR`) count as unset when their value is empty. `NO_COLOR` is the exception: it takes effect when set, even to an empty value ([commands.md](commands.md#available-for-all-commands)).
+  - Rationale: in a POSIX shell, writing `CUNO_TARGET_DIR= cuno build` is how a variable is removed for that one run. For `NO_COLOR`, the convention shared across tools is that it takes effect even when empty.
 - For the cuno home directory, see [distribution.md](distribution.md).
 
 ### A project's settings and trust

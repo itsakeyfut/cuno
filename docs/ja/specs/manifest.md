@@ -385,6 +385,8 @@ MVP では使わない。項目名のみ予約。
   6. 既定値
 - プロジェクトで決めた設定（`cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
 - 例外: 色付けでは、設定ファイルの `[term] color` が環境変数 `NO_COLOR` より優先する（[commands.md](commands.md#全コマンドで使えるもの)）。
+- cuno の環境変数（`CUNO_HOME`・`CUNO_COMPILER`・`CUNO_TARGET_DIR`）は、値が空なら設定されていないものとして扱う。`NO_COLOR` は例外で、値が空でも設定されていれば有効（[commands.md](commands.md#全コマンドで使えるもの)）。
+  - 理由: POSIX のシェルでは、`CUNO_TARGET_DIR= cuno build` のように書いて、その実行だけ変数を外す使い方をする。`NO_COLOR` は、ツールをまたいだ慣習で空でも有効と決まっている。
 - 管理ディレクトリは [distribution.md](distribution.md) を参照。
 
 ### プロジェクトの設定と信用

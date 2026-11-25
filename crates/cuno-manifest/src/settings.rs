@@ -158,11 +158,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
 
     let manifest = project.as_ref().map(|(_, m, _)| m);
     let local = project.as_ref().map(|(_, _, c)| c);
-    let from_env = |name| {
-        env.get(name)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_owned())
-    };
+    let from_env = |name| env.set_value(name).map(|value| value.to_owned());
 
     // Every layer that sets an output directory, highest first: command
     // line, environment, project config, cuno.toml, user config. Each is
@@ -811,8 +807,8 @@ mod tests {
     }
 
     /// Mutation: accept an empty output directory from the command line or a
-    /// file, or describe a bad command-line path as written in a file; this
-    /// test fails.
+    /// file, take an empty `CUNO_TARGET_DIR` as one, or describe a bad
+    /// command-line path as written in a file; this test fails.
     #[test]
     fn an_empty_or_drive_dependent_output_directory_is_an_error() {
         let f = Fixture::new();
@@ -838,6 +834,17 @@ mod tests {
         assert!(err.message.contains("is empty"), "{err}");
         assert_eq!(err.location.unwrap().line, 3);
         std::fs::remove_file(f.root.join(".cuno/config.toml")).unwrap();
+
+        // An empty CUNO_TARGET_DIR counts as unset, not as an empty output
+        // directory (manifest.md, "Two levels of settings").
+        let s = f
+            .resolve(
+                &f.root,
+                &f.env(&[("CUNO_TARGET_DIR", "")]),
+                &CliSettings::default(),
+            )
+            .value;
+        assert_eq!(s.target_dir, f.root.join("target"));
 
         f.write(
             "project/cuno.toml",
