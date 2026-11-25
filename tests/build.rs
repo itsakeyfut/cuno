@@ -1248,7 +1248,7 @@ fn an_up_to_date_step_shows_its_last_warnings_again() {
         );
         assert_eq!(warnings(&again), warnings(&first), "{name}");
         assert!(
-            !again.stderr.contains("main.cpp\n"),
+            !again.stderr.lines().any(|l| l.trim() == "main.cpp"),
             "{name}: {}",
             again.stderr
         );
