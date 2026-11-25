@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 93c22b5490a423d03729b76a7a636101cad13c37 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 587e230075bc0ebcffee42a14ccb091c7059f584 -->
 
 # Build
 
@@ -224,7 +224,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   4. `[build] target-dir` in `cuno.toml`
   5. User-level `<cuno home>/config.toml`
   6. Default value `target/`
-- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it; the build commands and `cuno clean` report the missing project first outside a project, so it is `cuno doctor` that reports this, [commands.md](commands.md#cuno-build--cuno-check)), it is an error (exit code 3). This holds whichever layer sets it, and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `cuno.toml` is an error).
+- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it; the build commands and `cuno clean` report the missing project first outside a project, so it is `cuno doctor` that reports this, [commands.md](commands.md#cuno-build--cuno-check)), it is an error (exit code 3). This holds whichever layer sets it (an empty `CUNO_TARGET_DIR` environment variable counts as unset, [manifest.md](manifest.md#two-levels-of-settings)), and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `cuno.toml` is an error).
   - Rationale: if the result depended on how the path is written (`""`, `"."`, `"a/.."`) or on which layer wins, the error would first appear only when another layer's setting is removed.
   - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
 - A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3), even in a layer that does not win. The error names the file and line where it was written, with ``error: `build.target-dir` in .cuno/config.toml points outside the project: <path>`` and `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project`. To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.

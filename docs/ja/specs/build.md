@@ -222,7 +222,7 @@ C/C++ のコンパイル以外の処理（シェーダのコンパイル、コ�
   4. `cuno.toml` の `[build] target-dir`
   5. ユーザー単位の `<管理ディレクトリ>/config.toml`
   6. 既定値 `target/`
-- 出力先が空、またはプロジェクトのルートかその上のディレクトリ（プロジェクトの外では、カレントディレクトリかその上。ビルド系コマンドと `cuno clean` は、プロジェクトの外ではプロジェクトがないことを先に示すので、これを示すのは `cuno doctor`。[commands.md](commands.md#cuno-build--cuno-check)）を指す場合はエラー（終了コード 3）。どの層で指定しても同じで、優先順位で採用されない層の値も確かめる（`--target-dir` があっても、`cuno.toml` の `target-dir = "."` はエラー）。
+- 出力先が空、またはプロジェクトのルートかその上のディレクトリ（プロジェクトの外では、カレントディレクトリかその上。ビルド系コマンドと `cuno clean` は、プロジェクトの外ではプロジェクトがないことを先に示すので、これを示すのは `cuno doctor`。[commands.md](commands.md#cuno-build--cuno-check)）を指す場合はエラー（終了コード 3）。どの層で指定しても同じで（環境変数 `CUNO_TARGET_DIR` は、値が空なら設定されていないものとして扱う。[manifest.md](manifest.md#2-階層の設定)）、優先順位で採用されない層の値も確かめる（`--target-dir` があっても、`cuno.toml` の `target-dir = "."` はエラー）。
   - 理由: 書き方（`""`、`"."`、`"a/.."`）や、どの層が採用されるかで結果が変わると、ほかの層の指定を外したときに初めてエラーになる。
   - 理由: `cuno clean` は出力先全体を削除するため。`target-dir = "."` のような指定を許すと、プロジェクトのソースごと消えてしまう。
 - プロジェクトに置かれた層（`cuno.toml`、`.cuno/config.toml`）の `target-dir` は、プロジェクトの中を指さなければならない。外を指す場合はエラー（終了コード 3）。採用されない層でも同じ。エラーは書いたファイルと行を示し、``error: `build.target-dir` in .cuno/config.toml points outside the project: <パス>`` と `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project` を出す。プロジェクトの外に置きたい場合は、ユーザー単位の config、環境変数 `CUNO_TARGET_DIR`、`--target-dir` で指定する。
