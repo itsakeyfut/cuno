@@ -864,6 +864,8 @@ path = \"main.cpp\"
                 "examples/e.cpp",
             ],
         );
+        // The project's own manifest is on disk, as it is in a real project.
+        std::fs::write(root.join("cuno.toml"), "").unwrap();
         let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
         let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
         assert_eq!(got, ["main.cpp", "src/a.cpp"]);
