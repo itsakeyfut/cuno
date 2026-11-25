@@ -131,7 +131,7 @@ fn every_generated_package_builds_tests_and_runs() {
 /// The package gets a repository and a `.gitignore` of cuno's outputs,
 /// except inside a repository, where it gets the `.gitignore` alone; with
 /// `--vcs none`, or no git, neither; with no git, a warning
-/// (`commands.md`, "`--vcs`").
+/// (`commands.md`, "`cuno new <path>`").
 ///
 /// Mutation: run `git init` inside a repository, skip it outside one,
 /// write a `.gitignore` under `--vcs none` or with no git, change what it

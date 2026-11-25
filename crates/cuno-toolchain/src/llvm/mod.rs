@@ -1,5 +1,6 @@
 //! LLVM: finding clang, clang-cl, clang-format and clang-tidy. See
-//! `docs/en/specs/toolchain.md`, "LLVM".
+//! `docs/en/specs/toolchain.md`, "LLVM (clang / clang-cl / clang-format /
+//! clang-tidy)".
 
 mod detect;
 

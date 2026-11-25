@@ -153,8 +153,8 @@ enum Command {
     },
 }
 
-/// The options of the build commands (docs/en/specs/commands.md, "Build
-/// commands").
+/// The options of the build commands (docs/en/specs/commands.md, "Available for
+/// build commands (`build` / `run` / `check` / `test`)").
 #[derive(Args)]
 struct BuildOpts {
     /// Build with the release profile
@@ -498,11 +498,11 @@ fn dispatch(
             return Ok(if problems == 0 { 0 } else { 1 });
         }
         None => {
-            // No command was given. Like Cargo, print the usage to stdout
-            // and succeed; see docs/en/specs/commands.md, "Without a
-            // command". A failed write (a closed stdout) is ignored,
-            // matching what clap does for `--help` and what Cargo does in
-            // both cases: the exit code stays 0.
+            // No command was given. Like Cargo, print the usage to stdout and
+            // succeed; see docs/en/specs/commands.md, "Without a command
+            // (`--version` / `--help` / no arguments)". A failed write (a
+            // closed stdout) is ignored, matching what clap does for `--help`
+            // and what Cargo does in both cases: the exit code stays 0.
             let usage = Cli::command().render_help();
             let _ = write_styled(stdout.as_mut(), &usage, help_color);
             return Ok(0);

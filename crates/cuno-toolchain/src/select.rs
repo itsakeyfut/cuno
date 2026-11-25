@@ -308,8 +308,9 @@ pub fn copy_of(
                 .any(|t| t.tool == tool && t.origin == Origin::Configured);
             if configured {
                 // The configured copy is the only one used (`toolchain.md`,
-                // "LLVM"): one that cannot be used is an error, never a
-                // reason to take another.
+                // "LLVM (clang / clang-cl / clang-format / clang-tidy)"): one
+                // that cannot be used is an error, never a reason to take
+                // another.
                 let chosen = select_tool(tool, found.llvm, host)?;
                 if !acceptable(&chosen.version) {
                     return Err(ToolchainError::ConfiguredToolUnusable {
@@ -413,9 +414,9 @@ fn release(tool: &LlvmTool) -> Result<Version, String> {
     }
 }
 
-/// The version of a tool that ran, is a release, and on Windows targets MSVC
-/// (a MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM"), or why
-/// it is not eligible.
+/// The version of a tool that ran, is a release, and on Windows targets MSVC (a
+/// MinGW Clang cannot be linked with MSVC; `toolchain.md`, "LLVM (clang /
+/// clang-cl / clang-format / clang-tidy)"), or why it is not eligible.
 fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
     let version = release(tool)?;
     if host == HostOs::Windows {
@@ -441,12 +442,13 @@ pub struct LlvmChoice {
     pub version: Version,
 }
 
-/// The copy of `tool` to use among those detected (`toolchain.md`, "LLVM"):
-/// the one written in `[toolchain.paths]` when there is one, which must be
-/// eligible, or else the newest eligible copy; among equals, the first in
-/// search order. Eligible is a release that ran, and for clang and clang-cl
-/// on Windows one targeting MSVC; clang-format and clang-tidy have no target
-/// to check (clang-tidy prints none). No version requirement applies here.
+/// The copy of `tool` to use among those detected (`toolchain.md`, "LLVM (clang
+/// / clang-cl / clang-format / clang-tidy)"): the one written in
+/// `[toolchain.paths]` when there is one, which must be eligible, or else the
+/// newest eligible copy; among equals, the first in search order. Eligible is a
+/// release that ran, and for clang and clang-cl on Windows one targeting MSVC;
+/// clang-format and clang-tidy have no target to check (clang-tidy prints
+/// none). No version requirement applies here.
 pub fn select_tool(
     tool: Tool,
     llvm: &[LlvmTool],

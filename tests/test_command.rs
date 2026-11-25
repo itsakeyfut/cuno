@@ -1,6 +1,7 @@
-//! `cuno test` on every compiler here: it builds a package's tests, runs
-//! them, shows the report, and exits 0 only when every test passed. See
-//! docs/en/specs/commands.md, "`cuno test`", and docs/en/specs/testing.md.
+//! `cuno test` on every compiler here: it builds a package's tests, runs them,
+//! shows the report, and exits 0 only when every test passed. See
+//! docs/en/specs/commands.md, "`cuno test [filter]`", and
+//! docs/en/specs/testing.md.
 //!
 //! The expected paths (`target\debug\...\calc.exe`) and the crash code
 //! (`0xC0000005`, an access violation) are Windows', where these compilers
@@ -142,7 +143,7 @@ fn the_filter_and_nocapture() {
 }
 
 /// A test build that does not compile exits 1 and runs nothing, as a
-/// failed `cuno build` does (`commands.md`, "`cuno test`").
+/// failed `cuno build` does (`commands.md`, "`cuno test [filter]`").
 ///
 /// Mutation: run the tests after a failed build, or exit 0; this test
 /// fails.
@@ -167,7 +168,7 @@ fn a_failed_build_exits_1() {
 
 /// An executable whose tests cannot be listed (here, one name at two
 /// places) makes `cuno test` exit 1 although no test failed
-/// (`commands.md`, "`cuno test`").
+/// (`commands.md`, "`cuno test [filter]`").
 ///
 /// Mutation: exit by failed tests alone, ignoring executables that could
 /// not be listed; this test fails.
@@ -193,12 +194,12 @@ fn an_unlisted_executable_exits_1() {
     }
 }
 
-/// Run from a subdirectory with `--release` and `-q`: the release build's
-/// tests run in the project root with the environment cuno was given, no
-/// `Running` line is shown, and no directory of results is left behind;
-/// without `-q`, the `Running` path is absolute, the executable not being
-/// under the current directory (`commands.md`, "`cuno test`"; `build.md`,
-/// "Output directory").
+/// Run from a subdirectory with `--release` and `-q`: the release build's tests
+/// run in the project root with the environment cuno was given, no `Running`
+/// line is shown, and no directory of results is left behind; without `-q`, the
+/// `Running` path is absolute, the executable not being under the current
+/// directory (`commands.md`, "`cuno test [filter]`"; `build.md`, "Output
+/// directory").
 ///
 /// Mutation: run the tests elsewhere than the root, hand them another
 /// environment, build `dev` whatever the profile, show `Running` under

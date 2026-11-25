@@ -6,9 +6,8 @@ use std::path::PathBuf;
 use cuno_core::{CunoError, ExitClass};
 
 /// What stops a build: a problem with the package's layout, found before
-/// anything is compiled (`docs/en/specs/project-layout.md`, "Entry files
-/// and the package body"), a `--bin` that names no executable, or a step
-/// that failed.
+/// anything is compiled (`docs/en/specs/project-layout.md`, "Entry files and
+/// package body"), a `--bin` that names no executable, or a step that failed.
 #[derive(Debug)]
 pub enum BuildError {
     /// No entry file, nothing in `src/bin/`, no `[[bin]]`.
