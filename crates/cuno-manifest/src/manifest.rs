@@ -53,10 +53,10 @@ pub struct Manifest {
     pub bins: Option<Vec<Bin>>,
     /// `[test]`.
     pub test: Test,
-    /// `[fmt]`, read as written; what its keys mean is the formatter's.
-    pub fmt: Option<toml::Table>,
-    /// `[lint]`, read as written; what its keys mean is the linter's.
-    pub lint: Option<toml::Table>,
+    /// `[fmt]`.
+    pub fmt: Fmt,
+    /// `[lint]`.
+    pub lint: Lint,
 }
 
 /// `[package]`.
@@ -125,6 +125,65 @@ pub struct Bin {
     pub path: PathBuf,
     /// `subsystem`.
     pub subsystem: Subsystem,
+}
+
+/// `[fmt]` (`docs/en/specs/dev-tools.md`, "`[fmt]` / `[lint]` keys").
+/// `indent_width`, `column_limit` and `use_tabs` are `None` when not
+/// written: the style's own values apply then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fmt {
+    /// `style`.
+    pub style: FmtStyle,
+    /// `indent-width`.
+    pub indent_width: Option<u32>,
+    /// `column-limit`.
+    pub column_limit: Option<u32>,
+    /// `use-tabs`.
+    pub use_tabs: Option<bool>,
+    /// `exclude`: patterns of files not to format.
+    pub exclude: Vec<String>,
+    /// `[fmt.clang-format]`, passed to clang-format as written.
+    pub clang_format: toml::Table,
+}
+
+impl Default for Fmt {
+    fn default() -> Fmt {
+        Fmt {
+            style: FmtStyle::Cuno,
+            indent_width: None,
+            column_limit: None,
+            use_tabs: None,
+            exclude: Vec::new(),
+            clang_format: toml::Table::new(),
+        }
+    }
+}
+
+/// `[lint]` (`docs/en/specs/dev-tools.md`, "`[fmt]` / `[lint]` keys").
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lint {
+    /// `preset`.
+    pub preset: LintPreset,
+    /// `allow`: checks to disable.
+    pub allow: Vec<String>,
+    /// `warn`: checks to report as warnings.
+    pub warn: Vec<String>,
+    /// `deny`: checks to report as errors.
+    pub deny: Vec<String>,
+    /// `exclude`: patterns of files not to analyse.
+    pub exclude: Vec<String>,
+}
+
+impl Default for Lint {
+    fn default() -> Lint {
+        Lint {
+            preset: LintPreset::Recommended,
+            allow: Vec::new(),
+            warn: Vec::new(),
+            deny: Vec::new(),
+            exclude: Vec::new(),
+        }
+    }
 }
 
 /// `[test]`.
@@ -196,6 +255,25 @@ choices!(
     Release = "release" }
 );
 choices!(
+    /// `[fmt] style`.
+    FmtStyle { /// cuno's own, the default.
+    Cuno = "cuno", /// The LLVM project's.
+    Llvm = "llvm", /// Google's.
+    Google = "google", /// Microsoft's.
+    Microsoft = "microsoft", /// Mozilla's.
+    Mozilla = "mozilla", /// WebKit's.
+    Webkit = "webkit", /// Chromium's.
+    Chromium = "chromium", /// GNU's.
+    Gnu = "gnu" }
+);
+choices!(
+    /// `[lint] preset`.
+    LintPreset { /// No checks but those written in `warn` / `deny`.
+    None = "none", /// Few false positives; the default.
+    Recommended = "recommended", /// Stricter.
+    Strict = "strict" }
+);
+choices!(
     /// `[test] framework`.
     Framework { /// cuno's own.
     Cuno = "cuno" }
@@ -224,8 +302,31 @@ struct RawManifest {
     lib: Option<toml::Value>,
     dependencies: Option<toml::Value>,
     test: Option<RawTest>,
-    fmt: Option<toml::Table>,
-    lint: Option<toml::Table>,
+    fmt: Option<RawFmt>,
+    lint: Option<RawLint>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(expecting = "a table")]
+struct RawFmt {
+    style: Option<String>,
+    indent_width: Option<u32>,
+    column_limit: Option<u32>,
+    use_tabs: Option<bool>,
+    exclude: Option<Vec<String>>,
+    clang_format: Option<toml::Table>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+#[serde(expecting = "a table")]
+struct RawLint {
+    preset: Option<String>,
+    allow: Option<Vec<String>>,
+    warn: Option<Vec<String>>,
+    deny: Option<Vec<String>>,
+    exclude: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -528,6 +629,48 @@ impl Check<'_> {
             },
         };
 
+        let raw_fmt = raw.fmt.unwrap_or_default();
+        for (key, value) in [
+            ("indent-width", raw_fmt.indent_width),
+            ("column-limit", raw_fmt.column_limit),
+        ] {
+            if value == Some(0) {
+                let path = format!("fmt.{key}");
+                return Err(self.error(
+                    &path,
+                    format!(
+                        "`{path}` is 0 in {}, which is not a width",
+                        self.doc.file.display()
+                    ),
+                ));
+            }
+        }
+        let fmt = Fmt {
+            style: self
+                .choice("fmt.style", raw_fmt.style, FmtStyle::parse, FmtStyle::ALL)?
+                .unwrap_or(FmtStyle::Cuno),
+            indent_width: raw_fmt.indent_width,
+            column_limit: raw_fmt.column_limit,
+            use_tabs: raw_fmt.use_tabs,
+            exclude: raw_fmt.exclude.unwrap_or_default(),
+            clang_format: raw_fmt.clang_format.unwrap_or_default(),
+        };
+        let raw_lint = raw.lint.unwrap_or_default();
+        let lint = Lint {
+            preset: self
+                .choice(
+                    "lint.preset",
+                    raw_lint.preset,
+                    LintPreset::parse,
+                    LintPreset::ALL,
+                )?
+                .unwrap_or(LintPreset::Recommended),
+            allow: raw_lint.allow.unwrap_or_default(),
+            warn: raw_lint.warn.unwrap_or_default(),
+            deny: raw_lint.deny.unwrap_or_default(),
+            exclude: raw_lint.exclude.unwrap_or_default(),
+        };
+
         Ok(Manifest {
             package,
             compiler: toolchain.compiler,
@@ -540,8 +683,8 @@ impl Check<'_> {
             profiles,
             bins,
             test,
-            fmt: raw.fmt,
-            lint: raw.lint,
+            fmt,
+            lint,
         })
     }
 
@@ -971,7 +1114,7 @@ indent-width = 2
             }])
         );
         assert_eq!(m.test.framework, Framework::Cuno);
-        assert_eq!(m.fmt.unwrap()["indent-width"].as_integer(), Some(2));
+        assert_eq!(m.fmt.indent_width, Some(2));
 
         let m = read(MINIMAL).unwrap().value;
         assert_eq!(
@@ -984,7 +1127,7 @@ indent-width = 2
         assert_eq!(m.build, BuildTable::default());
         assert!(m.compiler_flags.is_empty() && m.platform.is_empty() && m.profiles.is_empty());
         assert_eq!(m.bins, None);
-        assert_eq!((m.fmt, m.lint), (None, None));
+        assert_eq!((m.fmt, m.lint), (Fmt::default(), Lint::default()));
     }
 
     /// Mutation: change a default of `[[bin]]` or the edition C gets; this
@@ -1365,7 +1508,7 @@ indent-width = 2
         let m = read(&with("[toolchain.version]\nsafec = \">=1\"\n")).unwrap();
         assert_eq!(m.warnings, []);
         let m = read(&with("[lint]\npreset = \"strict\"\n")).unwrap().value;
-        assert_eq!(m.lint.unwrap()["preset"].as_str(), Some("strict"));
+        assert_eq!(m.lint.preset, LintPreset::Strict);
     }
 
     /// Mutation: reject `-` or `_` in a package name; this test fails.
@@ -1373,6 +1516,85 @@ indent-width = 2
     fn a_name_may_hold_hyphens_and_underscores() {
         let m = read("[package]\nname = \"my-app_2\"\nversion = \"1.0.0\"\n").unwrap();
         assert_eq!(m.value.package.name, "my-app_2");
+    }
+
+    /// Every key of `[fmt]` and `[lint]` is read with its value; the keys not
+    /// written keep their defaults (`dev-tools.md`, "`[fmt]` / `[lint]`
+    /// keys").
+    ///
+    /// Mutation: read a key under another name, drop one, or change a
+    /// default; this test fails.
+    #[test]
+    fn fmt_and_lint_keys_are_read() {
+        let m = read(&with(
+            "[fmt]\nstyle = \"google\"\nindent-width = 3\ncolumn-limit = 90\nuse-tabs = true\n\
+             exclude = [\"third_party/**\"]\n[fmt.clang-format]\nPointerAlignment = \"Left\"\n\
+             [lint]\npreset = \"none\"\nallow = [\"a-*\"]\nwarn = [\"w\"]\ndeny = [\"d\"]\nexclude = [\"x\"]\n",
+        ))
+        .unwrap()
+        .value;
+        assert_eq!(m.fmt.style, FmtStyle::Google);
+        assert_eq!(
+            (m.fmt.indent_width, m.fmt.column_limit, m.fmt.use_tabs),
+            (Some(3), Some(90), Some(true))
+        );
+        assert_eq!(m.fmt.exclude, ["third_party/**"]);
+        assert_eq!(
+            m.fmt.clang_format["PointerAlignment"].as_str(),
+            Some("Left")
+        );
+        assert_eq!(m.lint.preset, LintPreset::None);
+        assert_eq!(
+            (m.lint.allow, m.lint.warn, m.lint.deny, m.lint.exclude),
+            (
+                vec!["a-*".to_owned()],
+                vec!["w".to_owned()],
+                vec!["d".to_owned()],
+                vec!["x".to_owned()]
+            )
+        );
+        let empty = read(MINIMAL).unwrap().value;
+        assert_eq!(empty.fmt.style, FmtStyle::Cuno);
+        assert_eq!(
+            (
+                empty.fmt.indent_width,
+                empty.fmt.column_limit,
+                empty.fmt.use_tabs
+            ),
+            (None, None, None)
+        );
+        assert_eq!(empty.lint.preset, LintPreset::Recommended);
+    }
+
+    /// A value `[fmt]` or `[lint]` cannot take is an error at its line, and
+    /// an unknown key there is a warning, the rest still read.
+    ///
+    /// Mutation: accept an unknown style or preset, a zero width or a
+    /// string for `use-tabs`, or ignore an unknown key silently; this test
+    /// fails.
+    #[test]
+    fn fmt_and_lint_values_are_checked() {
+        for (rest, key) in [
+            ("[fmt]\nstyle = \"pretty\"\n", "fmt.style"),
+            ("[lint]\npreset = \"loose\"\n", "lint.preset"),
+            ("[fmt]\nindent-width = 0\n", "fmt.indent-width"),
+            ("[fmt]\ncolumn-limit = 0\n", "fmt.column-limit"),
+            // A wrong type names what was expected, at its line.
+            ("[fmt]\nuse-tabs = \"no\"\n", "expected a boolean"),
+        ] {
+            let err = read(&with(rest)).unwrap_err();
+            assert!(err.message.contains(key), "{rest:?}: {}", err.message);
+            assert_eq!(err.location.as_ref().map(|l| l.line), Some(5), "{rest:?}");
+        }
+        let loaded = read(&with("[fmt]\ncolour = 1\nstyle = \"llvm\"\n")).unwrap();
+        assert_eq!(loaded.value.fmt.style, FmtStyle::Llvm);
+        let warning = &loaded.warnings[0];
+        assert!(
+            warning.message.contains("fmt.colour"),
+            "{}",
+            warning.message
+        );
+        assert_eq!(warning.location.as_ref().map(|l| l.line), Some(5));
     }
 
     /// Mutation: drop or change the `help:` of any of these errors; this
