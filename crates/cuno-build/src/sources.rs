@@ -38,6 +38,30 @@ pub const TESTS_DIR: &str = "tests";
 /// any of them.
 pub const SOURCE_DIRS: [&str; 2] = [SRC_DIR, TESTS_DIR];
 
+/// The directories where the package's code lives, which `cuno fmt` and
+/// `cuno lint` act on (`docs/en/specs/project-layout.md`, "Where the
+/// package's code lives").
+pub const CODE_DIRS: [&str; 4] = [SRC_DIR, TESTS_DIR, "examples", "benches"];
+
+/// A file of the package's code: its path, as found, and the language it is
+/// read in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeFile {
+    /// Its absolute path, spelled as found.
+    pub path: PathBuf,
+    /// Its language; a `.h` is the package's.
+    pub lang: Lang,
+}
+
+/// The package's code, and what was passed over while finding it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Code {
+    /// The files, sorted, each once.
+    pub files: Vec<CodeFile>,
+    /// Links to directories, which are not read.
+    pub warnings: Vec<SourceWarning>,
+}
+
 /// An executable: its name, its entry file and how it starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bin {
@@ -102,6 +126,72 @@ impl fmt::Display for SourceWarning {
     }
 }
 
+/// The language of a file of the package's code with this extension, or
+/// `None` for a file that is not C or C++ code: the sources of
+/// [`language`], their headers, and `.inl` (`docs/en/specs/dev-tools.md`,
+/// "Target files"); a `.h` in `package`'s language.
+fn code_language(path: &Path, package: Lang) -> Option<Lang> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "c" => Some(Lang::C),
+        "h" => Some(package),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "inl" => Some(Lang::Cxx),
+        _ => None,
+    }
+}
+
+/// The files of the package's code at `root`: every C or C++ file under
+/// [`CODE_DIRS`] and under the directory of each `[[bin]] path` outside
+/// them, leaving out `target_dir` and any directory holding its own
+/// `cuno.toml` (another package), walked as [`classify`] walks
+/// (`docs/en/specs/project-layout.md`, "Where the package's code lives").
+pub fn code_files(
+    root: &Path,
+    manifest: &Manifest,
+    target_dir: &Path,
+    host: HostOs,
+) -> Result<Code, BuildError> {
+    let case = host.name_case();
+    let root = paths::lexical(root);
+    let mut dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
+    let code_places: Vec<Place> = dirs.iter().map(|d| Place::of(d, case)).collect();
+    for bin in manifest.bins.iter().flatten() {
+        let place = Place::of(&bin.path, case);
+        if !code_places.iter().any(|dir| place.within(dir))
+            && let Some(dir) = paths::lexical(&bin.path).parent()
+        {
+            dirs.push(dir.to_owned());
+        }
+    }
+    let mut found = Vec::new();
+    let mut warnings = Vec::new();
+    for dir in dirs.iter().filter(|d| d.is_dir()) {
+        Walk {
+            root: &root,
+            target_dir: Place::of(target_dir, case),
+            case,
+            found: &mut found,
+            warnings: &mut warnings,
+            keep: Keep::Code,
+        }
+        .dir(dir)?;
+    }
+    found.sort_by_cached_key(|p| case.fold(p.as_os_str()));
+    let mut files: Vec<CodeFile> = Vec::new();
+    let mut seen: Vec<Place> = Vec::new();
+    for path in found {
+        let place = Place::of(&path, case);
+        if seen.iter().any(|p| p.same(&place)) {
+            continue;
+        }
+        seen.push(place);
+        let lang = code_language(&path, manifest.package.lang)
+            .expect("the walk keeps C and C++ code only");
+        files.push(CodeFile { path, lang });
+    }
+    Ok(Code { files, warnings })
+}
+
 /// The language of a source with this extension, or `None` for a file that
 /// is not a C or C++ source.
 pub fn language(path: &Path) -> Option<Lang> {
@@ -143,6 +233,7 @@ pub fn classify(
             case,
             found: &mut found,
             warnings: &mut warnings,
+            keep: Keep::Sources,
         }
         .dir(&src)?;
     }
@@ -155,6 +246,7 @@ pub fn classify(
             case,
             found: &mut found_tests,
             warnings: &mut warnings,
+            keep: Keep::Sources,
         }
         .dir(&tests_dir)?;
     }
@@ -380,6 +472,17 @@ struct Walk<'a> {
     case: NameCase,
     found: &'a mut Vec<PathBuf>,
     warnings: &'a mut Vec<SourceWarning>,
+    keep: Keep,
+}
+
+/// What a [`Walk`] collects.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    /// The sources a build compiles, everywhere under the directory.
+    Sources,
+    /// The package's code, headers included, leaving out another package's
+    /// directory.
+    Code,
 }
 
 impl Walk<'_> {
@@ -407,9 +510,24 @@ impl Walk<'_> {
                     why: NotBuilt::DirectoryLink,
                 });
             } else if kind.is_dir() {
-                self.dir(&path)?;
-            } else if path.is_file() && language(&path).is_some() {
-                self.found.push(path);
+                // A directory with its own cuno.toml is another package.
+                let other_package = match self.keep {
+                    Keep::Sources => false,
+                    Keep::Code => path.join("cuno.toml").is_file(),
+                };
+                if !other_package {
+                    self.dir(&path)?;
+                }
+            } else if path.is_file() {
+                let kept = match self.keep {
+                    Keep::Sources => language(&path).is_some(),
+                    // The package's language does not decide whether a file
+                    // is kept, only what a `.h` is read as.
+                    Keep::Code => code_language(&path, Lang::Cxx).is_some(),
+                };
+                if kept {
+                    self.found.push(path);
+                }
             }
         }
         Ok(())
@@ -545,6 +663,84 @@ mod tests {
                 "src/main.cpp is not built: [[bin]] is written and does not list it"
             ]
         );
+    }
+
+    /// Every file of the package's code is listed, each once and in path
+    /// order: the four directories, the directory of a `[[bin]] path` outside
+    /// them with the header beside it, every extension `dev-tools.md` names
+    /// and nothing else, a `.h` in the package's language
+    /// (`project-layout.md`, "Where the package's code lives").
+    ///
+    /// Mutation: leave out a directory, the `[[bin]]` directory or an
+    /// extension, keep a file of another kind, read a `.h` as C++ in a C
+    /// package, or list a file twice; this test fails.
+    #[test]
+    fn the_code_is_every_c_and_cpp_file_where_the_package_keeps_it() {
+        let (_d, root, m) = project(
+            "c",
+            "[[bin]]
+name = \"tool\"
+path = \"tools/tool.c\"
+",
+            &[
+                "src/main.c",
+                "src/a.h",
+                "tests/t.cpp",
+                "tests/t.hpp",
+                "examples/e.cc",
+                "examples/e.hh",
+                "benches/b.cxx",
+                "benches/b.hxx",
+                "benches/b.inl",
+                "tools/tool.c",
+                "tools/tool.h",
+                "src/notes.txt",
+                "docs/x.c",
+            ],
+        );
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<(String, Lang)> = code
+            .files
+            .iter()
+            .map(|f| (shown(&root, &f.path), f.lang))
+            .collect();
+        let want = [
+            ("benches/b.cxx", Lang::Cxx),
+            ("benches/b.hxx", Lang::Cxx),
+            ("benches/b.inl", Lang::Cxx),
+            ("examples/e.cc", Lang::Cxx),
+            ("examples/e.hh", Lang::Cxx),
+            ("src/a.h", Lang::C),
+            ("src/main.c", Lang::C),
+            ("tests/t.cpp", Lang::Cxx),
+            ("tests/t.hpp", Lang::Cxx),
+            ("tools/tool.c", Lang::C),
+            ("tools/tool.h", Lang::C),
+        ]
+        .map(|(p, l)| (p.to_owned(), l));
+        assert_eq!(got, want);
+    }
+
+    /// The output directory, named in another case, and another package
+    /// under `examples/` are not the package's code.
+    ///
+    /// Mutation: compare the output directory by spelling, or walk into a
+    /// directory with its own `cuno.toml`; this test fails.
+    #[test]
+    fn the_code_leaves_out_the_output_directory_and_other_packages() {
+        let (_d, root, m) = project(
+            "c++",
+            "",
+            &[
+                "src/main.cpp",
+                "src/out/stale.cpp",
+                "examples/other/cuno.toml",
+                "examples/other/src/main.cpp",
+            ],
+        );
+        let code = code_files(&root, &m, &root.join("SRC/OUT"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["src/main.cpp"]);
     }
 
     /// A target directory under `src/` is not read as sources.
