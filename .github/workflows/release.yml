@@ -171,7 +171,16 @@ jobs:
             fi
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
+            # Completed only if it is this commit's: one made by hand, or by
+            # another commit's run, is refused, and its notes are rewritten
+            # from this commit's CHANGELOG.md.
+            target="$(gh release view "$tag" --json targetCommitish -q .targetCommitish)"
+            if [ "$target" != "$GITHUB_SHA" ]; then
+              echo "release $tag targets $target, not $GITHUB_SHA" >&2
+              exit 1
+            fi
             gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --notes-file "$RUNNER_TEMP/notes.md"
           else
             gh release create "$tag" dist/* --draft               --title "$tag"               --notes-file "$RUNNER_TEMP/notes.md"               --target "$GITHUB_SHA"
           fi
