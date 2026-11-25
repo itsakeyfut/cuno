@@ -8,7 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use cuno_core::{Env, Shell};
+use cuno_core::{Env, NameCase, Shell};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
 use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, ToolContext, include_dirs};
@@ -230,7 +230,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Goal::Build | Goal::Test => (Mode::Compile, None),
         Goal::Check { .. } => (Mode::Check, None),
         Goal::Run { bin } => {
-            let exe = layout.exe(&choose(&sources.bins, bin)?.name);
+            let exe = layout.exe(&choose(&sources.bins, bin, host.name_case())?.name);
             (Mode::Compile, Some(exe))
         }
     };
@@ -425,8 +425,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     })
 }
 
-/// The executable `cuno run` runs: the one `bin` names, or the only one.
-fn choose<'a>(bins: &'a [Bin], bin: Option<&str>) -> Result<&'a Bin, BuildError> {
+/// The executable `cuno run` runs: the one `bin` names, compared as `case`
+/// compares the names classification found unique
+/// (`docs/en/specs/commands.md`, "`cuno run`"), or the only one.
+fn choose<'a>(bins: &'a [Bin], bin: Option<&str>, case: NameCase) -> Result<&'a Bin, BuildError> {
     let available = || {
         bins.iter()
             .map(|b| b.name.as_str())
@@ -434,14 +436,13 @@ fn choose<'a>(bins: &'a [Bin], bin: Option<&str>) -> Result<&'a Bin, BuildError>
             .join(", ")
     };
     match (bin, bins) {
-        (Some(name), _) => {
-            bins.iter()
-                .find(|b| b.name == name)
-                .ok_or_else(|| BuildError::NoSuchBin {
-                    name: name.to_owned(),
-                    available: available(),
-                })
-        }
+        (Some(name), _) => bins
+            .iter()
+            .find(|b| case.same(&b.name, name))
+            .ok_or_else(|| BuildError::NoSuchBin {
+                name: name.to_owned(),
+                available: available(),
+            }),
         (None, [only]) => Ok(only),
         (None, [_, _, ..]) => Err(BuildError::SeveralBins {
             available: available(),
@@ -764,6 +765,43 @@ mod tests {
         assert_eq!(first, 2, "a compile and a link");
         run(root.path(), &manifest, Goal::Build, &fake).unwrap();
         assert_eq!(fake.runs.load(Ordering::SeqCst), first);
+    }
+
+    /// `--bin` compares names as the host's duplicate check does: without
+    /// regard to case on Windows, exactly elsewhere (`commands.md`, "`cuno
+    /// run`").
+    ///
+    /// Mutation: compare with `==`, ignore `case`, or have the build pass
+    /// another case than the host's; this test fails.
+    #[test]
+    fn bin_names_are_compared_as_the_host_compares_them() {
+        let (root, manifest) = package();
+        let built = run(
+            root.path(),
+            &manifest,
+            Goal::Run { bin: Some("APP") },
+            &Fake::default(),
+        )
+        .unwrap();
+        assert!(built.exe.unwrap().ends_with("app.exe"));
+        let bins = [Bin {
+            name: "app".to_owned(),
+            entry: crate::sources::Source {
+                path: root.path().join("src/main.cpp"),
+                lang: Lang::Cxx,
+            },
+            subsystem: cuno_toolchain::flags::Subsystem::Console,
+        }];
+        assert_eq!(
+            choose(&bins, Some("APP"), NameCase::Insensitive)
+                .unwrap()
+                .name,
+            "app"
+        );
+        assert!(matches!(
+            choose(&bins, Some("APP"), NameCase::Sensitive),
+            Err(BuildError::NoSuchBin { .. })
+        ));
     }
 
     /// `--bin` is chosen before anything is written or run, and the build

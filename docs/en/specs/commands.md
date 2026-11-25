@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 9412324f1ca2f392bb0de48d9a023854fea60e7e -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob d9445c927d55ce4851f6823eb6342cfdb971463b -->
 
 # Commands
 
@@ -162,7 +162,8 @@ Values of `--vcs`:
 
 - The working directory at run time is **the project root** (where `cuno.toml` is). This is the base for loading game assets with relative paths.
 - Builds as `cuno build` does (with the same output and the same handling of failures), then runs the chosen executable.
-- How the executable is chosen: if there is only one, that one; with `--bin`, the one of that name. Both are checked before building.
+- How the executable is chosen: if there is only one, that one; with `--bin`, the one of that name. On Windows, names are compared without regard to case, as when checking for duplicate executable names (`--bin APP` runs `app`; see [project-layout.md](project-layout.md#entry-files-and-package-body)). Both are checked before building.
+  - Reason: comparing the same way as the duplicate check means exactly one executable matches, and it is the same file in the output directory too.
   - Several, and no `--bin`: `error: several executables can be run; choose one with --bin` and `help: available: app, tool` (the candidates' names), exit code 2.
   - No executable of the name given to `--bin`: ``error: no executable named `x` `` and the same `help:`, exit code 2.
 - Before running, a `Running` line shows the executable's path (relative to the current directory; absolute if it is not under it). Not printed with `-q`.
