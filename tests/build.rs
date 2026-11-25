@@ -1292,9 +1292,12 @@ fn a_replayed_warning_follows_the_color_and_the_status_line() {
         .file("cuno.toml", MANIFEST)
         .file(
             "src/main.cpp",
-            "int helper();\nint main() { int unused = 0; return helper(); }\n",
+            "int helper();\nint main() { return helper(); }\n",
         )
-        .file("src/util.cpp", "int helper() { return 0; }\n");
+        .file(
+            "src/util.cpp",
+            "int helper() { int unused = 0; return 0; }\n",
+        );
     let colored = project.cuno(&["--color", "always", "build", "--compiler", "clang"]);
     assert!(colored.stderr.contains('\x1b'), "{}", colored.stderr);
 
@@ -1303,12 +1306,12 @@ fn a_replayed_warning_follows_the_color_and_the_status_line() {
     assert!(!plain.stderr.contains('\x1b'), "{:?}", plain.stderr);
 
     std::fs::write(
-        project.path().join("src/util.cpp"),
-        "int helper() { return 1; }\n",
+        project.path().join("src/main.cpp"),
+        "int helper();\nint main() { return helper() + 1; }\n",
     )
     .unwrap();
-    // One step at a time, in plan order: the up-to-date entry is judged
-    // before the body runs, so a replay printed at once would come first.
+    // One step at a time, in plan order: the up-to-date body is judged
+    // before the entry runs, so a replay printed at once would come first.
     let partial = project.cuno(&[
         "--color",
         "never",
