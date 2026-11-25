@@ -101,6 +101,35 @@ fn fmt_styles_in_the_package_s_language_from_cuno_toml() {
     assert_eq!(read(".clang-format"), "BasedOnStyle: Google\n");
 }
 
+/// A source that is a link to a file is left as it is and warned about,
+/// since its target may be outside the project (`dev-tools.md`, "Target
+/// files"). Skipped where this account may not make file links.
+///
+/// Mutation: format through links; this test fails.
+#[cfg(windows)]
+#[test]
+fn fmt_leaves_a_link_and_says_so() {
+    if require_llvm_tool("clang-format").is_none() {
+        return;
+    }
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("shared.cpp");
+    std::fs::write(&target, UGLY).unwrap();
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file("src/main.cpp", "int main() { return 0; }\n");
+    if std::os::windows::fs::symlink_file(&target, project.path().join("src/shared.cpp")).is_err() {
+        eprintln!("skipped: this account cannot make file links");
+        return;
+    }
+    project.cuno(&["fmt"]).assert(
+        0,
+        "",
+        "warning: `src/shared.cpp` is a link; cuno fmt leaves it\n   Formatted 0 files\n",
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), UGLY);
+}
+
 /// A clang-format that is not there is an environment problem, exit 3,
 /// before anything is formatted.
 ///

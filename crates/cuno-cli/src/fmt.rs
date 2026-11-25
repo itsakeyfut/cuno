@@ -53,6 +53,17 @@ pub fn fmt(
                 .any(|glob| glob.matches(&relative, case))
         })
         .collect();
+    // A link can lead outside the project; it is read by the build, never
+    // written by fmt (dev-tools.md, "Target files").
+    let (links, files): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    });
+    for link in &links {
+        shell.warning(format!(
+            "`{}` is a link; cuno fmt leaves it",
+            relative(root, link)
+        ));
+    }
 
     let runner = SystemRunner::new();
     let llvm = toolchain::detect(Some(&settings), env, host, &runner)
@@ -68,8 +79,7 @@ pub fn fmt(
     // Formatted with cuno.toml's configuration whatever `.clang-format` the
     // root holds (a hand-written one is kept, not used), from a scratch
     // directory, since `--check` writes nothing in the project.
-    let scratch = temp.join(format!("cuno-fmt-{}", std::process::id()));
-    std::fs::create_dir_all(&scratch).map_err(|e| boxed(scratch_error(&scratch, e)))?;
+    let scratch = scratch_dir(temp).map_err(boxed)?;
     let style = scratch.join(format::FILE);
     let written = std::fs::write(
         &style,
@@ -120,6 +130,23 @@ fn relative(root: &Path, path: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// A directory of its own under `temp`, made here and not found: one that
+/// already exists, whoever made it, is never used.
+fn scratch_dir(temp: &Path) -> Result<PathBuf, ScratchError> {
+    for n in 0..100 {
+        let dir = temp.join(format!("cuno-fmt-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(scratch_error(&dir, e)),
+        }
+    }
+    Err(scratch_error(
+        temp,
+        std::io::Error::other("every scratch name is taken"),
+    ))
 }
 
 /// A scratch file that could not be made: an environment problem

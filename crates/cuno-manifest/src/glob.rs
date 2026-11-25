@@ -83,32 +83,44 @@ fn fold(name: &str, case: NameCase) -> String {
     case.fold(name.as_ref()).to_string_lossy().into_owned()
 }
 
+/// Whether `segments` match `names` exactly; a table over both, so a
+/// pattern of many `**` takes time in proportion to its length times the
+/// path's, never more.
 fn match_segments(segments: &[Segment], names: &[&str]) -> bool {
-    match segments.split_first() {
-        None => names.is_empty(),
-        Some((Segment::Any, rest)) => {
-            (0..=names.len()).any(|skip| match_segments(rest, &names[skip..]))
+    // `can[j]`: the segments so far match the first `j` names.
+    let mut can = vec![false; names.len() + 1];
+    can[0] = true;
+    for segment in segments {
+        let mut next = vec![false; names.len() + 1];
+        for j in 0..=names.len() {
+            next[j] = match segment {
+                // Zero names, or one more than a match one shorter.
+                Segment::Any => can[j] || (j > 0 && next[j - 1]),
+                Segment::Name(pattern) => j > 0 && can[j - 1] && match_name(pattern, names[j - 1]),
+            };
         }
-        Some((Segment::Name(pattern), rest)) => match names.split_first() {
-            Some((name, names)) => match_name(pattern, name) && match_segments(rest, names),
-            None => false,
-        },
+        can = next;
     }
+    can[names.len()]
 }
 
-/// `*` and `?` within one name.
+/// `*` and `?` within one name, by the same kind of table.
 fn match_name(pattern: &str, name: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
     let name: Vec<char> = name.chars().collect();
-    fn at(p: &[char], n: &[char]) -> bool {
-        match p.split_first() {
-            None => n.is_empty(),
-            Some(('*', rest)) => (0..=n.len()).any(|skip| at(rest, &n[skip..])),
-            Some(('?', rest)) => !n.is_empty() && at(rest, &n[1..]),
-            Some((c, rest)) => n.first() == Some(c) && at(rest, &n[1..]),
+    let mut can = vec![false; name.len() + 1];
+    can[0] = true;
+    for p in pattern.chars() {
+        let mut next = vec![false; name.len() + 1];
+        for j in 0..=name.len() {
+            next[j] = match p {
+                '*' => can[j] || (j > 0 && next[j - 1]),
+                '?' => j > 0 && can[j - 1],
+                c => j > 0 && can[j - 1] && name[j - 1] == c,
+            };
         }
+        can = next;
     }
-    at(&pattern, &name)
+    can[name.len()]
 }
 
 #[cfg(test)]
@@ -139,6 +151,20 @@ mod tests {
         assert!(glob("src/?.c").matches("src/a.c", s));
         assert!(!glob("src/?.c").matches("src/.c", s));
         assert!(!glob("src").matches("src/main.cpp", s));
+    }
+
+    /// A pattern of many `**` and `*` against a deep path is answered at
+    /// once, not by trying every split.
+    ///
+    /// Mutation: match by trying every split (backtracking); this test does
+    /// not finish.
+    #[test]
+    fn many_wildcards_do_not_take_exponential_time() {
+        let pattern = vec!["**"; 40].join("/") + "/x";
+        let path = vec!["a"; 60].join("/");
+        assert!(!glob(&pattern).matches(&path, NameCase::Sensitive));
+        let star = format!("{}x", "*a".repeat(30));
+        assert!(!glob(&star).matches(&"a".repeat(80), NameCase::Sensitive));
     }
 
     /// Case is ignored only where the host ignores it.
