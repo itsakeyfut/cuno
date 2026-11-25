@@ -127,9 +127,12 @@ pub enum Products<'a> {
     /// The test executables (`testing.md`, "Execution"): the body, the
     /// sources under `tests/` and cuno's bundled runtime, all compiled with
     /// `CUNO_TEST` and once each, entry files left out, one link per
-    /// executable (`project-layout.md`, "Linking rules"). Always compiled,
-    /// into the test layout.
+    /// executable (`project-layout.md`, "Linking rules"), into the test
+    /// layout; in [`Mode::Check`], checked and not linked (`cuno check
+    /// --tests`).
     Tests {
+        /// Compile, or check.
+        mode: Mode,
         /// The executables, as [`crate::sources::test_executables`] gives.
         executables: &'a [TestExecutable],
         /// The runtime's source, `cuno/test_main.c` in the cuno home.
@@ -184,7 +187,14 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             mode: Mode::Compile,
         },
         Products::Programs { mode } => Purpose { test: false, mode },
-        Products::Tests { .. } | Products::CompileCommands => Purpose {
+        Products::Tests {
+            mode: Mode::Check, ..
+        } if p.kind.checks_by_compiling() => Purpose {
+            test: true,
+            mode: Mode::Compile,
+        },
+        Products::Tests { mode, .. } => Purpose { test: true, mode },
+        Products::CompileCommands => Purpose {
             test: true,
             mode: Mode::Compile,
         },
@@ -290,6 +300,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         Products::Tests {
             executables,
             runtime,
+            mode,
         } => {
             let files: Vec<usize> = p
                 .sources
@@ -303,6 +314,12 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .iter()
                 .map(|s| compile(s, None))
                 .collect();
+            // A check of the user's code leaves cuno's own runtime out, and
+            // links nothing; checking by compiling compiles it as `cuno test`
+            // would, so those objects are the test run's.
+            if purpose.mode == Mode::Check {
+                return Graph { steps };
+            }
             let name = runtime
                 .file_name()
                 .expect("the runtime's source is a file")
@@ -315,6 +332,10 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 },
                 Some(layout.runtime_object(p.package, &name)),
             );
+            match mode {
+                Mode::Compile => {}
+                Mode::Check => return Graph { steps },
+            }
             for exe in executables {
                 // In-source tests: the body and the runtime. A file under
                 // `tests/`: that file, the helpers, the body and the runtime
@@ -879,6 +900,56 @@ mod tests {
             .collect()
     }
 
+    /// A check of the tests (`cuno check --tests`) checks the body and the
+    /// sources under `tests/` with `CUNO_TEST`, in the test layout, and
+    /// leaves out cuno's runtime, the entry files and every link.
+    ///
+    /// Mutation: check the tests without `CUNO_TEST`, in the program's
+    /// layout, with the runtime, or with links; this test fails.
+    #[test]
+    fn a_check_of_the_tests_checks_the_test_build_and_links_nothing() {
+        let sources = test_sources();
+        let executables =
+            crate::sources::test_executables(Path::new("C:/p"), "app", &sources, HostOs::Windows)
+                .unwrap();
+        let g = test_plan(
+            Products::Tests {
+                executables: &executables,
+                runtime: Path::new(RUNTIME),
+                mode: Mode::Check,
+            },
+            &sources,
+        );
+        let checked: Vec<&Path> = g
+            .steps
+            .iter()
+            .map(|s| match &s.kind {
+                StepKind::Check { source } => source.as_path(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            checked,
+            [
+                Path::new("C:/p/src/a.cpp"),
+                Path::new("C:/p/tests/t.cpp"),
+                Path::new("C:/p/tests/common/h.c"),
+            ]
+        );
+        for step in &g.steps {
+            assert!(
+                args(step).contains(&"-DCUNO_TEST".to_owned()),
+                "{:?}",
+                args(step)
+            );
+            assert!(
+                step.output.starts_with("C:/p/target/debug/test/app"),
+                "{}",
+                step.output.display()
+            );
+        }
+    }
+
     /// The test build compiles the body, the sources under `tests/` and the
     /// runtime with `CUNO_TEST`, each once and the runtime as C, never an
     /// entry file. It links the in-source tests from the body and the
@@ -905,6 +976,7 @@ mod tests {
             Products::Tests {
                 executables: &executables,
                 runtime: Path::new(RUNTIME),
+                mode: Mode::Compile,
             },
             &sources,
         );

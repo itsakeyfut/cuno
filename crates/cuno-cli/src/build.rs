@@ -49,8 +49,14 @@ pub(crate) fn in_project(
 pub enum Goal {
     /// `cuno build`: compile and link.
     Build,
-    /// `cuno check`: check every source, without objects or links.
-    Check,
+    /// `cuno check`: check the program's sources, the test build's, or both
+    /// (`commands.md`, "`cuno build` / `cuno check`").
+    Check {
+        /// The program's sources.
+        programs: bool,
+        /// The test build's.
+        tests: bool,
+    },
     /// `cuno run`: build, then run the executable `bin` names, or the only
     /// one, with `args`.
     Run {
@@ -127,7 +133,13 @@ pub fn build(
     // with what was built.
     let (pipeline_goal, run) = match &goal {
         Goal::Build => (pipeline::Goal::Build, None),
-        Goal::Check => (pipeline::Goal::Check, None),
+        Goal::Check { programs, tests } => (
+            pipeline::Goal::Check {
+                programs: *programs,
+                tests: *tests,
+            },
+            None,
+        ),
         Goal::Run { bin, args } => (
             pipeline::Goal::Run {
                 bin: bin.as_deref(),

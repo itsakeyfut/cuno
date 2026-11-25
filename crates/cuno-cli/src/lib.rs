@@ -110,7 +110,16 @@ enum Command {
     /// Compile the package
     Build(BuildOpts),
     /// Check the package for errors without building it
-    Check(BuildOpts),
+    Check {
+        /// Check the tests instead of the program
+        #[arg(long)]
+        tests: bool,
+        /// Check both the program and the tests
+        #[arg(long)]
+        all_targets: bool,
+        #[command(flatten)]
+        opts: BuildOpts,
+    },
     /// Build the package and run one of its executables
     Run {
         /// The executable to run, when there are several
@@ -424,7 +433,19 @@ fn dispatch(
 
     let (goal, opts) = match command {
         Some(Command::Build(opts)) => (build::Goal::Build, opts),
-        Some(Command::Check(opts)) => (build::Goal::Check, opts),
+        Some(Command::Check {
+            tests,
+            all_targets,
+            opts,
+        }) => (
+            // `--all-targets` wins over `--tests` (commands.md, "`cuno
+            // build` / `cuno check`").
+            build::Goal::Check {
+                programs: !tests || all_targets,
+                tests: tests || all_targets,
+            },
+            opts,
+        ),
         Some(Command::Run { bin, opts, args }) => (build::Goal::Run { bin, args }, opts),
         Some(Command::Test {
             filter,
