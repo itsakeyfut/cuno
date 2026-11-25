@@ -11,10 +11,10 @@ mod support;
 use std::path::Path;
 use std::process::Command;
 
-use cuno_core::Env;
+use cuno_core::{CunoError, Env};
 use cuno_toolchain::llvm::{ExplicitPaths, LlvmTool, Tool, find_llvm_tools};
 use cuno_toolchain::msvc::{self, SystemRegistry};
-use cuno_toolchain::select::{self, Choices, Found, Selected};
+use cuno_toolchain::select::{self, Choices, Constraints, Found, Selected, VersionReq};
 use cuno_toolchain::{HostOs, SystemRunner};
 use support::compilers::{Compiler, Language, require};
 use support::{Project, Run};
@@ -386,17 +386,39 @@ fn the_toolchain_settings_constrain_the_selection() {
     if !llvm_tools_here() || require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
-    let version = selected("clang").version;
+    // The error cuno's own selection gives here for the same constraint, so
+    // the Clangs it lists are every one found, however many this machine
+    // has.
+    let (installs, llvm) = detected();
+    let refused = select::select(
+        &Choices {
+            cli: Some("clang".to_owned()),
+            ..Default::default()
+        },
+        Found {
+            installs: &installs,
+            llvm: &llvm,
+            explicit_msvc: None,
+        },
+        &Constraints {
+            clang: Some(VersionReq::parse("clang", ">=99").unwrap()),
+            ..Default::default()
+        },
+        HostOs::Windows,
+    )
+    .expect_err("no clang satisfies >=99");
     Project::new()
-        .file("cuno.toml", &manifest("[toolchain.version]\nclang = \">=99\"\n"))
+        .file(
+            "cuno.toml",
+            &manifest("[toolchain.version]\nclang = \">=99\"\n"),
+        )
         .cuno(&["doctor", "--compiler", "clang"])
         .assert(
             1,
             "",
             &format!(
-                "error: no clang found satisfies >=17.0.0 (cuno's minimum) and >=99 ([toolchain.version] clang); found {version}\n\
-                 help: install a clang that satisfies it, or change [toolchain.version] clang\n{}{}    \
-                 Finished 1 problem found\n",
+                "error: {refused}\nhelp: {}\n{}{}    Finished 1 problem found\n",
+                refused.help().unwrap(),
                 found_tools(),
                 // clang is the compiler asked for, so it has no Info line.
                 others(Some(select::CompilerKind::Clang))
