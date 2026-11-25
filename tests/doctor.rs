@@ -318,8 +318,8 @@ fn before_check(healthy: &str) -> &str {
 /// names a compiler, the automatic selection says it is not the
 /// configuration's choice; `CUNO_COMPILER` still applies.
 ///
-/// Mutation: print the plain `automatic selection`, or drop `CUNO_COMPILER`
-/// from the fallback; this test fails.
+/// Mutation: print the plain `automatic selection`, drop `CUNO_COMPILER`
+/// from the fallback, or take an empty one as a name; this test fails.
 #[test]
 fn an_unreadable_configuration_does_not_pass_for_its_choice() {
     let broken = "error: key with no value, expected `=` in .cuno\\config.toml\n --> .cuno\\config.toml:1:4\n";
@@ -339,6 +339,13 @@ fn an_unreadable_configuration_does_not_pass_for_its_choice() {
         .replace("no problems found", "1 problem found");
         project()
             .cuno(&["doctor"])
+            .assert(1, "", &format!("{broken}{expected}"));
+        // An empty CUNO_COMPILER counts as unset (manifest.md, "Two levels
+        // of settings"), not as a name.
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.arg("doctor");
+        project()
+            .run_command_with(cmd, &[("CUNO_COMPILER", "")])
             .assert(1, "", &format!("{broken}{expected}"));
     }
     if require(Compiler::ClangCl, Language::C, "x.c", "x.exe").is_some() {

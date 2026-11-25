@@ -90,6 +90,14 @@ impl Env {
             .map(|(_, value)| value.as_os_str())
     }
 
+    /// The value of cuno's own variable `name` (`CUNO_HOME` and the like),
+    /// or `None` when it is unset or empty: an empty one counts as unset
+    /// (`docs/en/specs/manifest.md`, "Two levels of settings"). Not for
+    /// `NO_COLOR`, which is set even when empty.
+    pub fn set_value(&self, name: &str) -> Option<&OsStr> {
+        self.get(name).filter(|value| !value.is_empty())
+    }
+
     /// Every variable, as (name as spelled, value), for giving a child
     /// process exactly this environment.
     pub fn vars(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
@@ -145,6 +153,22 @@ mod tests {
 
     fn env(pairs: &[(&str, &str)], case: NameCase) -> Env {
         Env::from_pairs(pairs.iter().map(|(n, v)| (n.into(), v.into())), case)
+    }
+
+    /// An empty value counts as unset for `set_value` and not for `get`.
+    ///
+    /// Mutation: let `set_value` return an empty value or drop a non-empty
+    /// one, or make `get` drop an empty one; this test fails.
+    #[test]
+    fn an_empty_value_is_unset_for_set_value_only() {
+        let e = env(
+            &[("CUNO_HOME", ""), ("CUNO_COMPILER", "clang")],
+            NameCase::Insensitive,
+        );
+        assert_eq!(e.set_value("CUNO_HOME"), None);
+        assert_eq!(e.get("CUNO_HOME"), Some(OsStr::new("")));
+        assert_eq!(e.set_value("CUNO_COMPILER"), Some(OsStr::new("clang")));
+        assert_eq!(e.set_value("CUNO_TARGET_DIR"), None);
     }
 
     /// Mutation: make `fold` ignore `case`, in either direction, or have an

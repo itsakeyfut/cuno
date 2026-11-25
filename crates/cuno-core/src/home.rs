@@ -15,7 +15,7 @@ use crate::{CunoError, Env, ExitClass};
 /// an MSYS shell sets can be a Unix-style path; elsewhere only `HOME` is set.
 pub fn cuno_home(env: &Env) -> Result<PathBuf, HomeError> {
     let set = |name| env.get(name).filter(|value| !value.is_empty());
-    if let Some(home) = set("CUNO_HOME") {
+    if let Some(home) = env.set_value("CUNO_HOME") {
         let home = PathBuf::from(home);
         return if home.is_absolute() {
             Ok(home)

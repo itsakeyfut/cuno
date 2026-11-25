@@ -160,8 +160,7 @@ fn diagnose(
         .unwrap_or_else(|| Choices {
             cli: compiler,
             env: env
-                .get("CUNO_COMPILER")
-                .filter(|v| !v.is_empty())
+                .set_value("CUNO_COMPILER")
                 .map(|v| v.to_string_lossy().into_owned()),
             project: None,
             user: None,
