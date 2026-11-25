@@ -84,6 +84,14 @@ jobs:
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo doc --workspace --no-deps
 
+  # What decides a release (.github/workflows/release.yml), tested here so
+  # it is proven before a release depends on it.
+  release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash .github/scripts/test-release-scripts.sh
+
   # Every crate packaged as crates.io would receive it, and built from that
   # package alone, so a file embedded from outside its crate, or an internal
   # dependency with no version, fails here and not at a release

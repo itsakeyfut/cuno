@@ -13,6 +13,24 @@ cuno test
 cuno run
 ```
 
+## Installation
+
+cuno runs on Windows x64. It builds with the compilers already on the machine: Visual Studio's MSVC (Build Tools with "Desktop development with C++" are enough) or LLVM's clang and clang-cl. `cuno fmt` and `cuno lint` use LLVM's clang-format and clang-tidy, 17 or later. `cuno doctor` says what it finds and what is missing.
+
+**From a release.** Download `cuno-<version>-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/itsakeyfut/cuno/releases), check it against the `.sha256` beside it, unzip it, and put the folder holding `cuno.exe` on your `PATH`:
+
+```powershell
+certutil -hashfile cuno-<version>-x86_64-pc-windows-msvc.zip SHA256
+```
+
+`cuno.exe` is not code-signed, so Windows SmartScreen may warn the first time it runs.
+
+**With Cargo.**
+
+```sh
+cargo install cuno
+```
+
 ## Concept
 
 - **Cargo as the model**
