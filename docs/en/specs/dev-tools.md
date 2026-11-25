@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob c0b0f293640c504cbff7e022a088c9064b98254b -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 09c4afe0031769492e3661fa214d02e133d8f5f5 -->
 
 # Development Tools
 
@@ -31,6 +31,11 @@
 
 - Target extensions: `.c` / `.h` / `.cpp` / `.cc` / `.cxx` / `.hpp` / `.hh` / `.hxx` / `.inl`.
 - `.h` is treated as the language given by `[package] lang` (because pointer placement in the cuno default style differs between C and C++).
+- Formatting uses the style for the language given by `[package] lang` for every file, `.c` and `.cpp` included. A `.c` bundled in a C++ package also gets `int* p`.
+  - Rationale: `Language: C`, which splits styles per language in `.clang-format`, was added in a newer clang-format, and it cannot be confirmed that the minimum version, 17, reads it. Settling on a form that cannot be split means editor formatting and `cuno fmt` always give the same result.
+- `exclude` patterns (shared by `[fmt]` / `[lint]`) are globs matched against the path from the project root. `*` matches zero or more characters without crossing a directory separator, `**` matches zero or more directories, and `?` matches one character other than a separator. Separators are written as `/`. On Windows, matching is case-insensitive. Examples: `third_party/**`, `src/generated/*.cpp`.
+  - A value that cannot be read as a pattern (such as `***`) is an error (exit code 3) that shows the line of the configuration file it is written on.
+  - Rationale: the .gitignore syntax (matching at any depth, negation with `!`) has intricate rules and can silently exclude files nobody meant to exclude.
 - `cuno fmt` and `cuno lint` decide what they act on from the same "places where the package's code lives". A file placed outside `src/` with `[[bin]] path`, and the headers next to it, are included. `cuno-build` builds the list of targets with the same walk as classifying sources, and `cuno-cli` receives it and passes it to the fmt / lint implementation ([architecture.md](architecture.md#dependencies-between-crates)).
   - Rationale: if fmt and lint decided their targets differently, the same file could be analyzed by one and not formatted by the other. Looking only at fixed directories, a file placed outside `src/` would be used by `build` and `lint` yet pass `fmt --check` unformatted. It would also go against not enforcing a layout (design principle 3 in [concept.md](../concept.md)).
 - `cuno fmt` works without a compiler. Deciding its targets uses neither compiler detection nor selection.
