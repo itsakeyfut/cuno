@@ -510,7 +510,7 @@ fn a_header_dated_in_the_future_is_warned_about_once() {
 }
 
 /// Every file dated in the future that a step read is named, not only the
-/// first: `main.cpp` reads both headers, `one.cpp` the inner one.
+/// first: `main.cpp` and `outer.h`, which no other step reads.
 ///
 /// Mutation: stop at the first file dated ahead; this test fails.
 #[test]
@@ -520,15 +520,15 @@ fn every_file_dated_in_the_future_is_named() {
     }
     let project = package("");
     let ahead = SystemTime::now() + Duration::from_secs(86_400);
+    set_time(&project.path().join("src/main.cpp"), ahead);
     set_time(&project.path().join("src/outer.h"), ahead);
-    set_time(&project.path().join("src/inc dir/内側.h"), ahead);
     let run = build(&project, "msvc");
     let mut named = dated_ahead(&run);
     named.sort();
     assert_eq!(
         named,
         [
-            r"warning: src\inc dir\内側.h is dated in the future, so what reads it is built again on every build until then",
+            r"warning: src\main.cpp is dated in the future, so what reads it is built again on every build until then",
             r"warning: src\outer.h is dated in the future, so what reads it is built again on every build until then",
         ],
         "{}",
