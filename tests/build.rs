@@ -799,12 +799,12 @@ fn compile_commands(project: &Project) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// A build writes `.clang-format` from `[fmt]` at the root, over one
-/// already there, and clang-format reads it, `[fmt.clang-format]` included
-/// (docs/en/specs/dev-tools.md, "Configuration"). A `.clang-format` that
-/// cannot be written is a warning, and the build goes on.
+/// A build writes `.clang-format` from `[fmt]` at the root and clang-format
+/// reads it, `[fmt.clang-format]` included; a hand-written one is kept and
+/// warned about, and one that cannot be written is a warning, the build
+/// going on (docs/en/specs/dev-tools.md, "Configuration").
 ///
-/// Mutation: stop writing it, keep a hand-written one, write YAML
+/// Mutation: stop writing it, overwrite a hand-written one, write YAML
 /// clang-format refuses, or fail the build on a write error; this test
 /// fails.
 #[test]
@@ -815,21 +815,27 @@ fn a_build_writes_the_clang_format_editors_read() {
     let Some((name, _)) = COMPILERS.iter().find(|(_, c)| here(*c)) else {
         return;
     };
-    let project = package(
-        "[fmt]
-column-limit = 90
-[fmt.clang-format]
-IndentCaseLabels = true
-",
-    )
-    .file(
-        ".clang-format",
-        "BasedOnStyle: Google
-",
-    );
+    let project =
+        package("[fmt]\ncolumn-limit = 90\n[fmt.clang-format]\nIndentCaseLabels = true\n")
+            .file(".clang-format", "BasedOnStyle: Google\n");
+    let file = project.path().join(".clang-format");
     let run = project.cuno(&["build", "--compiler", name]);
     assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
-    let file = project.path().join(".clang-format");
+    assert!(
+        run.stderr
+            .contains("warning: kept the hand-written `.clang-format`; "),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "BasedOnStyle: Google\n"
+    );
+
+    std::fs::remove_file(&file).unwrap();
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+    assert!(!run.stderr.contains("warning"), "{}", run.stderr);
     let dumped = std::process::Command::new(&clang_format)
         .arg("--dump-config")
         .arg(format!("--style=file:{}", file.display()))

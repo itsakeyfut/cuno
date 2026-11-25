@@ -190,6 +190,7 @@ name = "cuno-tools"
 version = "0.0.0"
 dependencies = [
  "cuno-manifest",
+ "tempfile",
  "toml",
 ]
 

@@ -171,9 +171,9 @@ pub fn build(
     };
     // Beside compile_commands.json, so editors format and analyse as cuno
     // does (dev-tools.md, "Configuration"); a file that cannot be written
-    // only costs the editor.
-    for (file, e) in cuno_tools::write_editor_files(root, manifest) {
-        shell.warning(format!("could not write {file}: {e}"));
+    // or is the user's, only costs the editor.
+    for warning in cuno_tools::write_editor_files(root, manifest) {
+        shell.warning(warning);
     }
     let built = pipeline::build(&request, shell).map_err(boxed)?;
     if let Goal::Test { filter, nocapture } = &goal {

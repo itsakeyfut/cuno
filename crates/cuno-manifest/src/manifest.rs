@@ -127,6 +127,44 @@ pub struct Bin {
     pub subsystem: Subsystem,
 }
 
+/// The first key or string in `[fmt.clang-format]` that would break the
+/// `.clang-format` written from it, as its path and why: a key that is not a
+/// clang-format option name (a letter, then letters and digits), or a
+/// string with a control character (`docs/en/specs/dev-tools.md`,
+/// "`[fmt]`"). Whether the option and its value are right is clang-format's
+/// to say.
+fn unreadable_by_clang_format(path: &str, table: &toml::Table) -> Option<(String, String)> {
+    for (key, value) in table {
+        let name = key.starts_with(|c: char| c.is_ascii_alphabetic())
+            && key.chars().all(|c| c.is_ascii_alphanumeric());
+        if !name {
+            // Quoted, so the location is found whatever the key holds.
+            let quoted = key.replace('\\', r"\\").replace('"', r#"\""#);
+            return Some((
+                format!("{path}.\"{quoted}\""),
+                format!("has the key {key:?}, which is not a clang-format option name"),
+            ));
+        }
+        if let Some(found) = unreadable_value(&format!("{path}.{key}"), value) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// [`unreadable_by_clang_format`] for one value.
+fn unreadable_value(path: &str, value: &toml::Value) -> Option<(String, String)> {
+    match value {
+        toml::Value::String(s) if s.chars().any(char::is_control) => Some((
+            path.to_owned(),
+            "holds a control character, such as a line break".to_owned(),
+        )),
+        toml::Value::Table(table) => unreadable_by_clang_format(path, table),
+        toml::Value::Array(items) => items.iter().find_map(|item| unreadable_value(path, item)),
+        _ => None,
+    }
+}
+
 /// `[fmt]` (`docs/en/specs/dev-tools.md`, "`[fmt]` / `[lint]` keys").
 /// `indent_width`, `column_limit` and `use_tabs` are `None` when not
 /// written: the style's own values apply then.
@@ -675,6 +713,13 @@ impl Check<'_> {
                 ));
             }
         }
+        let clang_format = raw_fmt.clang_format.unwrap_or_default();
+        if let Some((path, why)) = unreadable_by_clang_format("fmt.clang-format", &clang_format) {
+            return Err(self.error(
+                &path,
+                format!("`{path}` in {} {why}", self.doc.file.display()),
+            ));
+        }
         let fmt = Fmt {
             style: self
                 .choice("fmt.style", raw_fmt.style, FmtStyle::parse, FmtStyle::ALL)?
@@ -683,7 +728,7 @@ impl Check<'_> {
             column_limit: raw_fmt.column_limit,
             use_tabs: raw_fmt.use_tabs,
             exclude: raw_fmt.exclude.unwrap_or_default(),
-            clang_format: raw_fmt.clang_format.unwrap_or_default(),
+            clang_format,
         };
         let raw_lint = raw.lint.unwrap_or_default();
         let lint = Lint {
@@ -1625,6 +1670,38 @@ indent-width = 2
             warning.message
         );
         assert_eq!(warning.location.as_ref().map(|l| l.line), Some(5));
+    }
+
+    /// A `[fmt.clang-format]` key that is not an option name, or a string
+    /// with a control character, at any depth, is an error at its line; a
+    /// name and an ordinary string are not (`dev-tools.md`, "`[fmt]`").
+    ///
+    /// Mutation: accept a key with `:` or a line break, a nested one, or a
+    /// string with a line break in an array; this test fails.
+    #[test]
+    fn clang_format_keys_and_strings_must_survive_yaml() {
+        for (rest, needle) in [
+            (r#""A: b" = 1"#, "is not a clang-format option name"),
+            (
+                r#""A\nSortIncludes" = "Never""#,
+                "is not a clang-format option name",
+            ),
+            (r#""" = 1"#, "is not a clang-format option name"),
+            (
+                r#"BraceWrapping = { "A b" = true }"#,
+                "is not a clang-format option name",
+            ),
+            (r#"CommentPragmas = "a\nb""#, "control character"),
+            (r#"Macros = ["ok", "x\u0001"]"#, "control character"),
+        ] {
+            let err = read(&with(&format!("[fmt.clang-format]\n{rest}\n"))).unwrap_err();
+            assert!(err.message.contains(needle), "{rest}: {}", err.message);
+            assert_eq!(err.location.as_ref().map(|l| l.line), Some(5), "{rest}");
+        }
+        let ok = read(&with(
+            "[fmt.clang-format]\nIndentWidth = 2\nMacros = [\"it's: #1\"]\nBraceWrapping = { AfterFunction = true }\n",
+        ));
+        assert!(ok.is_ok(), "{ok:?}");
     }
 
     /// Mutation: drop or change the `help:` of any of these errors; this
