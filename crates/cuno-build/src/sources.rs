@@ -31,10 +31,11 @@ pub const SRC_DIR: &str = "src";
 /// `tests/`, which holds its integration tests and their helpers.
 pub const TESTS_DIR: &str = "tests";
 
-/// The directories whose sources are the project's own even when the
-/// directory is a link leading out of it (`docs/en/specs/project-layout.md`,
-/// "Source collection and linking"): what `classify` walks, and where
-/// [`crate::layout::Layout`] places an object beside its source.
+/// The directories [`classify`] walks, each by its own name above, whose
+/// sources are the project's own even when the directory is a link leading
+/// out of it (`docs/en/specs/project-layout.md`, "Source collection and
+/// linking"): [`crate::layout::Layout`] places an object beside a source in
+/// any of them.
 pub const SOURCE_DIRS: [&str; 2] = [SRC_DIR, TESTS_DIR];
 
 /// An executable: its name, its entry file and how it starts.
