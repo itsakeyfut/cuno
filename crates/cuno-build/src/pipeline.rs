@@ -239,6 +239,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         tool.kind.name(),
         tool.version
     ));
+    let mut dated_ahead = std::collections::BTreeSet::new();
     let result = exec::execute(
         &graph,
         tool.env,
@@ -258,6 +259,20 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             Event::Finished(_, output) => {
                 shell.raw(&output.stdout);
                 shell.raw(&output.stderr);
+            }
+            // Once a file per build, though every step that reads it is
+            // left unrecorded (build.md, "Deciding what changed").
+            // A header's path is as its compiler spelled it, so it is shown
+            // as the file system names it.
+            Event::DatedAhead(path) => {
+                let shown = cuno_core::paths::relative(path, root, host.name_case())
+                    .unwrap_or_else(|| cuno_core::paths::lexical(path));
+                if dated_ahead.insert(shown.clone()) {
+                    shell.warning(format!(
+                        "{} is dated in the future, so what reads it is built again on every build until then",
+                        shown.display()
+                    ));
+                }
             }
         },
     );
