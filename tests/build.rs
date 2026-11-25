@@ -1276,3 +1276,39 @@ fn an_up_to_date_step_shows_its_last_warnings_again() {
         assert!(warnings(&after).is_empty(), "{name}: {}", after.stderr);
     }
 }
+
+/// A warning saved by a colored build is shown again without color when
+/// cuno does not color, and where a step that ran would be: after the
+/// `Compiling` line when another step runs (`commands.md`, "Format").
+///
+/// Mutation: replay the saved bytes as they are, or show them as soon as
+/// the step is found up to date; this test fails.
+#[test]
+fn a_replayed_warning_follows_the_color_and_the_status_line() {
+    if !here(Compiler::Clang) {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file(
+            "src/main.cpp",
+            "int helper();\nint main() { int unused = 0; return helper(); }\n",
+        )
+        .file("src/util.cpp", "int helper() { return 0; }\n");
+    let colored = project.cuno(&["--color", "always", "build", "--compiler", "clang"]);
+    assert!(colored.stderr.contains('\x1b'), "{}", colored.stderr);
+
+    let plain = project.cuno(&["--color", "never", "build", "--compiler", "clang"]);
+    assert!(!warnings(&plain).is_empty(), "{}", plain.stderr);
+    assert!(!plain.stderr.contains('\x1b'), "{:?}", plain.stderr);
+
+    std::fs::write(
+        project.path().join("src/util.cpp"),
+        "int helper() { return 1; }\n",
+    )
+    .unwrap();
+    let partial = project.cuno(&["--color", "never", "build", "--compiler", "clang"]);
+    let compiling = partial.stderr.find("Compiling").expect(&partial.stderr);
+    let warning = partial.stderr.find("unused").expect(&partial.stderr);
+    assert!(compiling < warning, "{}", partial.stderr);
+}
