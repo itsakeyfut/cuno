@@ -170,8 +170,8 @@ fn fix_leaves_other_packages_alone_and_their_errors_show() {
 /// default preset.
 ///
 /// Mutation: put `bugprone-throwing-static-initialization` back in the
-/// preset, or drop the NOLINT on
-/// `CUNO_TEST_VALUE`'s conditional; this test fails.
+/// preset, or drop the NOLINT on `CUNO_TEST_VALUE`'s conditional; this
+/// test fails.
 #[test]
 fn a_fresh_package_lints_clean() {
     for name in compilers() {
