@@ -28,7 +28,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | 環境診断 | `doctor` | VS / Clang / clang-format 等が使えるかを診断し、対処法を案内 | MVP |
 | 配布 | `install` | ビルドした実行ファイルをインストール | 後 |
 | | `package` / `publish` | パッケージ化・公開 | 将来（依存管理 段階 3） |
-| cuno 自体 | `self update` | cuno の自己更新（[distribution.md](distribution.md)） | 後 |
+| cuno 自体 | `self update` | cuno の自己更新（[distribution.md](distribution.md)） | MVP 直後 |
 | 情報 | `metadata` | プロジェクト情報を JSON で出力（IDE・外部ツール連携用） | 後 |
 
 依存管理の段階は [dependencies.md](dependencies.md) を参照。

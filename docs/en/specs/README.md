@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/README.md @ blob 976b57f360e812a29312048f8f9a485b47ad0851 -->
+<!-- translated-from: docs/ja/specs/README.md @ blob e058de85f6db98adfe42f9ca7b11b4e3fc8b237f -->
 
 # cuno Specification
 
@@ -46,7 +46,7 @@ Items in the "Open questions" section of each document do not have a decided spe
 | Label | Meaning |
 |---|---|
 | MVP | Included in the first version (scope in [overview.md](overview.md)) |
-| Right after MVP | Top priority after the MVP (GCC support, `cuno init`, `cuno toolchain list` / `default`) |
+| Right after MVP | Top priority after the MVP (GCC support, `cuno init`, `cuno toolchain list` / `default`, `cuno self update`) |
 | Dependency management stages 1–3 | Stages of dependency management ([dependencies.md](dependencies.md)). Stage 1 is started next, after the "Right after MVP" items |
 | Later | After "Right after MVP". The order is decided when work begins |
 | Future | No plans to start at present. Considered when the need arises |

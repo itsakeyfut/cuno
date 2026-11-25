@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob c88ff5cacbcd1e43a7a69aff515b4321b1036a2b -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob b1dba16670644beb0f2afc04233a2d268dc42d67 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -14,6 +14,11 @@
 ## Installation
 
 - Binaries are distributed via GitHub Releases.
+  - Each release is tagged `v<version>`, and the section of `CHANGELOG.md` for that version becomes the release notes.
+  - The release attaches `cuno-<version>-x86_64-pc-windows-msvc.zip` (with `cuno.exe`, `README.md`, `LICENSE-MIT` and `LICENSE-APACHE` at its top level) and `cuno-<version>-x86_64-pc-windows-msvc.zip.sha256`, which holds its SHA-256.
+  - The binary is not code-signed. Windows SmartScreen may show a warning the first time it is run.
+    - Reason: signing requires obtaining and managing a certificate, which would become a prerequisite for every release. It will be reconsidered when supporting winget and similar channels.
+  - In the same release, all crates are published to crates.io (installable with `cargo install cuno`).
 - Windows: winget / Scoop / a PowerShell one-liner.
 - For Rust users: `cargo install cuno`.
 

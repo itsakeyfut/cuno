@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/roadmap.md @ blob eb2bb050803a387dfe812109f67cfcde22c6fb6b -->
+<!-- translated-from: docs/ja/roadmap.md @ blob 29739f3584f57c7ef63e029bcc241145b70f1052 -->
 
 # cuno Roadmap
 
@@ -96,8 +96,9 @@ Complete the MVP workflow and ship the first release.
 - GCC support (including documenting the steps for adding a compiler to the compiler abstraction)
 - `cuno init`
 - `cuno toolchain list` / `cuno toolchain default`
+- `cuno self update` (updating to the latest published release; designed once v0.1.0 has settled the form of distribution, and built on that form)
 
-**Completion criteria**: the MVP workflow works with GCC. The test environment is whichever is less effort at the time work starts (MinGW on Windows, or Linux).
+**Completion criteria**: the MVP workflow works with GCC. The test environment is whichever is less effort at the time work starts (MinGW on Windows, or Linux). A cuno installed after v0.1.0 can update itself to the latest published release with `cuno self update`.
 
 ## M6: Libraries and dependency management (Git / URL)
 
@@ -144,9 +145,9 @@ Make day-to-day development comfortable.
 
 - Expanded testing (`cuno bench`, sanitizers, coverage)
 - External test frameworks (GTest / Catch2 / doctest)
-- `cuno install`, `cuno self update`
+- `cuno install`
 
-**Completion criteria**: existing test suites using GTest can be run with `cuno test`, and cuno can be updated with `cuno self update`.
+**Completion criteria**: existing test suites using GTest can be run with `cuno test`.
 
 ## Future considerations
 

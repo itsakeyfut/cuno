@@ -94,8 +94,9 @@ MVP の流れを完成させ、最初のリリースを出します。
 - GCC 対応（コンパイラ抽象化の追加手順のドキュメント化を含む）
 - `cuno init`
 - `cuno toolchain list` / `cuno toolchain default`
+- `cuno self update`（公開された最新版への更新。v0.1.0 で配布の形が決まった後に、それを前提に設計する）
 
-**完了条件**: GCC で MVP の流れが動く。動作確認の環境は、着手時点で手間が少ない方（Windows の MinGW、または Linux）を選ぶ。
+**完了条件**: GCC で MVP の流れが動く。動作確認の環境は、着手時点で手間が少ない方（Windows の MinGW、または Linux）を選ぶ。v0.1.0 の後に入れた cuno が、`cuno self update` で公開された最新版に更新できる。
 
 ## M6: ライブラリと依存管理（Git / URL）
 
@@ -142,9 +143,9 @@ cuno 形式のパッケージ同士を依存として使えるようにします
 
 - テストの拡充（`cuno bench`、サニタイザ、カバレッジ）
 - 外部テストフレームワーク（GTest / Catch2 / doctest）
-- `cuno install`、`cuno self update`
+- `cuno install`
 
-**完了条件**: GTest を使った既存のテスト資産を `cuno test` で実行でき、`cuno self update` で cuno を更新できる。
+**完了条件**: GTest を使った既存のテスト資産を `cuno test` で実行できる。
 
 ## 将来の検討事項
 

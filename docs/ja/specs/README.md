@@ -44,7 +44,7 @@ cuno の決定済み仕様をまとめたドキュメント群。設計・実装
 | 表記 | 意味 |
 |---|---|
 | MVP | 最初のバージョンに含める（範囲は [overview.md](overview.md)） |
-| MVP 直後 | MVP の次に最優先で着手する（GCC 対応、`cuno init`、`cuno toolchain list` / `default`） |
+| MVP 直後 | MVP の次に最優先で着手する（GCC 対応、`cuno init`、`cuno toolchain list` / `default`、`cuno self update`） |
 | 依存管理 段階 1〜3 | 依存ライブラリ管理の段階（[dependencies.md](dependencies.md)）。段階 1 は MVP 直後の次に着手する |
 | 後 | MVP 直後より後。順序は着手時に決める |
 | 将来 | 現時点では着手の予定がない。必要になった時点で検討する |
