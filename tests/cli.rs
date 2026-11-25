@@ -28,7 +28,7 @@ fn cuno(args: &[&str]) -> Run {
 
 /// The usage text, printed by `--help` and by `cuno` with no command.
 const HELP: &str = "\
-One comfortable tool for C/C++ development.
+Everything C/C++ development needs, in one tool.
 
 Usage: cuno [OPTIONS] [COMMAND]
 
