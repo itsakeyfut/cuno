@@ -24,6 +24,9 @@ pub const MARKER: &str =
 const RECOMMENDED: &[&str] = &[
     "bugprone-*",
     "-bugprone-easily-swappable-parameters",
+    // Every C++ test suite is a static object built from a lambda, which
+    // this check reads through.
+    "-bugprone-throwing-static-initialization",
     "clang-analyzer-*",
     "performance-*",
     "modernize-use-nullptr",
@@ -758,6 +761,7 @@ Diagnostics:
         for (check, on) in [
             ("bugprone-use-after-move", true),
             ("bugprone-easily-swappable-parameters", false),
+            ("bugprone-throwing-static-initialization", false),
             ("clang-analyzer-core.NullDereference", true),
             ("performance-unnecessary-copy-initialization", true),
             ("modernize-use-nullptr", true),

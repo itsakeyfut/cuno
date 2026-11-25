@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob ff97d39849613f205b5b292b264c7c79f3b83516 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 8f5936605644fad39d2b0f1f41495f51a1526426 -->
 
 # Development Tools
 
@@ -145,7 +145,9 @@ Check names are clang-tidy group names.
 | Part of `modernize-*` | Uncontroversial ones such as `use-nullptr`, `use-override`, `make-unique`, `use-emplace` |
 | `readability-isolate-declaration` | One declaration per line (countermeasure for `int* a, b;`; a premise of the cuno default style) |
 
-- Excluded: `bugprone-easily-swappable-parameters` (very many false positives).
+- Excluded:
+  - `bugprone-easily-swappable-parameters` (very many false positives).
+  - `bugprone-throwing-static-initialization` (cuno's tests, `static cuno::test::suite tests = [] { ... };`, always get this finding, since the check reads through the lambda in the initializer. A static initialization that really throws always stops the program at start-up, so it is never missed silently).
 
 **strict**: recommended plus the following.
 
