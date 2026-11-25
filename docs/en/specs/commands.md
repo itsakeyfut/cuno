@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 647754ba2ec389bca9d52513c3760a3d60fb6957 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 9412324f1ca2f392bb0de48d9a023854fea60e7e -->
 
 # Commands
 
@@ -12,7 +12,7 @@ The command structure is based on cargo, with additions for C/C++ and for circum
 | | `init` | Turn an existing directory into a project | Right after MVP |
 | Build | `build` | Build only | MVP |
 | | `run` | Build and run | MVP |
-| | `check` | Syntax and type check only (flags in [build.md](build.md#settings-and-flags)). Fast, since no object files are produced (MSVC alone runs the build's own compile without linking). Also checks test code (with `CUNO_TEST` defined, and `tests/`) and entry files | MVP |
+| | `check` | Syntax and type check only (flags in [build.md](build.md#settings-and-flags)). Fast, since no object files are produced (MSVC alone runs the build's own compile without linking). By default checks the program's sources (the package body and entry files); `--tests` checks the test code (the package body with `CUNO_TEST` defined, and `tests/`), and `--all-targets` checks both | MVP |
 | | `clean` | Delete the output directory | MVP |
 | Test | `test` | Run tests | MVP |
 | | `bench` | Run benchmarks | Later |
@@ -221,7 +221,17 @@ Values of `--vcs`:
 
 ### `cuno build` / `cuno check`
 
-Common options only.
+`cuno build` takes common options only. `cuno check` also accepts the following options, which choose what to check.
+
+| Option | Description |
+|---|---|
+| (none) | Check the program's sources (the package body and entry files) |
+| `--tests` | Check only the test build (the package body with `CUNO_TEST` defined, and the sources in `tests/`; [testing.md](testing.md#execution)) |
+| `--all-targets` | Check both the program and the tests |
+
+- Reason: targets are chosen the same way as Cargo's `cargo check`. Test code is not checked by default because checking the tests means checking the package body again (with `CUNO_TEST` defined), which would slow down everyday checks.
+- Giving both `--tests` and `--all-targets` is the same as `--all-targets`.
+- Checking the test build uses the same output location as `cuno test` (where the test build goes). On MSVC it runs the same compile as `cuno test`, so a following `cuno test` only links and runs.
 
 - Run outside a project, it is an error (`error: could not find cuno.toml in <directory> or any parent directory`, exit code 3). When the settings are also wrong (a wrong output directory setting, a user's `config.toml` that cannot be read or has an error, and so on), only the missing project is reported. `cuno run`, `cuno test` and `cuno clean` do the same.
   - Reason: outside a project these commands can do nothing. Only the one thing to fix (run inside a project) is reported.
