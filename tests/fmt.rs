@@ -130,6 +130,45 @@ fn fmt_leaves_a_link_and_says_so() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), UGLY);
 }
 
+/// A `[fmt.clang-format]` clang-format refuses is a settings problem, exit
+/// 3, before any file is formatted, and names neither a source nor a
+/// scratch file (`commands.md`, "`cuno fmt`").
+///
+/// Mutation: format without checking the configuration first; this test
+/// fails.
+#[test]
+fn a_refused_configuration_is_exit_3_before_formatting() {
+    if require_llvm_tool("clang-format").is_none() {
+        return;
+    }
+    let project = package().file(".cuno/config.toml", "");
+    std::fs::write(
+        project.path().join("cuno.toml"),
+        format!("{MANIFEST}[fmt.clang-format]\nBogusKey = 1\n"),
+    )
+    .unwrap();
+    let run = project.cuno(&["fmt"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .starts_with("error: clang-format refuses the configuration from [fmt] in cuno.toml: "),
+        "{}",
+        run.stderr
+    );
+    assert!(run.stderr.contains("BogusKey"), "{}", run.stderr);
+    assert!(!run.stderr.contains("cuno-fmt-"), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .ends_with("help: correct [fmt.clang-format] in cuno.toml\n"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/main.cpp")).unwrap(),
+        UGLY
+    );
+}
+
 /// A clang-format that is not there is an environment problem, exit 3,
 /// before anything is formatted.
 ///

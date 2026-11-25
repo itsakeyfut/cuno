@@ -51,16 +51,83 @@ impl CunoError for FormatError {
     }
 }
 
+/// clang-format refused the configuration written from `[fmt]`: a
+/// settings problem, not one in the code.
+#[derive(Debug)]
+pub struct StyleRefused {
+    /// What clang-format said, with the scratch file's path left out.
+    pub reason: String,
+}
+
+impl fmt::Display for StyleRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "clang-format refuses the configuration from [fmt] in cuno.toml: {}",
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for StyleRefused {}
+
+impl CunoError for StyleRefused {
+    fn exit_class(&self) -> ExitClass {
+        ExitClass::Setup
+    }
+
+    fn help(&self) -> Option<String> {
+        Some("correct [fmt.clang-format] in cuno.toml".to_owned())
+    }
+}
+
+/// Whether clang-format reads `tool`'s configuration, before any file is
+/// formatted with it, so a key it does not know is reported as the
+/// settings' problem rather than as the first file's.
+pub fn check_style(tool: &ClangFormat<'_>, runner: &dyn Runner) -> Result<(), StyleRefused> {
+    let style = format!("--style=file:{}", tool.style.display());
+    let args: [&OsStr; 2] = ["--dump-config".as_ref(), style.as_ref()];
+    let output = runner
+        .run(tool.program, &args, tool.env)
+        .map_err(|e| StyleRefused {
+            reason: e.to_string(),
+        })?;
+    if output.success {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&output.stderr);
+    let shown = tool.style.display().to_string();
+    let reason = said
+        .lines()
+        .find(|line| line.contains("error:"))
+        .unwrap_or(said.trim())
+        .replace(&format!("{shown}:"), "line ")
+        .replace(&shown, "the configuration");
+    Err(StyleRefused { reason })
+}
+
+/// What formatting found: the files whose formatting differs (rewritten
+/// unless `check`), and those that could not be formatted, each in the
+/// order given.
+#[derive(Debug, Default)]
+pub struct Formatted {
+    /// Differed, and were rewritten unless `check`.
+    pub changed: Vec<PathBuf>,
+    /// Could not be formatted; left as they were.
+    pub failed: Vec<FormatError>,
+}
+
 /// Formats `files` with `tool`: each is run through clang-format and
-/// compared with what it holds. Returns the files whose formatting differs,
-/// in the order given; they are rewritten unless `check`
-/// (`docs/en/specs/commands.md`, "`cuno fmt`").
+/// compared with what it holds; one that differs is rewritten unless
+/// `check` (`docs/en/specs/commands.md`, "`cuno fmt`"). A file is never
+/// rewritten with empty output, nor when it changed while clang-format
+/// ran, and is replaced whole, never truncated in place.
 pub fn format(
     files: &[PathBuf],
     tool: &ClangFormat<'_>,
     check: bool,
     runner: &(dyn Runner + Sync),
-) -> Result<Vec<PathBuf>, FormatError> {
+) -> Formatted {
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<(usize, Result<bool, FormatError>)>> = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
@@ -77,13 +144,15 @@ pub fn format(
     });
     let mut results = results.into_inner().unwrap();
     results.sort_by_key(|(i, _)| *i);
-    let mut changed = Vec::new();
+    let mut formatted = Formatted::default();
     for (i, result) in results {
-        if result? {
-            changed.push(files[i].clone());
+        match result {
+            Ok(true) => formatted.changed.push(files[i].clone()),
+            Ok(false) => {}
+            Err(e) => formatted.failed.push(e),
         }
     }
-    Ok(changed)
+    formatted
 }
 
 /// Whether `file` differs from its formatting, writing it unless `check`.
@@ -104,17 +173,48 @@ fn format_one(
         .run(tool.program, &args, tool.env)
         .map_err(|e| failed(e.to_string()))?;
     if !output.success {
-        return Err(failed(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        ));
+        let said = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(failed(if said.is_empty() {
+            "clang-format failed and said nothing".to_owned()
+        } else {
+            said
+        }));
     }
     if output.stdout == held {
         return Ok(false);
     }
+    // Formatting never empties a file; a clang-format that printed nothing
+    // failed without saying so, and its output would erase the source.
+    if output.stdout.is_empty() {
+        return Err(failed("clang-format printed nothing for it".to_owned()));
+    }
     if !check {
-        std::fs::write(file, &output.stdout).map_err(|e| failed(e.to_string()))?;
+        replace(file, &held, &output.stdout).map_err(failed)?;
     }
     Ok(true)
+}
+
+/// Replaces `file`, which held `held` when it was read, with `content`:
+/// written beside it and renamed over it, so the file is never left
+/// half-written; not at all when it has changed since, so an edit made
+/// meanwhile is not lost.
+fn replace(file: &Path, held: &[u8], content: &[u8]) -> Result<(), String> {
+    let mut beside = file.as_os_str().to_owned();
+    beside.push(format!(".cuno-fmt-{}", std::process::id()));
+    let beside = PathBuf::from(beside);
+    std::fs::write(&beside, content).map_err(|e| e.to_string())?;
+    let now = std::fs::read(file).map_err(|e| e.to_string());
+    let result = match now {
+        Ok(now) if now != held => {
+            Err("it changed while it was being formatted; run cuno fmt again".to_owned())
+        }
+        Ok(_) => std::fs::rename(&beside, file).map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&beside);
+    }
+    result
 }
 
 /// The file editors read, at the project root.
@@ -252,6 +352,136 @@ mod tests {
             .unwrap()
             .value
             .fmt
+    }
+
+    /// A clang-format that answers each file as `answer` says: its output,
+    /// or `None` to fail; `during` runs while it "formats".
+    struct Fake<'a> {
+        answer: &'a (dyn Fn(&Path) -> Option<Vec<u8>> + Sync),
+        during: &'a (dyn Fn(&Path) + Sync),
+    }
+
+    impl Runner for Fake<'_> {
+        fn run(
+            &self,
+            _program: &Path,
+            args: &[&OsStr],
+            _env: &Env,
+        ) -> std::io::Result<cuno_toolchain::Output> {
+            let file = Path::new(args[1]);
+            (self.during)(file);
+            Ok(match (self.answer)(file) {
+                Some(stdout) => cuno_toolchain::Output {
+                    success: true,
+                    stdout,
+                    stderr: Vec::new(),
+                },
+                None => cuno_toolchain::Output {
+                    success: false,
+                    stdout: Vec::new(),
+                    stderr: b"boom".to_vec(),
+                },
+            })
+        }
+    }
+
+    fn run_fake(files: &[PathBuf], fake: &Fake<'_>, check: bool) -> Formatted {
+        let env = Env::from_pairs([], cuno_core::NameCase::Insensitive);
+        let tool = ClangFormat {
+            program: Path::new("clang-format"),
+            style: Path::new("style"),
+            env: &env,
+            jobs: 4,
+        };
+        format(files, &tool, check, fake)
+    }
+
+    /// Every file that fails is reported and left as it was; the others
+    /// are still formatted; an unchanged file is not counted, and `check`
+    /// writes nothing.
+    ///
+    /// Mutation: stop at the first failure, count an unchanged file, or
+    /// write under `check`; this test fails.
+    #[test]
+    fn failures_are_collected_and_the_rest_formatted() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<PathBuf> = ["a.c", "bad1.c", "b.c", "bad2.c", "same.c"]
+            .iter()
+            .map(|n| dir.path().join(n))
+            .collect();
+        for f in &files {
+            std::fs::write(f, "x\n").unwrap();
+        }
+        let answer = |f: &Path| {
+            let name = f.file_name().unwrap().to_str().unwrap();
+            match name {
+                n if n.starts_with("bad") => None,
+                "same.c" => Some(b"x\n".to_vec()),
+                _ => Some(b"y\n".to_vec()),
+            }
+        };
+        let nothing = |_: &Path| {};
+        let fake = Fake {
+            answer: &answer,
+            during: &nothing,
+        };
+        let checked = run_fake(&files, &fake, true);
+        assert_eq!(checked.changed, [files[0].clone(), files[2].clone()]);
+        assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "x\n");
+        let done = run_fake(&files, &fake, false);
+        assert_eq!(done.changed, [files[0].clone(), files[2].clone()]);
+        assert_eq!(
+            done.failed
+                .iter()
+                .map(|e| e.file.clone())
+                .collect::<Vec<_>>(),
+            [files[1].clone(), files[3].clone()]
+        );
+        assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "y\n");
+        assert_eq!(std::fs::read_to_string(&files[1]).unwrap(), "x\n");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), files.len(), "no file left beside");
+    }
+
+    /// A source is not rewritten with empty output, nor when it changed
+    /// while clang-format ran: either would lose the user's code.
+    ///
+    /// Mutation: write empty output, or write without reading the file
+    /// again; this test fails.
+    #[test]
+    fn a_source_is_never_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.c");
+        std::fs::write(&file, "int  x;\n").unwrap();
+        let empty = |_: &Path| Some(Vec::new());
+        let nothing = |_: &Path| {};
+        let done = run_fake(
+            std::slice::from_ref(&file),
+            &Fake {
+                answer: &empty,
+                during: &nothing,
+            },
+            false,
+        );
+        assert_eq!(done.failed.len(), 1);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "int  x;\n");
+
+        let tidy = |_: &Path| Some(b"int x;\n".to_vec());
+        let edit = |f: &Path| std::fs::write(f, "int  x; // mine\n").unwrap();
+        let done = run_fake(
+            std::slice::from_ref(&file),
+            &Fake {
+                answer: &tidy,
+                during: &edit,
+            },
+            false,
+        );
+        assert!(
+            done.failed[0].reason.contains("changed while"),
+            "{:?}",
+            done.failed
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "int  x; // mine\n");
     }
 
     fn lines(text: &str) -> Vec<&str> {

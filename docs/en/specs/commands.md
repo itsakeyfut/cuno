@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 34863339da1deaf69eacb70afd9a82c11107b193 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 84a6a133f39d68277445fd52ed4897fed05d94d0 -->
 
 # Commands
 
@@ -222,6 +222,9 @@ Values of `--vcs`:
 
 - `--check` writes nothing. For each file that is not formatted it prints ``error: `src/main.cpp` is not formatted``, then ends with `help: run cuno fmt to format them` and exit code 1. If every file is formatted, it prints nothing and exits with code 0.
   - Reason: clang-format's own check prints several lines for each place that is off, so even a single misformatted line takes a dozen or more lines. There is only one way to fix it, `cuno fmt`, so the file names are enough.
+- A file that could not be formatted is reported as ``error: could not format `src/main.cpp`: <reason>`` and left as it was. The other files are still formatted, the `Formatted` line is still printed, and the exit code is 1. A file that changed while it was being formatted, and a non-empty file for which clang-format printed nothing, are also reported this way and not rewritten.
+  - Reason: a file is not rewritten in place; the new content is written next to it and then replaces it. If cuno stops partway, no half-written file is left behind, and changes saved during formatting are not lost.
+- If clang-format does not accept `[fmt.clang-format]` (an unknown key, for example), it is an error (exit code 3) before any formatting starts.
 
 ### `cuno lint`
 

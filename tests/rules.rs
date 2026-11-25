@@ -76,10 +76,7 @@ const CONFIGURED_COPY: &[(&str, Row)] = &[
     ("check", Runs(&["check", "--compiler", "msvc"])),
     ("run", Runs(&["run", "--compiler", "msvc"])),
     ("test", Runs(&["test", "--compiler", "msvc"])),
-    (
-        "fmt",
-        DoesNotApply("it selects no compiler, only clang-format, whose own copy is its error"),
-    ),
+    ("fmt", Runs(&["fmt"])),
     ("clean", DoesNotApply("it runs no tool")),
     ("doctor", Runs(&["doctor", "--compiler", "msvc"])),
 ];

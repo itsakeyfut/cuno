@@ -98,24 +98,35 @@ pub fn fmt(
                 env,
                 jobs,
             };
-            format::format(&files, &tool, check, &runner).map_err(boxed)
+            format::check_style(&tool, &runner).map_err(boxed)?;
+            Ok(format::format(&files, &tool, check, &runner))
         });
     let _ = std::fs::remove_dir_all(&scratch);
-    let changed = result?;
+    let formatted = result?;
 
+    // Every file that could not be formatted, each left as it was.
+    for failure in &formatted.failed {
+        shell.error(format!(
+            "could not format `{}`: {}",
+            relative(root, &failure.file),
+            failure.reason
+        ));
+    }
+    let failed = !formatted.failed.is_empty();
+    let changed = formatted.changed;
     if check {
-        if changed.is_empty() {
-            return Ok(0);
-        }
         for file in &changed {
             shell.error(format!("`{}` is not formatted", relative(root, file)));
         }
-        shell.help("run cuno fmt to format them");
-        return Ok(1);
+        if !changed.is_empty() {
+            shell.help("run cuno fmt to format them");
+        }
+        return Ok(i32::from(failed || !changed.is_empty()));
     }
+    // Said even when another file failed: these were rewritten.
     let noun = if changed.len() == 1 { "file" } else { "files" };
     shell.status("Formatted", format!("{} {noun}", changed.len()));
-    Ok(0)
+    Ok(i32::from(failed))
 }
 
 /// `path` from the project root, with `/` between its names, as `exclude`
