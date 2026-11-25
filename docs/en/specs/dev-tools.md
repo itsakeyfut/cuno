@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 2ac4473f4cb068ff204f9bb6d5897c4f1d2df945 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob f31775769f3ceed575d2571be459b7731dd8a884 -->
 
 # Development Tools
 
@@ -164,7 +164,7 @@ Check names are clang-tidy group names.
 
 #### allow / warn / deny
 
-`allow` / `warn` / `deny` follow the same idea as clippy. Check names are clang-tidy names (e.g. `bugprone-use-after-move`). Wildcards (e.g. `modernize-*`) can also be used.
+`allow` / `warn` / `deny` follow the same idea as clippy. Check names are clang-tidy names (e.g. `bugprone-use-after-move`). Wildcards (e.g. `modernize-*`) can also be used. A name may contain only letters, digits, `-`, `_`, `.` and `*`; a value with anything else is an error (exit code 3) that shows its line (this keeps the generated `.clang-tidy` from breaking).
 
 - `allow`: Disables the check.
 - `warn`: Displays findings as warnings. Does not affect the exit code.

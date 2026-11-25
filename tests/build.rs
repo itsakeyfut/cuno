@@ -799,6 +799,43 @@ fn compile_commands(project: &Project) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+/// A build writes `.clang-tidy` from `[lint]` at the root, and clang-tidy
+/// reads it with the checks `[lint]` asks for (docs/en/specs/dev-tools.md,
+/// "Configuration", "`[lint]`").
+///
+/// Mutation: stop writing it, or write a list clang-tidy refuses; this test
+/// fails.
+#[test]
+fn a_build_writes_the_clang_tidy_editors_read() {
+    let Some(clang_tidy) = support::compilers::require_llvm_tool("clang-tidy") else {
+        return;
+    };
+    let Some((name, _)) = COMPILERS.iter().find(|(_, c)| here(*c)) else {
+        return;
+    };
+    let project =
+        package("[lint]\ndeny = [\"bugprone-*\"]\nallow = [\"bugprone-sizeof-expression\"]\n");
+    let run = project.cuno(&["build", "--compiler", name]);
+    assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
+    let listed = std::process::Command::new(&clang_tidy)
+        .arg("--list-checks")
+        .current_dir(project.path())
+        .output()
+        .unwrap();
+    let checks = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert!(checks.contains("bugprone-use-after-move"), "{checks}");
+    assert!(
+        checks.contains("readability-isolate-declaration"),
+        "{checks}"
+    );
+    assert!(!checks.contains("bugprone-sizeof-expression"), "{checks}");
+}
+
 /// A build writes `.clang-format` from `[fmt]` at the root and clang-format
 /// reads it, `[fmt.clang-format]` included; a hand-written one is kept and
 /// warned about, and one that cannot be written is a warning, the build

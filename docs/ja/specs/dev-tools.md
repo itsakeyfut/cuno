@@ -162,7 +162,7 @@ exclude = []           # 解析しないファイル
 
 #### allow / warn / deny
 
-`allow` / `warn` / `deny` は clippy と同じ考え方。チェック名は clang-tidy の名前（例: `bugprone-use-after-move`）。ワイルドカード（例: `modernize-*`）も使える。
+`allow` / `warn` / `deny` は clippy と同じ考え方。チェック名は clang-tidy の名前（例: `bugprone-use-after-move`）。ワイルドカード（例: `modernize-*`）も使える。名前に使えるのは英数字と `-` `_` `.` `*` だけで、それ以外を含む値はエラー（終了コード 3）で、その行を示す（生成する `.clang-tidy` が壊れるのを防ぐため）。
 
 - `allow`: そのチェックを無効にする。
 - `warn`: 指摘を警告として表示する。終了コードには影響しない。

@@ -3,6 +3,7 @@
 //! See `docs/en/specs/dev-tools.md`.
 
 pub mod format;
+pub mod tidy;
 
 use std::fmt;
 use std::io;
@@ -32,16 +33,22 @@ impl fmt::Display for EditorFileWarning {
 }
 
 /// Writes the files editors read so they format and analyse as cuno does,
-/// at the project `root`: `.clang-format` from `[fmt]`. Only a file cuno
+/// at the project `root`: `.clang-format` from `[fmt]` and `.clang-tidy`
+/// from `[lint]`. Only a file cuno
 /// wrote, which starts with its marker, is overwritten, and only when its
 /// content changes; a file the user wrote, a link or a directory is left
 /// and warned about (`docs/en/specs/dev-tools.md`, "Configuration").
 pub fn write_editor_files(root: &Path, manifest: &Manifest) -> Vec<EditorFileWarning> {
-    let config = format::clang_format_config(&manifest.fmt, manifest.package.lang);
-    write_generated(root, format::FILE, format::MARKER, &config)
-        .err()
-        .into_iter()
-        .collect()
+    let lang = manifest.package.lang;
+    let format = format::clang_format_config(&manifest.fmt, lang);
+    let tidy = tidy::clang_tidy_file(&manifest.lint, lang);
+    [
+        write_generated(root, format::FILE, format::MARKER, &format),
+        write_generated(root, tidy::FILE, tidy::MARKER, &tidy),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .collect()
 }
 
 /// Writes `content` to `root/file` unless something other than a file cuno
