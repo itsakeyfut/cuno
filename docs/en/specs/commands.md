@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob d9445c927d55ce4851f6823eb6342cfdb971463b -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 34863339da1deaf69eacb70afd9a82c11107b193 -->
 
 # Commands
 
@@ -214,11 +214,29 @@ Values of `--vcs`:
 |---|---|
 | `--check` | Do not format; fail if any file is not formatted (for CI) |
 
+- At the end, the number of files rewritten is shown (`file` for one; not printed with `-q`).
+
+```
+   Formatted 3 files
+```
+
+- `--check` writes nothing. For each file that is not formatted it prints ``error: `src/main.cpp` is not formatted``, then ends with `help: run cuno fmt to format them` and exit code 1. If every file is formatted, it prints nothing and exits with code 0.
+  - Reason: clang-format's own check prints several lines for each place that is off, so even a single misformatted line takes a dozen or more lines. There is only one way to fix it, `cuno fmt`, so the file names are enough.
+
 ### `cuno lint`
 
 | Option | Description |
 |---|---|
 | `--fix` | Fix findings that can be fixed automatically |
+
+- Findings are printed as clang-tidy shows them (`file:line:column: warning: ... [check name]` and an excerpt of the code). clang-tidy runs for each source in parallel according to `-j`, and its output is grouped per source so that it does not interleave.
+- clang-tidy's summary lines (`N warnings generated.` and the like) are not printed. When the same finding in the same header comes from several sources, it is printed only once.
+  - Reason: keeping the findings in their original form lets editors and CI read them as they are. Rebuilding them risks missing findings when a clang-tidy version changes how they are shown.
+- At the end, the number of files analyzed and the number of findings are shown (not printed with `-q`).
+
+```
+      Linted 12 files: 3 warnings, 1 error
+```
 
 ### `cuno build` / `cuno check`
 
