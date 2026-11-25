@@ -25,6 +25,19 @@ pub struct Source {
     pub lang: Lang,
 }
 
+/// `src/`, which holds the package's sources.
+pub const SRC_DIR: &str = "src";
+
+/// `tests/`, which holds its integration tests and their helpers.
+pub const TESTS_DIR: &str = "tests";
+
+/// The directories [`classify`] walks, each by its own name above, whose
+/// sources are the project's own even when the directory is a link leading
+/// out of it (`docs/en/specs/project-layout.md`, "Source collection and
+/// linking"): [`crate::layout::Layout`] places an object beside a source in
+/// any of them.
+pub const SOURCE_DIRS: [&str; 2] = [SRC_DIR, TESTS_DIR];
+
 /// An executable: its name, its entry file and how it starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bin {
@@ -114,7 +127,7 @@ pub fn classify(
 ) -> Result<Sources, BuildError> {
     let case = host.name_case();
     let root = paths::lexical(root);
-    let src = root.join("src");
+    let src = root.join(SRC_DIR);
     let bin_dir = src.join("bin");
     let (root_place, src_place) = (Place::of(&root, case), Place::of(&src, case));
     let bin_place = Place::of(&bin_dir, case);
@@ -133,7 +146,7 @@ pub fn classify(
         }
         .dir(&src)?;
     }
-    let tests_dir = root.join("tests");
+    let tests_dir = root.join(TESTS_DIR);
     let mut found_tests = Vec::new();
     if tests_dir.is_dir() {
         Walk {

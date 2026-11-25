@@ -114,7 +114,7 @@ pub fn compile_settings(
         build: manifest.build_settings(target_os(host), CompilerName::from(kind), profile),
         profile: manifest.profile_settings(profile),
         include_dirs: root
-            .map(|r| r.join("src"))
+            .map(|r| r.join(crate::sources::SRC_DIR))
             .into_iter()
             .chain([bundled.to_owned()])
             .collect(),
