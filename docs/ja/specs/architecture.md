@@ -60,6 +60,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `clean` | `clean` |
 | `doctor` | `doctor` |
 | `fmt` | `fmt` |
+| `lint` | `lint` |
 | `new` | `new` |
 
 - `build` が 4 つのコマンドを持つのは、[commands.md](commands.md#ビルド系コマンドbuild--run--check--testで使えるもの) のとおり 1 つのビルドの流れを共有するため。

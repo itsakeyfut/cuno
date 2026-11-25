@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob b2db8373c0f57d5d5a7dbffb5d98c2000f32e4ec -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 2dfc0a85fb776f4b68d78da2b53b043edae0adbd -->
 
 # Internal Structure of cuno Itself
 
@@ -62,6 +62,7 @@ The command modules are limited to those in the following table. `tests/architec
 | `clean` | `clean` |
 | `doctor` | `doctor` |
 | `fmt` | `fmt` |
+| `lint` | `lint` |
 | `new` | `new` |
 
 - `build` holds four commands because they share one build flow, as in [commands.md](commands.md#available-for-build-commands-build--run--check--test).
