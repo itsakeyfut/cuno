@@ -107,9 +107,11 @@ CUNO_TEST_FROM(pointer, const volatile void *, p, CUNO_TEST_POINTER)
 #undef CUNO_TEST_FROM
 /* Chosen by the type of `1 ? (x) : (x)` rather than of x: the conditional
  * promotes an enum to its integer type, which MSVC's _Generic otherwise
- * matches with no integer type at all. It is not evaluated. */
+ * matches with no integer type at all. It is not evaluated. Its two
+ * branches are the same on purpose, so clang-tidy's bugprone-branch-clone
+ * is told so where it would otherwise flag every caller. */
 #define CUNO_TEST_VALUE(x)                                                                     \
-    _Generic(1 ? (x) : (x),                                                                    \
+    _Generic(1 ? (x) : (x), /* NOLINT(bugprone-branch-clone) */                                \
         _Bool: cuno_test_unsigned,                                                             \
         char: cuno_test_signed,                                                                \
         signed char: cuno_test_signed,                                                         \

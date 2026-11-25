@@ -143,7 +143,9 @@ exclude = []           # 解析しないファイル
 | `modernize-*` の一部 | `use-nullptr`、`use-override`、`make-unique`、`use-emplace` など、意見が分かれないもの |
 | `readability-isolate-declaration` | 1 行に 1 宣言（`int* a, b;` 対策。cuno 既定スタイルの前提） |
 
-- 除外: `bugprone-easily-swappable-parameters`（誤検知が非常に多い）。
+- 除外:
+  - `bugprone-easily-swappable-parameters`（誤検知が非常に多い）。
+  - `bugprone-throwing-static-initialization`（cuno のテスト `static cuno::test::suite tests = [] { ... };` は、初期化式のラムダを辿られて必ずこの指摘を受ける。静的初期化が実際に例外を投げれば起動時に必ず止まるので、気づかないまま誤ることはない）。
 
 **strict**: recommended に加えて次のもの。
 
