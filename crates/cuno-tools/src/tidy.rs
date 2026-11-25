@@ -420,6 +420,7 @@ mod tests {
 /p/src/a.cpp:3:14: warning: use nullptr [modernize-use-nullptr]
     3 |     int* p = 0;
       |              ^
+1 warning generated.
 /p/src/a.h:1:1: error: bad [bugprone-x,-warnings-as-errors]
 /p/src/a.h:1:1: note: here
 /p/vendor/v.h:2:2: warning: theirs [bugprone-y]
