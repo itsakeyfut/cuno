@@ -1211,3 +1211,68 @@ fn quiet_wins_over_configured_verbose() {
         assert!(!run.stderr.contains(line), "{line} in:\n{}", run.stderr);
     }
 }
+
+/// The compiler's warning lines in what a build printed.
+fn warnings(run: &Run) -> Vec<String> {
+    run.stderr
+        .lines()
+        .filter(|l| l.contains("warning") && l.contains("unused"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A second build with nothing changed shows the warnings the first build
+/// showed, as the compiler printed them, on every compiler; once the source
+/// no longer warns, nothing is shown again (`commands.md`, "Format").
+///
+/// Mutation: show nothing for an up-to-date step, keep cl's file-name line
+/// in what is shown again, or keep the old output when a rebuild prints
+/// nothing; this test fails.
+#[test]
+fn an_up_to_date_step_shows_its_last_warnings_again() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = Project::new()
+            .file("cuno.toml", MANIFEST)
+            .file("src/main.cpp", "int main() { int unused = 0; return 0; }\n");
+        let first = project.cuno(&["build", "--compiler", name]);
+        assert_eq!(first.code, Some(0), "{name}: {}", first.stderr);
+        assert!(!warnings(&first).is_empty(), "{name}: {}", first.stderr);
+        let again = project.cuno(&["build", "--compiler", name]);
+        assert!(
+            !again.stderr.contains("Compiling"),
+            "{name}: {}",
+            again.stderr
+        );
+        assert_eq!(warnings(&again), warnings(&first), "{name}");
+        assert!(
+            !again.stderr.contains("main.cpp\n"),
+            "{name}: {}",
+            again.stderr
+        );
+
+        std::fs::write(
+            project.path().join("src/main.cpp"),
+            "int main() { return 0; }\n",
+        )
+        .unwrap();
+        // Dated back, so the rebuild is recorded and the next build skips it.
+        std::fs::File::options()
+            .write(true)
+            .open(project.path().join("src/main.cpp"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        let fixed = project.cuno(&["build", "--compiler", name]);
+        assert!(warnings(&fixed).is_empty(), "{name}: {}", fixed.stderr);
+        let after = project.cuno(&["build", "--compiler", name]);
+        assert!(
+            !after.stderr.contains("Compiling"),
+            "{name}: {}",
+            after.stderr
+        );
+        assert!(warnings(&after).is_empty(), "{name}: {}", after.stderr);
+    }
+}

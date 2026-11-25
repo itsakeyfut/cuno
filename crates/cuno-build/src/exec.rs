@@ -60,7 +60,8 @@ impl Spawner for SystemSpawner {
 pub enum Event<'a> {
     /// A step is about to start. A step that is up to date never starts.
     Started(&'a Step),
-    /// A step finished, with what it printed.
+    /// A step finished, with what it printed; or one that was up to date
+    /// and printed something when it last succeeded, with that.
     Finished(&'a Step, &'a Output),
     /// A step that succeeded read an input dated in the future, so it was
     /// left unrecorded and runs again (`docs/en/specs/build.md`, "Deciding
@@ -87,8 +88,9 @@ enum Report {
     /// It ran, and was left unrecorded for the files dated in the future
     /// given, if any.
     Ran(Output, Vec<PathBuf>),
-    /// It was up to date and did not run.
-    UpToDate,
+    /// It was up to date and did not run, with what it printed when it
+    /// last succeeded.
+    UpToDate(Vec<u8>),
 }
 
 /// Runs `graph` with `env` in `cwd`, at most `jobs` steps at a time, each
@@ -136,8 +138,10 @@ pub fn execute(
                         // A panic is a failure that still reports back, so
                         // the wait below always ends.
                         let report = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                            if records.is_some_and(|r| r.up_to_date(step)) {
-                                return Report::UpToDate;
+                            if let Some(records) = records
+                                && records.up_to_date(step)
+                            {
+                                return Report::UpToDate(records.saved_output(step));
                             }
                             let _ = done.send((i, Report::Starting));
                             let (output, ahead) =
@@ -170,13 +174,22 @@ pub fn execute(
             let step = &graph.steps[i];
             match report {
                 Report::Starting => on(Event::Started(step)),
-                Report::UpToDate => {
+                Report::UpToDate(saved) => {
                     running -= 1;
                     state[i] = State::Done;
+                    // What it printed last time, shown again as if it ran
+                    // (`docs/en/specs/commands.md`, "Format").
+                    if !saved.is_empty() {
+                        let output = Output {
+                            success: true,
+                            stdout: saved,
+                            stderr: Vec::new(),
+                        };
+                        on(Event::Finished(step, &output));
+                    }
                 }
                 Report::Ran(output, ahead) => {
                     running -= 1;
-                    let output = without_echo(step, output);
                     on(Event::Finished(step, &output));
                     for path in &ahead {
                         on(Event::DatedAhead(path));
@@ -214,13 +227,22 @@ fn perform(
         records.forget(step);
     }
     let started = SystemTime::now();
-    let output = run(step, env, cwd, spawner);
+    // As it is shown, so what is kept is what was shown.
+    let output = without_echo(step, run(step, env, cwd, spawner));
     if !output.success {
         return (output, Vec::new());
     }
     let Some(records) = records else {
         return (output, Vec::new());
     };
+    // Before the record, so a step recorded has its output kept.
+    let shown: Vec<u8> = output
+        .stdout
+        .iter()
+        .chain(&output.stderr)
+        .copied()
+        .collect();
+    records.save_output(step, &shown);
     let headers = match &step.headers {
         Some(headers) => std::fs::read(headers.file())
             .ok()
