@@ -83,6 +83,14 @@ impl Layout {
         }
     }
 
+    /// The same profile's program build.
+    pub fn for_programs(&self) -> Layout {
+        Layout {
+            variant: Variant::Normal,
+            ..self.clone()
+        }
+    }
+
     /// The same profile's test build.
     pub fn for_tests(&self) -> Layout {
         Layout {

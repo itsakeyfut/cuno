@@ -99,20 +99,36 @@ pub struct Graph {
     pub steps: Vec<Step>,
 }
 
-/// The settings a source of each language compiles with.
-pub type SettingsFor<'a> = &'a dyn Fn(Lang) -> CompileSettings;
+/// What a plan compiles for, which [`plan`] decides from its [`Products`]
+/// and hands to the settings: whether it is the test build, compiled with
+/// `CUNO_TEST`, and whether it compiles or checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Purpose {
+    /// The test build.
+    pub test: bool,
+    /// Compile, or check without objects.
+    pub mode: Mode,
+}
+
+/// The settings a source of each language compiles with, for the purpose
+/// [`plan`] gives.
+pub type SettingsFor<'a> = &'a dyn Fn(Lang, Purpose) -> CompileSettings;
 
 /// What a plan makes.
 #[derive(Clone, Copy)]
 pub enum Products<'a> {
     /// The package's executables: each entry file and the body, one link
-    /// per executable (`project-layout.md`, "Linking rules").
-    Programs,
+    /// per executable (`project-layout.md`, "Linking rules"); in
+    /// [`Mode::Check`], checked and not linked.
+    Programs {
+        /// Compile, or check.
+        mode: Mode,
+    },
     /// The test executables (`testing.md`, "Execution"): the body, the
     /// sources under `tests/` and cuno's bundled runtime, all compiled with
     /// `CUNO_TEST` and once each, entry files left out, one link per
-    /// executable (`project-layout.md`, "Linking rules"). Only with a test
-    /// layout and [`Mode::Compile`].
+    /// executable (`project-layout.md`, "Linking rules"). Always compiled,
+    /// into the test layout.
     Tests {
         /// The executables, as [`crate::sources::test_executables`] gives.
         executables: &'a [TestExecutable],
@@ -121,8 +137,7 @@ pub enum Products<'a> {
     },
     /// What `compile_commands.json` describes: the test build's sources
     /// but for the runtime, and the entry files, compiled and never linked
-    /// (`build.md`, "Output"). Only with a test layout and
-    /// [`Mode::Compile`].
+    /// (`build.md`, "Output"). Always compiled, into the test layout.
     CompileCommands,
 }
 
@@ -134,15 +149,13 @@ pub struct Plan<'a> {
     pub sources: &'a Sources,
     /// What is made from them.
     pub products: Products<'a>,
-    /// Where outputs go.
+    /// Where outputs go: the profile's layout, whose program or test
+    /// variant [`plan`] takes as the products say.
     pub layout: &'a Layout,
     /// The compiler.
     pub kind: CompilerKind,
     /// Its driver, which compiles and links.
     pub program: &'a Path,
-    /// Whether to build, or to check without objects or links. The
-    /// settings `compile` gives must be for the same mode.
-    pub mode: Mode,
     /// The settings a source of each language compiles with.
     pub compile: SettingsFor<'a>,
     /// The settings every link uses.
@@ -160,46 +173,36 @@ pub struct Plan<'a> {
 /// links (`commands.md`, "`cuno build` / `cuno check`"). For the tests and
 /// compile_commands.json, as [`Products`] says.
 pub fn plan(p: &Plan<'_>) -> Graph {
-    let is_test_plan = match p.products {
-        Products::Programs => false,
-        Products::Tests { .. } | Products::CompileCommands => true,
+    // Decided here, once, from the products, so the layout and the
+    // settings cannot be for another build than the one planned.
+    let purpose = match p.products {
+        Products::Programs { mode } => Purpose { test: false, mode },
+        Products::Tests { .. } | Products::CompileCommands => Purpose {
+            test: true,
+            mode: Mode::Compile,
+        },
     };
-    // A test plan on a program's layout, or a check of one, is a bug in
-    // cuno: its objects would mix with the program's, or nothing would link.
-    assert_eq!(
-        is_test_plan,
-        p.layout.is_test(),
-        "products for another layout"
-    );
-    assert!(
-        !is_test_plan || p.mode == Mode::Compile,
-        "a test plan in another mode than compile"
-    );
+    let layout = if purpose.test {
+        p.layout.for_tests()
+    } else {
+        p.layout.for_programs()
+    };
+    let layout = &layout;
     let mut steps = Vec::new();
     let mut compile = |source: &Source, object: Option<PathBuf>| -> usize {
-        let settings = (p.compile)(source.lang);
-        // A disagreement is a bug in cuno: a check planned with compile
-        // flags would write objects and stamp nothing it checked.
-        assert_eq!(settings.mode, p.mode, "compile settings for another mode");
-        // So is a test layout with settings that leave out `CUNO_TEST`: its
-        // objects would hold no tests, and a test run would find none.
-        assert_eq!(
-            settings.test,
-            p.layout.is_test(),
-            "compile settings for another build than the layout's"
-        );
-        let (kind, output) = match p.mode {
+        let settings = (p.compile)(source.lang, purpose);
+        let (kind, output) = match purpose.mode {
             Mode::Compile => (
                 StepKind::Compile {
                     source: source.path.clone(),
                 },
-                object.unwrap_or_else(|| p.layout.object(p.package, &source.path)),
+                object.unwrap_or_else(|| layout.object(p.package, &source.path)),
             ),
             Mode::Check => (
                 StepKind::Check {
                     source: source.path.clone(),
                 },
-                p.layout.check_stamp(p.package, &source.path),
+                layout.check_stamp(p.package, &source.path),
             ),
         };
         let echo = p
@@ -240,7 +243,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
     // the steps whose objects it takes, in link order.
     let mut links: Vec<(String, Subsystem, PathBuf, Vec<usize>)> = Vec::new();
     match p.products {
-        Products::Programs => {
+        Products::Programs { mode } => {
             let entries: Vec<usize> = p
                 .sources
                 .bins
@@ -249,7 +252,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .collect();
             // A match rather than an `if`, so a new mode has to say whether
             // it links.
-            match p.mode {
+            match mode {
                 Mode::Compile => {}
                 Mode::Check => return Graph { steps },
             }
@@ -258,7 +261,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 links.push((
                     bin.name.clone(),
                     bin.subsystem,
-                    p.layout.exe(&bin.name),
+                    layout.exe(&bin.name),
                     after,
                 ));
             }
@@ -303,7 +306,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                     path: runtime.to_owned(),
                     lang: Lang::C,
                 },
-                Some(p.layout.runtime_object(p.package, &name)),
+                Some(layout.runtime_object(p.package, &name)),
             );
             for exe in executables {
                 // In-source tests: the body and the runtime. A file under
@@ -331,7 +334,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 links.push((
                     exe.name.clone(),
                     Subsystem::Console,
-                    p.layout.test_exe(p.package, &exe.name),
+                    layout.test_exe(p.package, &exe.name),
                     after,
                 ));
             }
@@ -391,6 +394,12 @@ fn libraries(kind: CompilerKind, build: &BuildSettings) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a program's link is compiled for.
+    const PROGRAM: Purpose = Purpose {
+        test: false,
+        mode: Mode::Compile,
+    };
     use crate::input::compile_settings;
     use crate::input::tests::BUNDLED;
     use crate::sources::Bin;
@@ -442,7 +451,7 @@ mod tests {
             Path::new("C:/p"),
             HostOs::Windows,
         );
-        let compile = |lang| {
+        let compile = |lang, purpose: Purpose| {
             compile_settings(
                 None,
                 kind,
@@ -450,19 +459,18 @@ mod tests {
                 lang,
                 HostOs::Windows,
                 Path::new(BUNDLED),
-                false,
-                mode,
+                purpose.test,
+                purpose.mode,
             )
         };
-        let link = compile(Lang::Cxx);
+        let link = compile(Lang::Cxx, PROGRAM);
         plan(&Plan {
             package: "app",
             sources: &sources,
-            products: Products::Programs,
+            products: Products::Programs { mode },
             layout: &layout,
             kind,
             program: Path::new("C:/cl.exe"),
-            mode,
             compile: &compile,
             link: (&link.build, &link.profile),
             color: false,
@@ -648,7 +656,7 @@ mod tests {
             HostOs::Windows,
         );
         let kind = CompilerKind::Msvc;
-        let compile = |lang| {
+        let compile = |lang, purpose: Purpose| {
             let mut settings = compile_settings(
                 None,
                 kind,
@@ -656,24 +664,25 @@ mod tests {
                 lang,
                 HostOs::Windows,
                 Path::new(BUNDLED),
-                false,
-                Mode::Compile,
+                purpose.test,
+                purpose.mode,
             );
             settings.include_dirs = vec!["C:/p/src".into()];
             settings.build.include_dirs = vec!["C:/p/hdr".into()];
             settings
         };
-        let mut link = compile(Lang::Cxx);
+        let mut link = compile(Lang::Cxx, PROGRAM);
         link.build.lib_dirs = vec!["C:/p/lib".into()];
         link.build.links = vec!["kernel32".into()];
         let g = plan(&Plan {
             package: "app",
             sources: &sources,
-            products: Products::Programs,
+            products: Products::Programs {
+                mode: Mode::Compile,
+            },
             layout: &layout,
             kind,
             program: Path::new("C:/cl.exe"),
-            mode: Mode::Compile,
             compile: &compile,
             link: (&link.build, &link.profile),
             color: false,
@@ -704,7 +713,7 @@ mod tests {
                 Path::new("C:/p"),
                 HostOs::Windows,
             );
-            let compile = |lang| {
+            let compile = |lang, purpose: Purpose| {
                 compile_settings(
                     None,
                     kind,
@@ -712,19 +721,20 @@ mod tests {
                     lang,
                     HostOs::Windows,
                     Path::new(BUNDLED),
-                    false,
-                    Mode::Compile,
+                    purpose.test,
+                    purpose.mode,
                 )
             };
-            let link = compile(Lang::Cxx);
+            let link = compile(Lang::Cxx, PROGRAM);
             plan(&Plan {
                 package: "app",
                 sources: &sources,
-                products: Products::Programs,
+                products: Products::Programs {
+                    mode: Mode::Compile,
+                },
                 layout: &layout,
                 kind,
                 program: Path::new("C:/clang.exe"),
-                mode: Mode::Compile,
                 compile: &compile,
                 link: (&link.build, &link.profile),
                 color,
@@ -780,50 +790,6 @@ mod tests {
         }
     }
 
-    /// A test layout planned with settings that leave out `CUNO_TEST`, or
-    /// the reverse, is a bug in cuno and stops the plan.
-    ///
-    /// Mutation: plan without comparing the settings' test build with the
-    /// layout's; this test fails.
-    #[test]
-    #[should_panic(expected = "compile settings for another build than the layout's")]
-    fn a_test_layout_needs_test_settings() {
-        let sources = sources();
-        let layout = Layout::new(
-            Path::new("C:/p/target"),
-            Profile::Dev,
-            Path::new("C:/p"),
-            HostOs::Windows,
-        )
-        .for_tests();
-        let kind = CompilerKind::Clang;
-        let compile = |lang| {
-            compile_settings(
-                None,
-                kind,
-                Profile::Dev,
-                lang,
-                HostOs::Windows,
-                Path::new(BUNDLED),
-                false,
-                Mode::Compile,
-            )
-        };
-        let link = compile(Lang::Cxx);
-        plan(&Plan {
-            package: "app",
-            sources: &sources,
-            products: Products::CompileCommands,
-            layout: &layout,
-            kind,
-            program: Path::new("C:/clang.exe"),
-            mode: Mode::Compile,
-            compile: &compile,
-            link: (&link.build, &link.profile),
-            color: false,
-        });
-    }
-
     /// A package with an executable, a body source, a test file and a
     /// helper under `tests/`.
     fn test_sources() -> Sources {
@@ -851,7 +817,7 @@ mod tests {
         )
         .for_tests();
         let kind = CompilerKind::Clang;
-        let compile = |lang| {
+        let compile = |lang, purpose: Purpose| {
             compile_settings(
                 None,
                 kind,
@@ -859,11 +825,17 @@ mod tests {
                 lang,
                 HostOs::Windows,
                 Path::new(BUNDLED),
-                true,
-                Mode::Compile,
+                purpose.test,
+                purpose.mode,
             )
         };
-        let link = compile(Lang::Cxx);
+        let link = compile(
+            Lang::Cxx,
+            Purpose {
+                test: true,
+                mode: Mode::Compile,
+            },
+        );
         plan(&Plan {
             package: "app",
             sources,
@@ -871,7 +843,6 @@ mod tests {
             layout: &layout,
             kind,
             program: Path::new("C:/clang.exe"),
-            mode: Mode::Compile,
             compile: &compile,
             link: (&link.build, &link.profile),
             color: false,
@@ -1002,91 +973,5 @@ mod tests {
             ]
         );
         assert_eq!(g.steps.len(), 4, "no links");
-    }
-
-    /// Mutation: let the programs be planned on a test layout; this test
-    /// fails.
-    #[test]
-    #[should_panic(expected = "products for another layout")]
-    fn programs_need_a_program_layout() {
-        test_plan(Products::Programs, &test_sources());
-    }
-
-    /// Mutation: let compile_commands.json, or the tests, be planned on a
-    /// program's layout; this test fails.
-    #[test]
-    #[should_panic(expected = "products for another layout")]
-    fn tests_need_a_test_layout() {
-        let sources = test_sources();
-        let layout = Layout::new(
-            Path::new("C:/p/target"),
-            Profile::Dev,
-            Path::new("C:/p"),
-            HostOs::Windows,
-        );
-        let compile = |lang| {
-            compile_settings(
-                None,
-                CompilerKind::Clang,
-                Profile::Dev,
-                lang,
-                HostOs::Windows,
-                Path::new(BUNDLED),
-                false,
-                Mode::Compile,
-            )
-        };
-        let link = compile(Lang::Cxx);
-        plan(&Plan {
-            package: "app",
-            sources: &sources,
-            products: Products::CompileCommands,
-            layout: &layout,
-            kind: CompilerKind::Clang,
-            program: Path::new("C:/clang.exe"),
-            mode: Mode::Compile,
-            compile: &compile,
-            link: (&link.build, &link.profile),
-            color: false,
-        });
-    }
-
-    /// Mutation: let a test plan check rather than compile; this test fails.
-    #[test]
-    #[should_panic(expected = "a test plan in another mode than compile")]
-    fn a_test_plan_compiles() {
-        let sources = test_sources();
-        let layout = Layout::new(
-            Path::new("C:/p/target"),
-            Profile::Dev,
-            Path::new("C:/p"),
-            HostOs::Windows,
-        )
-        .for_tests();
-        let compile = |lang| {
-            compile_settings(
-                None,
-                CompilerKind::Clang,
-                Profile::Dev,
-                lang,
-                HostOs::Windows,
-                Path::new(BUNDLED),
-                true,
-                Mode::Check,
-            )
-        };
-        let link = compile(Lang::Cxx);
-        plan(&Plan {
-            package: "app",
-            sources: &sources,
-            products: Products::CompileCommands,
-            layout: &layout,
-            kind: CompilerKind::Clang,
-            program: Path::new("C:/clang.exe"),
-            mode: Mode::Check,
-            compile: &compile,
-            link: (&link.build, &link.profile),
-            color: false,
-        });
     }
 }
