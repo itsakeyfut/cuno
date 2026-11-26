@@ -158,6 +158,40 @@ fn fmt_leaves_a_nested_package_and_says_so() {
     );
 }
 
+/// A temporary directory that does not exist stops fmt with the error
+/// every command gives for it: what the directory was for, and how to fix
+/// it (`architecture.md`, "What goes in `cuno-core`"). Nothing is written.
+///
+/// Mutation: give fmt its own error again, without the help; this test
+/// fails.
+#[test]
+fn a_missing_temporary_directory_stops_fmt_with_the_shared_help() {
+    if require_llvm_tool("clang-format").is_none() {
+        return;
+    }
+    let project = package();
+    let temp = project.home().join("missing").join("temp");
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.arg("fmt").env("TEMP", &temp).env("TMP", &temp);
+    let run = project.run_command(cmd);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    let error = format!("error: cannot create {}\\cuno-fmt-", temp.display());
+    assert!(run.stderr.contains(&error), "{}", run.stderr);
+    assert!(run.stderr.contains(" to format: "), "{}", run.stderr);
+    assert!(
+        run.stderr.ends_with(
+            "help: set TEMP to a directory that exists and can be written
+"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/main.cpp")).unwrap(),
+        UGLY
+    );
+}
+
 /// A `[fmt.clang-format]` clang-format refuses is a settings problem, exit
 /// 3, before any file is formatted, and names neither a source nor a
 /// scratch file (`commands.md`, "`cuno fmt`").

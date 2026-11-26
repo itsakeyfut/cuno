@@ -208,3 +208,37 @@ fn no_checks_and_no_profile() {
     let run = project.cuno(&["lint", "--release"]);
     assert_eq!(run.code, Some(2), "{}", run.stderr);
 }
+
+/// A temporary directory that does not exist stops lint with the shared
+/// help every command gives for it (`architecture.md`, "What goes in
+/// `cuno-core`").
+///
+/// Mutation: give lint's scratch directory its own error again, without
+/// the help; this test fails.
+#[test]
+fn a_missing_temporary_directory_stops_lint_with_the_shared_help() {
+    for compiler in compilers() {
+        let project = package("");
+        let temp = project.home().join("missing").join("temp");
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["lint", "--compiler", compiler])
+            .env("TEMP", &temp)
+            .env("TMP", &temp);
+        let run = project.run_command(cmd);
+        assert_eq!(run.code, Some(3), "{compiler}: {}", run.stderr);
+        assert!(
+            run.stderr
+                .contains(&format!("error: cannot create {}\\cuno-", temp.display())),
+            "{compiler}: {}",
+            run.stderr
+        );
+        assert!(
+            run.stderr.ends_with(
+                "help: set TEMP to a directory that exists and can be written
+"
+            ),
+            "{compiler}: {}",
+            run.stderr
+        );
+    }
+}

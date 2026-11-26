@@ -166,8 +166,8 @@ pub fn lint(
         analysed.push(path);
     }
 
-    let scratch = scratch_dir(temp).map_err(boxed)?;
-    let config = scratch.join(tidy::FILE);
+    let scratch = cuno_core::scratch::in_temp(temp, "lint", "analyse").map_err(boxed)?;
+    let config = scratch.path().join(tidy::FILE);
     let written = std::fs::write(&config, tidy::clang_tidy_file(&manifest.lint));
     let linted = written.map_err(|e| boxed(ScratchError(config.clone(), e.to_string())));
     let linted = linted.map(|()| {
@@ -182,7 +182,7 @@ pub fn lint(
             env: &prepared.env,
             jobs,
             fix,
-            scratch: &scratch,
+            scratch: scratch.path(),
         };
         let is_ours = |path: &Path| {
             let place = Place::of(path, case);
@@ -195,7 +195,7 @@ pub fn lint(
             &SystemRunner::with_limit(SOURCE_LIMIT),
         )
     });
-    let _ = std::fs::remove_dir_all(&scratch);
+    drop(scratch);
     let linted = linted?;
 
     shell.raw(&linted.shown);
@@ -235,22 +235,6 @@ fn relative(root: &Path, path: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-/// A directory of its own under `temp`, made here and not found.
-fn scratch_dir(temp: &Path) -> Result<PathBuf, ScratchError> {
-    for n in 0..100 {
-        let dir = temp.join(format!("cuno-lint-{}-{n}", std::process::id()));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(ScratchError(dir, e.to_string())),
-        }
-    }
-    Err(ScratchError(
-        temp.to_owned(),
-        "every scratch name is taken".to_owned(),
-    ))
 }
 
 /// The scratch copy of the configuration could not be written: an

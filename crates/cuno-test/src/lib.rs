@@ -15,6 +15,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Instant;
 
+use cuno_core::scratch::Scratch;
 use cuno_core::{Env, NameCase, Shell};
 
 use crate::record::{Ending, Report};
@@ -176,7 +177,7 @@ impl ListFailure {
 pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
     let mut summary = Summary::default();
     let results = match own_directory(r.scratch) {
-        Ok(dir) => dir,
+        Ok(scratch) => scratch,
         Err(e) => {
             shell.error(format!(
                 "cannot make a directory for the test results in {}: {e}",
@@ -194,8 +195,8 @@ pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
                 cuno_core::program::shown(&exe.path, r.cwd).display()
             ),
         );
-        match list(r, &results, index, exe) {
-            Ok(names) => run_executable(r, &results, index, &names, shell, &mut summary),
+        match list(r, results.path(), index, exe) {
+            Ok(names) => run_executable(r, results.path(), index, &names, shell, &mut summary),
             Err(failure) => {
                 summary.unlisted += 1;
                 if let Some(output) = &failure.output {
@@ -209,22 +210,15 @@ pub fn run(r: &TestRun<'_>, shell: &mut Shell) -> Summary {
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&results);
+    drop(results);
     summary
 }
 
-/// A new directory in `scratch` that no other run uses.
-fn own_directory(scratch: &Path) -> io::Result<PathBuf> {
+/// A new directory in `scratch`, the output directory's place for them,
+/// that no other run uses, removed when dropped.
+fn own_directory(scratch: &Path) -> io::Result<Scratch> {
     std::fs::create_dir_all(scratch)?;
-    for n in 0.. {
-        let dir = scratch.join(format!("run-{}-{n}", std::process::id()));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    unreachable!("the counter runs out first")
+    Scratch::new(scratch, "test").map_err(|(_, e)| e)
 }
 
 /// An exit code as a person reads it: a Windows crash code, which comes out

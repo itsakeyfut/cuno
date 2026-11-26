@@ -79,8 +79,8 @@ pub fn fmt(
     // Formatted with cuno.toml's configuration whatever `.clang-format` the
     // root holds (a hand-written one is kept, not used), from a scratch
     // directory, since `--check` writes nothing in the project.
-    let scratch = scratch_dir(temp).map_err(boxed)?;
-    let style = scratch.join(format::FILE);
+    let scratch = cuno_core::scratch::in_temp(temp, "fmt", "format").map_err(boxed)?;
+    let style = scratch.path().join(format::FILE);
     let written = std::fs::write(
         &style,
         format::clang_format_config(&manifest.fmt, manifest.package.lang),
@@ -101,7 +101,7 @@ pub fn fmt(
             format::check_style(&tool, &runner).map_err(boxed)?;
             Ok(format::format(&files, &tool, check, &runner))
         });
-    let _ = std::fs::remove_dir_all(&scratch);
+    drop(scratch);
     let formatted = result?;
 
     // Every file that could not be formatted, each left as it was.
@@ -141,23 +141,6 @@ fn relative(root: &Path, path: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-/// A directory of its own under `temp`, made here and not found: one that
-/// already exists, whoever made it, is never used.
-fn scratch_dir(temp: &Path) -> Result<PathBuf, ScratchError> {
-    for n in 0..100 {
-        let dir = temp.join(format!("cuno-fmt-{}-{n}", std::process::id()));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(scratch_error(&dir, e)),
-        }
-    }
-    Err(scratch_error(
-        temp,
-        std::io::Error::other("every scratch name is taken"),
-    ))
 }
 
 /// A scratch file that could not be made: an environment problem
