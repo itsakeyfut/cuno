@@ -279,7 +279,9 @@ fn diagnose(
     ) else {
         return diagnosed;
     };
-    if borrows_msvc {
+    // `Accepted` only for a compiler the check applies to: `probe` is Ok,
+    // checking nothing, for one it does not.
+    if cuno_toolchain::probe::applies(&selected) {
         match toolchain::probe(&selected, &stl, temp, "doctor", runner) {
             Ok(()) => problems.status("Accepted", "by the MSVC standard library"),
             Err(error) => problems.report(&*error),

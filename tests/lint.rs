@@ -208,3 +208,47 @@ fn no_checks_and_no_profile() {
     let run = project.cuno(&["lint", "--release"]);
     assert_eq!(run.code, Some(2), "{}", run.stderr);
 }
+
+/// A temporary directory that does not exist stops lint, at its first
+/// check (the compiler's or clang-tidy's), with the shared help, in a
+/// directory named for lint, and never says it was to compile: lint runs
+/// no compiler (`architecture.md`, "What goes in `cuno-core`"). Lint's own
+/// directory for analysing comes after those checks, so a missing
+/// temporary directory never reaches it.
+///
+/// Mutation: name lint's directories `cuno-build-`, run the build's
+/// check before compiling for lint, or drop the help; this test fails.
+#[test]
+fn a_missing_temporary_directory_stops_lint_with_the_shared_help() {
+    for compiler in compilers() {
+        let project = package("");
+        let temp = project.home().join("missing").join("temp");
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["lint", "--compiler", compiler])
+            .env("TEMP", &temp)
+            .env("TMP", &temp);
+        let run = project.run_command(cmd);
+        assert_eq!(run.code, Some(3), "{compiler}: {}", run.stderr);
+        assert!(
+            run.stderr.contains(&format!(
+                "error: cannot create {}\\cuno-lint-",
+                temp.display()
+            )),
+            "{compiler}: {}",
+            run.stderr
+        );
+        assert!(
+            !run.stderr.contains(" to compile: "),
+            "{compiler}: {}",
+            run.stderr
+        );
+        assert!(
+            run.stderr.ends_with(
+                "help: set TMP and TEMP to a directory that exists and can be written
+"
+            ),
+            "{compiler}: {}",
+            run.stderr
+        );
+    }
+}

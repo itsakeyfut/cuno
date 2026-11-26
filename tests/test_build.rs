@@ -455,6 +455,7 @@ fn ready_asks_the_registry_it_is_given() {
         let registry = Counting(std::cell::Cell::new(0));
         let mut shell = Shell::new(Box::new(std::io::sink()), None, &env, false);
         let ready = cuno_build::toolchain::ready(
+            cuno_build::toolchain::ReadyFor::Build,
             &settings,
             (&project.root, manifest),
             Profile::Dev,

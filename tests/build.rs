@@ -1206,6 +1206,44 @@ fn clangs_diagnostics_are_colored_when_cunos_output_is() {
     }
 }
 
+/// MSVC gets no standard library check, but cl writes in the temporary
+/// directory too: a missing one stops the build before compiling with
+/// cuno's error and help, saying it was to compile, not to check msvc
+/// (`architecture.md`, "What goes in `cuno-core`").
+///
+/// Mutation: make the probe's scratch directory before asking whether the
+/// check applies, or drop the check before compiling; this test fails.
+#[test]
+fn msvc_with_a_missing_temporary_directory_stops_before_compiling() {
+    if !here(Compiler::Msvc) {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", MANIFEST).file(
+        "src/main.cpp",
+        "int main() { return 0; }
+",
+    );
+    let missing = project.home().join("missing");
+    let temp = missing.join("temp");
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["build", "--compiler", "msvc"])
+        .env("TEMP", &temp)
+        .env("TMP", &temp);
+    let run = project.run_command(cmd);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(run.stderr.contains(" to compile: "), "{}", run.stderr);
+    assert!(!run.stderr.contains("check msvc"), "{}", run.stderr);
+    assert!(
+        run.stderr.ends_with(
+            "help: set TMP and TEMP to a directory that exists and can be written
+"
+        ),
+        "{}",
+        run.stderr
+    );
+    assert!(!missing.exists(), "the temporary directory was created");
+}
+
 /// A build whose temporary directory does not exist stops before compiling
 /// with a setup problem naming the directory and the check, as doctor
 /// reports it, and does not create the directory (`toolchain.md`, "Minimum
@@ -1235,7 +1273,7 @@ fn a_missing_temporary_directory_stops_the_build() {
     assert!(run.stderr.contains(" to check clang: "), "{}", run.stderr);
     assert!(
         run.stderr
-            .contains("help: set TEMP to a directory that exists and can be written\n"),
+            .contains("help: set TMP and TEMP to a directory that exists and can be written\n"),
         "{}",
         run.stderr
     );

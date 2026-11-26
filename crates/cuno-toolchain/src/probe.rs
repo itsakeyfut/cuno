@@ -34,6 +34,17 @@ pub struct ProbeInputs<'a> {
     pub cwd: &'a Path,
 }
 
+/// Whether [`check`] asks anything of `selected`: only an LLVM compiler
+/// using the MSVC standard library is checked. A caller asks first, so
+/// that nothing is prepared (a scratch directory) for a check that does not
+/// apply.
+pub fn applies(selected: &Selected) -> bool {
+    match selected.kind.family() {
+        Family::Llvm => selected.msvc.is_some(),
+        Family::Msvc => false,
+    }
+}
+
 /// Whether the selected compiler can build here: on Windows a Clang must be
 /// accepted by the MSVC standard library, which is asked directly by
 /// syntax-checking a file that includes `<yvals_core.h>` (`toolchain.md`,
@@ -45,10 +56,8 @@ pub fn check(
     inputs: ProbeInputs<'_>,
     run: &dyn Runner,
 ) -> Result<(), ToolchainError> {
-    // Only an LLVM compiler using the MSVC standard library is checked.
-    match selected.kind.family() {
-        Family::Llvm if selected.msvc.is_some() => {}
-        Family::Llvm | Family::Msvc => return Ok(()),
+    if !applies(selected) {
+        return Ok(());
     }
     stl_probe(
         selected.kind.name(),

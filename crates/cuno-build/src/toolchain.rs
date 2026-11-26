@@ -11,7 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
-use cuno_core::{CunoError, Env, ExitClass, Shell};
+use cuno_core::scratch;
+use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
 use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, ToolContext, check_edition, include_dirs};
@@ -174,9 +175,9 @@ pub fn tidy_ready(
 
 /// Runs the standard library probe of `selected`, in a scratch directory
 /// under `temp`, the temporary directory, whose name carries `command`
-/// (`build`, `doctor`). Ok for a compiler it does not apply to
-/// (`cuno_toolchain::probe::check` decides), so a caller need not ask
-/// first; doctor still does, to print `Accepted` only for one it checked.
+/// (`build`, `doctor`). Ok, with nothing made, for a compiler it does not
+/// apply to (`cuno_toolchain::probe::applies` decides), so a caller need not
+/// ask first; doctor still does, to print `Accepted` only for one it checked.
 pub fn probe(
     selected: &Selected,
     compile: &ProbeCompile,
@@ -184,6 +185,11 @@ pub fn probe(
     command: &str,
     runner: &dyn Runner,
 ) -> Result<(), Box<dyn CunoError>> {
+    // Asked before the scratch directory is made: MSVC is not checked, so
+    // an unusable `TEMP` must not stop its build.
+    if !stl::applies(selected) {
+        return Ok(());
+    }
     in_scratch(temp, command, selected.kind.name(), |dir| {
         stl::check(
             selected,
@@ -206,6 +212,27 @@ pub struct Ready {
     pub prepared: Prepared,
 }
 
+/// What a toolchain is made ready for: it names the scratch directories
+/// (`cuno-build-…`, `cuno-lint-…`), and only a build runs the compiler,
+/// which needs the temporary directory itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadyFor {
+    /// `cuno build`, `run`, `check` and `test`: the compiler runs.
+    Build,
+    /// `cuno lint`: only clang-tidy runs.
+    Lint,
+}
+
+impl ReadyFor {
+    /// The command, as scratch directories are named.
+    fn command(self) -> &'static str {
+        match self {
+            ReadyFor::Build => "build",
+            ReadyFor::Lint => "lint",
+        }
+    }
+}
+
 /// Every step a build takes before compiling: detect, select, check the
 /// edition, prepare the environment, and probe the standard library. Each
 /// variable left out of the environment is warned about here, as the build
@@ -215,6 +242,7 @@ pub struct Ready {
 // Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn ready(
+    ready_for: ReadyFor,
     settings: &Settings,
     project: (&Path, &Manifest),
     profile: Profile,
@@ -256,7 +284,14 @@ pub fn ready(
         // missing include directory is no error to any compiler.
         &bundled::include_dir(&settings.home),
     ) {
-        probe(&selected, &compile, temp, "build", runner)?;
+        probe(&selected, &compile, temp, ready_for.command(), runner)?;
+    }
+    // A compiler with no check still writes in the temporary directory (cl
+    // stops with D8050 when it cannot), so the build asks whether it can
+    // before compiling, and says how to fix it in cuno's words, not the
+    // compiler's (`architecture.md`, "What goes in `cuno-core`").
+    if ready_for == ReadyFor::Build && !stl::applies(&selected) {
+        scratch::in_temp(temp, ready_for.command(), "compile").map_err(boxed)?;
     }
     Ok(Ready { selected, prepared })
 }
@@ -271,74 +306,14 @@ pub fn in_scratch(
     what: &'static str,
     check: impl FnOnce(&Path) -> Result<(), ToolchainError>,
 ) -> Result<(), Box<dyn CunoError>> {
-    // `create_dir`, not `create_dir_all`: a temporary directory that does not
-    // exist is a problem to report, not a tree to make.
-    // The process id keeps two cuno processes apart. It is the process's
-    // identity, not its environment, so a library may ask for it. A killed
-    // run leaves its directory behind, and the id is reused: a name already
-    // taken, whoever took it, is passed over for the next.
-    let failed = |dir: &Path, reason: String| {
-        boxed(ScratchError {
-            what,
-            dir: dir.to_owned(),
-            reason,
-        })
-    };
-    let mut made = None;
-    for n in 0..100 {
-        let dir = temp.join(format!("cuno-{command}-{}-{n}", std::process::id()));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => {
-                made = Some(dir);
-                break;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(failed(&dir, e.to_string())),
-        }
-    }
-    let Some(scratch) = made else {
-        return Err(failed(temp, "every scratch name is taken".to_owned()));
-    };
-    let result = check(&scratch);
-    let _ = std::fs::remove_dir_all(&scratch);
-    result.map_err(boxed)
-}
-
-/// The probe's scratch directory cannot be made in the temporary
-/// directory (`TEMP` names one that does not exist or cannot be written).
-#[derive(Debug)]
-struct ScratchError {
-    what: &'static str,
-    dir: PathBuf,
-    reason: String,
-}
-
-impl std::fmt::Display for ScratchError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "cannot create {} to check {}: {}",
-            self.dir.display(),
-            self.what,
-            self.reason
-        )
-    }
-}
-
-impl std::error::Error for ScratchError {}
-
-impl CunoError for ScratchError {
-    fn exit_class(&self) -> ExitClass {
-        ExitClass::Setup
-    }
-    fn help(&self) -> Option<String> {
-        Some("set TEMP to a directory that exists and can be written".to_owned())
-    }
+    let scratch = scratch::in_temp(temp, command, &format!("check {what}")).map_err(boxed)?;
+    check(scratch.path()).map_err(boxed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuno_core::ExitClass;
     use cuno_core::NameCase;
     use cuno_toolchain::msvc::MsvcToolset;
     use cuno_toolchain::select::Source;

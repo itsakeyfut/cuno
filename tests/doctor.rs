@@ -584,7 +584,7 @@ fn a_missing_temporary_directory_is_reported_not_created() {
     assert_eq!(rest.matches(" to check clang: ").count(), 1, "{rest}");
     assert_eq!(rest.matches(" to check clang-tidy: ").count(), 1, "{rest}");
     assert_eq!(
-        rest.matches("help: set TEMP to a directory that exists and can be written\n")
+        rest.matches("help: set TMP and TEMP to a directory that exists and can be written\n")
             .count(),
         2,
         "{rest}"

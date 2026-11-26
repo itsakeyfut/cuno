@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 07477c9dbbd792f4dbd62895ca92c3760ec97919 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob dd8142194ebddd69fd05c09c44e856bf60a00e8c -->
 
 # Internal Structure of cuno Itself
 
@@ -10,7 +10,7 @@ A Rust workspace, with crates split by role.
 |---|---|---|
 | `cuno` | The main body of the single binary. Collects input from the process, calls `cuno-cli`, and exits with the exit code it returns (`src/main.rs` only) | MVP |
 | `cuno-cli` | The CLI. Interprets command-line arguments, resolves settings, dispatches to each command, displays errors and decides the exit code. A module per command combines the crates ([What goes in `src/` and `cuno-cli`](#what-goes-in-src-and-cuno-cli)) | MVP |
-| `cuno-core` | Only the six things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), resolving the cuno home, the list of environment variables, path identity, and starting a built program | MVP |
+| `cuno-core` | Only the seven things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), resolving the cuno home, the list of environment variables, path identity, starting a built program, and the scratch directory | MVP |
 | `cuno-manifest` | Loading and validating `cuno.toml` / `config.toml` ([manifest.md](manifest.md)) | MVP |
 | `cuno-toolchain` | Compiler abstraction (interface), detection, per-compiler implementations, flag translation ([toolchain.md](toolchain.md)) | MVP |
 | `cuno-build` | Building and executing the build graph, change detection, outputting compile_commands.json ([build.md](build.md)) | MVP |
@@ -27,7 +27,7 @@ A Rust workspace, with crates split by role.
 
 ### What goes in `cuno-core`
 
-Only the following six. To add anything else, change this specification first.
+Only the following seven. To add anything else, change this specification first.
 
 | Item | Contents |
 |---|---|
@@ -37,6 +37,7 @@ Only the following six. To add anything else, change this specification first.
 | List of environment variables | The type through which the environment variables the cuno binary collected are passed to libraries as a value. On Windows, names are looked up without distinguishing upper and lower case |
 | Path identity | The one way of judging whether two paths are the same place, or whether one is inside the other ([project-layout.md](project-layout.md#source-collection-and-linking)). Classifying sources, checking the output directory, and matching Visual Studio locations use it. Rationale: the same question had several answers that compared spellings in different ways, and each new place that used it had the same kind of mistake fixed separately |
 | Starting a built program | How cuno decides, when it starts an executable it built, the environment variables (only those cuno received; the compiler environment is not passed on), the working directory (the project root) and the path it displays (relative to the current directory) ([commands.md](commands.md#cuno-run), [testing.md](testing.md#execution)). `cuno run` and test execution use it. How standard input and output are handled (`cuno run` leaves them connected, tests capture them) is decided by the caller. Rationale: it was written in two places, and the display of one was later brought back in line with the other |
+| Scratch directory | How to create a directory used by a single run only and shared with nothing else, and remove it when done. Its name is `cuno-<command>-<process id>-<n>`; an existing one is never used, whoever created it, and the next number is tried instead. When it cannot be created in the temporary directory (on Windows, the one the environment variable `TMP`, or else `TEMP`, names), every command reports ``error: cannot create <directory> to <purpose>: <reason>`` (`<purpose>` is `check clang`, `format`, `analyse` and so on) with `help: set TMP and TEMP to a directory that exists and can be written` (exit code 3). Work such as checking the standard library creates it only once that work is known to be needed. A build also checks that one can be created before compiling, even with a compiler that has no standard library check (MSVC), with `<purpose>` `compile`: the compiler itself uses the temporary directory (cl stops with D8050 when it cannot), and its message makes the cause hard to read. The build, `cuno fmt`, `cuno lint`, `cuno doctor` and test execution use it. Rationale: it was written in four places, the same bug (reusing a name) was fixed twice separately, and the error and `help:` when `TEMP` was unusable also differed from command to command |
 
 - Reason for the list of environment variables: compiler detection, cuno home resolution and reading the configuration all need environment variables, and libraries receive them as values ([Dependencies between crates](#dependencies-between-crates)). It keeps the case-insensitive lookup on Windows from being written again in each crate.
 - Rationale: library crates cannot depend on the cuno binary. Without a shared place, either each crate decides exit codes and display on its own, or `cuno-cli` must know every crate's errors and map them to exit codes. In the latter case, an error whose mapping was forgotten silently becomes exit code 1.
@@ -108,7 +109,7 @@ A rule used by several commands is held in one place, by the crate below. Each c
 |---|---|
 | Interpreting command-line arguments, resolving settings, dispatching to each command, displaying errors and deciding the exit code | `cuno-cli` (using `cuno-core`'s classification) |
 | Collecting input from the process, and ending the process | `cuno` |
-| Error classification, output, cuno home, list of environment variables, path identity, starting a built program | `cuno-core` |
+| Error classification, output, cuno home, list of environment variables, path identity, starting a built program, scratch directory | `cuno-core` |
 | Finding the project, resolving paths the user wrote (in configuration files and command-line arguments), reading and validating `cuno.toml` and the configuration files, the precedence of each value, layering the settings for the selected compiler, target and profile | `cuno-manifest` |
 | Kinds of compiler, detection, selection precedence, environment resolution on Windows, version conditions, flag translation, how the target and the host are represented | `cuno-toolchain` |
 | Classifying sources (entry files, package body, tests), the output paths cuno decides, the build graph, building tests, compile_commands.json, bundled headers, preparing the compiler used for the build (connecting `cuno-toolchain`'s detection, selection and environment resolution with the check of the standard library against the build settings) | `cuno-build` |
