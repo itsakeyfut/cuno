@@ -276,3 +276,28 @@ fn only_the_binary_reads_the_number_of_processors() {
     let main = std::fs::read_to_string(root.join("src/main.rs")).unwrap();
     assert!(main.contains("available_parallelism"));
 }
+
+/// Only cuno-toolchain reads `INCLUDE`, MSVC's include path: the others ask
+/// `Prepared::include_dirs`, so a compiler with no MSVC toolset never gets
+/// it (`docs/en/specs/toolchain.md`, "Environment resolution on Windows").
+///
+/// Mutation: read `INCLUDE` in cuno-build again; this test fails.
+#[test]
+fn only_cuno_toolchain_reads_include() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    rust_files(&root.join("crates"), &mut files);
+    rust_files(&root.join("src"), &mut files);
+    let toolchain = root.join("crates").join("cuno-toolchain");
+    let readers: Vec<String> = files
+        .iter()
+        .filter(|path| !path.starts_with(&toolchain))
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains("get(\"INCLUDE\")")
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(readers.is_empty(), "{readers:?}");
+}

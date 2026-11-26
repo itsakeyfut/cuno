@@ -11,7 +11,9 @@ use std::time::Instant;
 use cuno_core::{Env, NameCase, Shell, paths};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
 use cuno_toolchain::compiler::CompilerKind;
-use cuno_toolchain::flags::{Mode, ToolContext, include_dirs};
+use cuno_toolchain::flags::{Mode, ToolContext};
+use cuno_toolchain::prepare::Prepared;
+use cuno_toolchain::select::Selected;
 use cuno_toolchain::{HostOs, Version};
 
 use crate::BuildError;
@@ -78,10 +80,9 @@ fn compile_commands(
         // compile_commands.json never carries the color flags.
         color: false,
     });
-    let include = include_dirs(tool.env.get("INCLUDE"));
     let context = ToolContext {
         kind: tool.kind,
-        include: &include,
+        include: &tool.include,
         msvc: tool.msvc,
     };
     compdb::write(root, &editors, context)?;
@@ -112,9 +113,36 @@ pub struct Toolchain<'a> {
     pub msvc: Option<&'a Version>,
     /// The environment it runs in.
     pub env: &'a Env,
+    /// The include directories its environment gives
+    /// (`cuno_toolchain::prepare::Prepared::include_dirs`), for
+    /// compile_commands.json and the build records.
+    pub include: Vec<PathBuf>,
     /// What besides a step's arguments identifies its command: the
     /// compiler's version and the environment cuno builds for it.
     pub identity: Vec<OsString>,
+}
+
+impl<'a> Toolchain<'a> {
+    /// The compiler `selected` names, in the environment `prepared` gives
+    /// it: its include directories and identity are taken from that same
+    /// environment, so a caller cannot pair one environment with another's
+    /// include path.
+    pub fn new(selected: &'a Selected, prepared: &'a Prepared) -> Toolchain<'a> {
+        let version = selected.version.to_string();
+        Toolchain {
+            kind: selected.kind,
+            executable: &selected.executable,
+            version: &selected.version,
+            msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
+            env: &prepared.env,
+            include: prepared.include_dirs(),
+            identity: prepared
+                .identity(&version)
+                .into_iter()
+                .map(OsStr::to_owned)
+                .collect(),
+        }
+    }
 }
 
 /// What a build is for.
@@ -314,7 +342,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
 
     // Written before anything runs, so it is current even when a compile
     // fails.
-    let include = include_dirs(tool.env.get("INCLUDE"));
+    let include = &tool.include;
     if let Err(e) = compile_commands(root, manifest, target_dir, host, tool, bundled, &sources) {
         shell.warning(format!("could not write {}: {e}", compdb::FILE));
     }
@@ -326,7 +354,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let _ = layout::claim(&paths::lexical(target_dir));
     let records = Records::new(
         tool.identity.iter().map(OsString::as_os_str),
-        &include,
+        include,
         host.name_case(),
     );
     // Printed when the first step starts, so a build with nothing to do
@@ -701,6 +729,7 @@ mod tests {
                 version: &version,
                 msvc: None,
                 env: &env,
+                include: Vec::new(),
                 identity: vec![OsString::from("22.1.8")],
             },
             spawner: fake,
@@ -1091,6 +1120,7 @@ defines = [\"X=1\"]
             version: &version,
             msvc: None,
             env: &env,
+            include: Vec::new(),
             identity: vec![OsString::from("22.1.8")],
         };
         let write = |root: &Path, manifest: &Manifest| {
@@ -1134,6 +1164,7 @@ defines = [\"X=1\"]
             version: &version,
             msvc: None,
             env: &env,
+            include: Vec::new(),
             identity: vec![OsString::from("22.1.8")],
         };
         let returned = write_compile_commands(

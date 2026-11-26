@@ -15,7 +15,7 @@ use cuno_core::scratch;
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
 use cuno_toolchain::compiler::CompilerKind;
-use cuno_toolchain::flags::{Mode, ToolContext, check_edition, include_dirs};
+use cuno_toolchain::flags::{Mode, ToolContext, check_edition};
 use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
@@ -141,7 +141,7 @@ pub fn tidy_compile(
         settings: editor_settings(project, selected.kind, Lang::Cxx, host, bundled),
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
         kind: selected.kind,
-        include: include_dirs(prepared.env.get("INCLUDE")),
+        include: prepared.include_dirs(),
         msvc: selected.msvc.as_ref().map(|toolset| toolset.cl_version),
     })
 }
@@ -337,7 +337,12 @@ mod tests {
                 [("INCLUDE".into(), "C:/msvc/include;C:/sdk/ucrt".into())],
                 NameCase::Insensitive,
             ),
-            sdk: None,
+            // An environment with INCLUDE is one prepared for a toolset,
+            // which always has its SDK.
+            sdk: Some(cuno_toolchain::msvc::WindowsSdk {
+                dir: "C:/sdk".into(),
+                version: "10.0.28000.0".to_owned(),
+            }),
             ignored: Vec::new(),
         }
     }

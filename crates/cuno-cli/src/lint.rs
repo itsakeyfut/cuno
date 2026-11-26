@@ -2,7 +2,6 @@
 //! See `docs/en/specs/commands.md`, "`cuno lint`", and
 //! `docs/en/specs/dev-tools.md`.
 
-use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -70,20 +69,7 @@ pub fn lint(
         shell.warning(warning);
     }
     let bundled = bundled::expand(&settings.home).map_err(boxed)?;
-    let version = selected.version.to_string();
-    let identity: Vec<OsString> = prepared
-        .identity(&version)
-        .into_iter()
-        .map(OsStr::to_owned)
-        .collect();
-    let compiler = Toolchain {
-        kind: selected.kind,
-        executable: &selected.executable,
-        version: &selected.version,
-        msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
-        env: &prepared.env,
-        identity,
-    };
+    let compiler = Toolchain::new(&selected, &prepared);
     let described = pipeline::write_compile_commands(
         root,
         manifest,

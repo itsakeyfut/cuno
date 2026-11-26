@@ -3,7 +3,7 @@
 //! the program. See `docs/en/specs/commands.md`, "`cuno build` / `cuno
 //! check`".
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -119,12 +119,6 @@ pub fn build(
         &SystemRegistry,
         shell,
     )?;
-    let version = selected.version.to_string();
-    let identity: Vec<OsString> = prepared
-        .identity(&version)
-        .into_iter()
-        .map(OsStr::to_owned)
-        .collect();
     let jobs = settings.jobs.get() as usize;
     // `goal` is the command's; the pipeline gets its own, and the command's
     // is still read after the build, for what `cuno run` and `cuno test` do
@@ -157,14 +151,7 @@ pub fn build(
         bundled: &bundled,
         jobs,
         started,
-        toolchain: Toolchain {
-            kind: selected.kind,
-            executable: &selected.executable,
-            version: &selected.version,
-            msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
-            env: &prepared.env,
-            identity,
-        },
+        toolchain: Toolchain::new(&selected, &prepared),
         spawner: &SystemSpawner,
     };
     // Beside compile_commands.json, so editors format and analyse as cuno
