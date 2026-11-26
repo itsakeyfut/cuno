@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/roadmap.md @ blob e9ad7ceffecab9c05b084aa4a263a9376bba294a -->
+<!-- translated-from: docs/ja/roadmap.md @ blob 5ab8373a6dfcc9b3116f62f86b40ee9ea322c8bf -->
 
 # cuno Roadmap
 
@@ -158,6 +158,7 @@ Make day-to-day development comfortable.
 - `cuno doc`
 - Ninja backend
 - safec support
+- Flags per file or per pattern (warnings off for a vendored library's sources only, `-mavx2` for the SIMD sources only, and so on). Many developers build their dependencies' sources inside their own build ([survey](../research/build-tool-complaints.md) (in Japanese)), but the demand is not yet measured, so no milestone is set. When it is designed, it is written as a named, closed table (no expression language), and a pattern that matches no file is an error ([design principle 9](concept.md#9-allow-complex-configuration-and-never-be-silently-wrong))
 
 ## About v1.0
 
