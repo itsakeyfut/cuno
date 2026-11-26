@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/concept.md @ blob bfd5cb6f1b129b85e06c47726cdefaa46223cf01 -->
+<!-- translated-from: docs/ja/concept.md @ blob de3b19044d1b28c04f04586d8948a516954bcd12 -->
 
 # cuno concept
 
@@ -116,9 +116,11 @@ In every tier, whenever the result could differ from what was written, cuno repo
 - A value that changes silently, outside the layering rules (a script overriding a declaration, for example)
 - An input missed by the rebuild check
 
-Reporting success and doing something different damages users' trust far more than stopping with an error because something cannot be written. A survey of complaints about existing tools found that most took this form ([survey](../research/build-tool-complaints.md) (in Japanese)).
+Reporting success and doing something different damages users' trust far more than stopping with an error because something cannot be written. A survey of complaints about existing tools found that the most serious took this form ([survey](../research/build-tool-complaints.md) (in Japanese)).
 
-Keep the amount to learn small. New concepts are not required until they are needed. The order in which settings are read, and which layer wins, are explained on one page ([manifest.md "Settings layering"](specs/manifest.md#settings-layering)).
+The exception to stopping with an error is unknown keys in `cuno.toml` / `config.toml`. So that an older cuno can still read items added by a newer one, they are not an error: cuno warns, showing the file and line ([manifest.md "Unknown keys"](specs/manifest.md#unknown-keys)).
+
+Keep the amount to learn small. New concepts are not required until they are needed. The order in which settings are read, and which layer wins, are explained on one page. Today, [manifest.md "Settings layering"](specs/manifest.md#settings-layering) explains the layering inside `cuno.toml`. When custom rules and build scripts arrive (M7), the same page will also say when they are evaluated.
 
 ## What cuno does not do
 
