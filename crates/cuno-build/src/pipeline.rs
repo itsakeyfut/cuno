@@ -25,7 +25,7 @@ use crate::state::Records;
 
 /// Writes compile_commands.json for the package at `root`, as every build
 /// writes it, without building, and returns the sources it holds commands
-/// for, each once: what `cuno lint` analyses (`docs/en/specs/dev-tools.md`),
+/// for, each path once, in the plan's order: what `cuno lint` analyses (`docs/en/specs/dev-tools.md`),
 /// so lint can never analyse fewer sources than the file describes. The
 /// outer error is the package's layout, the inner one the write, which the
 /// caller reports as it decides.
@@ -1119,8 +1119,8 @@ defines = [\"X=1\"]
     /// file it wrote has entries for: entry files, the body, the tests in
     /// `tests/` and their helpers, so lint analyses no fewer and no more.
     ///
-    /// Mutation: return no sources, or drop a step kind from those
-    /// returned; this test fails.
+    /// Mutation: return no sources, or leave compiles out of those returned;
+    /// this test fails.
     #[test]
     fn the_sources_returned_are_the_files_entries() {
         let (root, manifest) = package_with("", &["util.cpp", "bin/tool.cpp"]);

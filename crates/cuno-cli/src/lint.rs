@@ -140,6 +140,10 @@ pub fn lint(
         .filter(|file| !excluded(&file.path))
         .map(|file| Place::of(&file.path, case))
         .collect();
+    // In path order, as fmt goes (commands.md, "`cuno lint`"), whatever
+    // order the build plans its compiles in.
+    let mut described = described;
+    described.sort_by_cached_key(|path| case.fold(path.as_os_str()));
     let mut analysed: Vec<PathBuf> = Vec::new();
     for path in described {
         let place = Place::of(&path, case);

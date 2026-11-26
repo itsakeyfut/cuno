@@ -252,3 +252,48 @@ fn a_missing_temporary_directory_stops_lint_with_the_shared_help() {
         );
     }
 }
+
+/// Files are analysed and shown in path order, entry file or not, and a
+/// file two `[[bin]]` name is analysed and counted once (`commands.md`,
+/// "`cuno lint`").
+///
+/// Mutation: analyse in the plan's order (the body first), or count a file
+/// once per `[[bin]]` that names it; this test fails.
+#[test]
+fn files_are_analysed_once_each_in_path_order() {
+    let Some(compiler) = compilers().into_iter().next() else {
+        return;
+    };
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &format!(
+                "{MANIFEST}[[bin]]
+name = \"a\"
+path = \"src/main.cpp\"
+                 [[bin]]
+name = \"b\"
+path = \"src/main.cpp\"
+"
+            ),
+        )
+        .file("src/main.cpp", ZERO)
+        // The body: the plan compiles it before the entry file, so only a
+        // name after `main.cpp` tells path order from the plan's.
+        .file("src/z.cpp", "void z() { int* q = 0; (void)q; }\n")
+        .file("tests/t.cpp", "void t() { int* r = 0; (void)r; }\n");
+    let run = project.cuno(&["lint", "--compiler", compiler]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let order: Vec<&str> = [r"src\main.cpp:", r"src\z.cpp:", r"tests\t.cpp:"]
+        .into_iter()
+        .filter(|file| run.stderr.contains(file))
+        .collect();
+    assert_eq!(order.len(), 3, "{}", run.stderr);
+    let at = |file: &str| run.stderr.find(file).unwrap();
+    assert!(
+        at(order[0]) < at(order[1]) && at(order[1]) < at(order[2]),
+        "{}",
+        run.stderr
+    );
+    assert!(run.stderr.contains("Linted 3 files: "), "{}", run.stderr);
+}
