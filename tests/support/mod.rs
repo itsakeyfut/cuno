@@ -6,7 +6,7 @@
 //!
 //! ```ignore
 //! let project = Project::new().file("cuno.toml", "[package]\nname = \"demo\"\n");
-//! project.cuno(&["--version"]).assert(0, "cuno 0.0.0\n", "");
+//! project.cuno(&["--version"]).assert(0, "cuno 0.1.0\n", "");
 //! ```
 //!
 //! Every program runs with a hermetic environment (see [`hermetic`]) and a
