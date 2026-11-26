@@ -189,8 +189,6 @@ fn format_one(
         return Err(failed("clang-format printed nothing for it".to_owned()));
     }
     if !check {
-        // Asked again as it is written: fmt never writes through a link.
-        crate::write::code(file, &|_| true).map_err(|refusal| failed(refusal.to_string()))?;
         replace(file, &held, &output.stdout).map_err(failed)?;
     }
     Ok(true)

@@ -74,8 +74,11 @@ fn write_generated(
             ));
         }
     }
-    if std::fs::read(&path).is_ok_and(|held| held == content.as_bytes()) {
-        return Ok(());
+    match std::fs::read(&path) {
+        Ok(held) if held == content.as_bytes() => return Ok(()),
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(EditorFileWarning::Failed(file, e)),
     }
     std::fs::write(&path, content).map_err(|e| EditorFileWarning::Failed(file, e))
 }

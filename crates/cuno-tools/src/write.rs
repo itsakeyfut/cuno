@@ -24,11 +24,25 @@ pub enum Refusal {
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Refusal::Link => f.write_str("it is a link, which cuno does not follow"),
+            Refusal::Link => f.write_str("it is a link, which cuno does not write through"),
             Refusal::NotAFile => f.write_str("it is not a file"),
             Refusal::OutsidePackage => f.write_str("it is not the package's"),
             Refusal::HandWritten => f.write_str("cuno did not write it"),
             Refusal::Unreadable(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl Refusal {
+    /// The refusal as a clause after the file's name: "`x.h`, which is a
+    /// link cuno does not write through".
+    pub fn which(&self) -> String {
+        match self {
+            Refusal::Link => "which is a link cuno does not write through".to_owned(),
+            Refusal::NotAFile => "which is not a file".to_owned(),
+            Refusal::OutsidePackage => "which is not the package's".to_owned(),
+            Refusal::HandWritten => "which cuno did not write".to_owned(),
+            Refusal::Unreadable(e) => format!("which cannot be read: {e}"),
         }
     }
 }
@@ -124,9 +138,9 @@ mod tests {
         ));
     }
 
-    /// A link is refused by both, whatever it names, even a file of the
-    /// package or a file cuno wrote. Skipped where this account may not
-    /// make file links.
+    /// A link is refused by both, whatever it names, even a directory of
+    /// the package. A junction stands in for a link: it is one to the file
+    /// system, and any account can make it.
     ///
     /// Mutation: follow a link to see what it names; this test fails.
     #[cfg(windows)]
@@ -134,13 +148,17 @@ mod tests {
     fn a_link_is_never_written() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real");
-        std::fs::write(&real, format!("{MARKER}\n")).unwrap();
+        std::fs::create_dir(&real).unwrap();
         let link = dir.path().join("link");
-        if std::os::windows::fs::symlink_file(&real, &link).is_err() {
-            eprintln!("skipped: this account cannot make file links");
-            return;
-        }
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
         assert!(matches!(code(&link, &|_| true), Err(Refusal::Link)));
         assert!(matches!(generated(&link, MARKER), Err(Refusal::Link)));
+        std::fs::remove_dir(&link).unwrap();
     }
 }
