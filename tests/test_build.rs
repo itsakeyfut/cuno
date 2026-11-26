@@ -84,9 +84,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
     let selected =
         select::select(&settings.compiler, found, &settings.constraints, host).expect("a compiler");
     let prepared = prepare::prepare(&selected, &env, &SystemRegistry).expect("its environment");
-    let version = selected.version.to_string();
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/cuno-build/headers");
-    let include = prepared.include_dirs();
     let request = Request {
         root: &project.root,
         manifest,
@@ -97,19 +95,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
         bundled: &bundled,
         jobs: 4,
         started: Instant::now(),
-        toolchain: Toolchain {
-            kind: selected.kind,
-            executable: &selected.executable,
-            version: &selected.version,
-            msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
-            env: &prepared.env,
-            include: &include,
-            identity: prepared
-                .identity(&version)
-                .into_iter()
-                .map(|s| s.to_owned())
-                .collect(),
-        },
+        toolchain: Toolchain::new(&selected, &prepared),
         spawner: &SystemSpawner,
     };
     let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

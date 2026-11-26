@@ -67,8 +67,9 @@ impl Prepared {
     /// standard headers: the resolved `INCLUDE`, in order, when the
     /// environment was prepared for an MSVC toolset, else none, whatever the
     /// process's own `INCLUDE` says. The one place an MSVC environment's
-    /// include path is read, so a compiler with no toolset never inherits it
-    /// (compile_commands.json, the build records, clang-tidy).
+    /// include path is read, so a compiler with no toolset never takes it as
+    /// its include path (compile_commands.json, the build records,
+    /// clang-tidy).
     pub fn include_dirs(&self) -> Vec<PathBuf> {
         match self.sdk {
             Some(_) => crate::flags::include_dirs(self.env.get("INCLUDE")),

@@ -6,7 +6,8 @@ mod compile;
 mod link;
 mod settings;
 
-pub use clang_tools::{ToolCommand, ToolContext, for_clang_tools, include_dirs};
+pub(crate) use clang_tools::include_dirs;
+pub use clang_tools::{ToolCommand, ToolContext, for_clang_tools};
 pub use compile::{
     CompileInput, Mode, TARGET_SWITCH, check_edition, color_args, compile_args, compile_flags,
     dependency_args,

@@ -20,7 +20,7 @@ use crate::compiler::{CompilerKind, Family, Syntax};
 pub struct ToolContext<'a> {
     /// The compiler.
     pub kind: CompilerKind,
-    /// The resolved `INCLUDE`, in order ([`include_dirs`]).
+    /// The resolved `INCLUDE`, in order (`Prepared::include_dirs`).
     pub include: &'a [PathBuf],
     /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees;
     /// `None` without a toolset, when no version is written.
@@ -132,7 +132,7 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
 /// The directories of an `INCLUDE` value, in order. An empty entry (`a;;b`,
 /// or a trailing `;`) names no directory and is left out, rather than
 /// written as an empty include directory.
-pub fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
+pub(crate) fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
     include
         .map(|dirs| {
             std::env::split_paths(dirs)
