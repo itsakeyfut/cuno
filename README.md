@@ -65,10 +65,12 @@ cuno replaces CMake, Ninja, ctest, and hand-written `.clang-format` / `.clang-ti
 
 ## Documentation
 
-| Language | Concept | Roadmap | Specifications |
-|---|---|---|---|
-| English | [docs/en/concept.md](docs/en/concept.md) | [docs/en/roadmap.md](docs/en/roadmap.md) | [docs/en/specs/](docs/en/specs/README.md) |
-| 日本語 | [docs/ja/concept.md](docs/ja/concept.md) | [docs/ja/roadmap.md](docs/ja/roadmap.md) | [docs/ja/specs/](docs/ja/specs/README.md) |
+| Language | Concept | Roadmap | Specifications | Migration guide |
+|---|---|---|---|---|
+| English | [docs/en/concept.md](docs/en/concept.md) | [docs/en/roadmap.md](docs/en/roadmap.md) | [docs/en/specs/](docs/en/specs/README.md) | [docs/en/guides/migration.md](docs/en/guides/migration.md) |
+| 日本語 | [docs/ja/concept.md](docs/ja/concept.md) | [docs/ja/roadmap.md](docs/ja/roadmap.md) | [docs/ja/specs/](docs/ja/specs/README.md) | [docs/ja/guides/migration.md](docs/ja/guides/migration.md) |
+
+Coming from CMake, Visual Studio, ctest, clang-format, clang-tidy, vcpkg, Conan, Cargo, Premake, Meson or Bazel? The migration guide shows, tool by tool, what you did there and what you do in cuno.
 
 The Japanese documents are the source of truth. The English version is a translation for public readers; if the two disagree, the Japanese version prevails.
 

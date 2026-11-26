@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/README.md @ blob e058de85f6db98adfe42f9ca7b11b4e3fc8b237f -->
+<!-- translated-from: docs/ja/specs/README.md @ blob 29efefec96b62b46ac58e0f53dab9db77e0ef47e -->
 
 # cuno Specification
 
@@ -30,6 +30,8 @@ This set of documents describes the decided specifications of cuno. Design and i
 | [dev-tools.md](dev-tools.md) | Development tools (fmt / lint / doc / IDE integration) |
 | [distribution.md](distribution.md) | Distribution and operation of cuno itself, license, cuno home directory |
 | [architecture.md](architecture.md) | Internal structure of cuno itself (crate layout, repository layout) |
+
+Not a spec: for people coming from other tools (CMake, Visual Studio, clang-format and so on), the [migration guide](../guides/migration.md) maps what they did there to cuno.
 
 ## Conventions
 
