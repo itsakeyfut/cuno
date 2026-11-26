@@ -155,56 +155,64 @@ jobs:
         with:
           name: release-binary
           path: dist
-      # A draft first, published only once both files are attached; a re-run
-      # completes a draft or a release that lacks them rather than taking it
-      # for done. A tag made by hand elsewhere is refused.
+      # The tag is made at this commit and checked through GitHub before the
+      # release is published; a draft is filled with exactly this run's files;
+      # a published release is never changed, only checked. Any lookup that
+      # fails stops the run.
       - name: Tag and create the GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="v$VERSION"
-          # The commit the tag points at, asked of GitHub now rather than
-          # read from the checkout: empty when there is no such tag, and the
-          # step fails if GitHub cannot be asked.
+          repo="repos/$GITHUB_REPOSITORY"
+          # The commit the tag points at, or nothing when there is no tag.
           tagged() {
-            local ref status
-            ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1)" && status=0 || status=$?
-            if [ "$status" -ne 0 ]; then
-              if grep -q "Not Found" <<< "$ref"; then return 0; fi
-              echo "cannot look up $tag: $ref" >&2
-              return 1
-            fi
-            local type sha
-            type="$(jq -r .object.type <<< "$ref")"
-            sha="$(jq -r .object.sha <<< "$ref")"
-            # An annotated tag points at a tag object, which points at the commit.
+            local refs type sha
+            refs="$(gh api "$repo/git/matching-refs/tags/$tag")"
+            type="$(jq -r --arg r "refs/tags/$tag" '.[] | select(.ref == $r) | .object.type' <<< "$refs")"
+            sha="$(jq -r --arg r "refs/tags/$tag" '.[] | select(.ref == $r) | .object.sha' <<< "$refs")"
             if [ "$type" = tag ]; then
-              sha="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" -q .object.sha)"
+              sha="$(gh api "$repo/git/tags/$sha" -q .object.sha)"
             fi
-            [ -n "$sha" ] || { echo "cannot resolve $tag" >&2; return 1; }
             echo "$sha"
           }
+          expected="$(cd dist && ls | sort)"
+
           at="$(tagged)"
-          if [ -n "$at" ] && [ "$at" != "$GITHUB_SHA" ]; then
-            echo "$tag points at $at, not $GITHUB_SHA" >&2
-            exit 1
+          if [ -z "$at" ]; then
+            gh api "$repo/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+            at="$(tagged)"
           fi
-          if gh release view "$tag" >/dev/null 2>&1; then
-            # A release with no tag yet is a draft this workflow made; one
-            # with a tag was checked above. Either way it is completed with
-            # this commit's files and notes.
-            gh release upload "$tag" dist/* --clobber
-            gh release edit "$tag" --notes-file "$RUNNER_TEMP/notes.md" --target "$GITHUB_SHA"
-          else
-            gh release create "$tag" dist/* --draft \
-              --title "$tag" \
-              --notes-file "$RUNNER_TEMP/notes.md" \
-              --target "$GITHUB_SHA"
-          fi
-          gh release edit "$tag" --draft=false --latest
-          # Published, so the tag now exists: it must be this commit.
-          at="$(tagged)"
           if [ "$at" != "$GITHUB_SHA" ]; then
             echo "$tag points at ${at:-nothing}, not $GITHUB_SHA" >&2
             exit 1
           fi
+
+          if gh release view "$tag" --json isDraft,assets > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            if [ "$(jq -r .isDraft "$RUNNER_TEMP/release.json")" != true ]; then
+              have="$(jq -r '.assets[].name' "$RUNNER_TEMP/release.json" | sort)"
+              if [ "$have" != "$expected" ]; then
+                echo "published release $tag holds [$have], not [$expected]; fix it by hand" >&2
+                exit 1
+              fi
+              echo "$tag is already released"
+              exit 0
+            fi
+            # A draft: emptied, then filled with this run's files and notes.
+            jq -r '.assets[].name' "$RUNNER_TEMP/release.json" | while read -r name; do
+              gh release delete-asset "$tag" "$name" --yes
+            done
+            gh release upload "$tag" dist/*
+            gh release edit "$tag" --notes-file "$RUNNER_TEMP/notes.md" --title "$tag"
+          else
+            gh release create "$tag" dist/* --draft --verify-tag \
+              --title "$tag" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+          have="$(gh release view "$tag" --json assets -q '.assets[].name' | sort)"
+          if [ "$have" != "$expected" ]; then
+            echo "draft $tag holds [$have], not [$expected]" >&2
+            exit 1
+          fi
+          gh release edit "$tag" --draft=false --latest
