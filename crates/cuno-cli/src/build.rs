@@ -125,10 +125,7 @@ pub fn build(
         .into_iter()
         .map(OsStr::to_owned)
         .collect();
-    let jobs = settings
-        .jobs
-        .map(|n| n.get() as usize)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    let jobs = settings.jobs.get() as usize;
     // `goal` is the command's; the pipeline gets its own, and the command's
     // is still read after the build, for what `cuno run` and `cuno test` do
     // with what was built.

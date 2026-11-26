@@ -29,6 +29,9 @@ pub struct Inputs<'a> {
     pub env: &'a Env,
     /// The command-line options that are settings.
     pub cli: &'a CliSettings,
+    /// How many processors the machine has, which the binary reads: the
+    /// number of jobs when no layer sets one.
+    pub cores: NonZeroU32,
 }
 
 /// The command-line options that are also settings.
@@ -59,8 +62,9 @@ pub struct Settings {
     /// it (the build's layout, the mark claiming it, `cuno clean`) names the
     /// same directory.
     pub target_dir: PathBuf,
-    /// `-j` or `[build] jobs`; `None` means the number of CPU cores.
-    pub jobs: Option<NonZeroU32>,
+    /// `-j`, then `[build] jobs` of the project's and the user's
+    /// configuration, then the number of CPU cores.
+    pub jobs: NonZeroU32,
     /// `[term] color` of the configuration files. It ranks below `--color`
     /// and above `NO_COLOR`, which are the binary's (`commands.md`,
     /// "Available for all commands").
@@ -127,7 +131,12 @@ pub fn resolve_user(env: &Env, cwd: &Path) -> Result<Loaded<Term>, ConfigError> 
 /// come back together: `cuno.toml`'s, then `.cuno/config.toml`'s, then the
 /// user-level file's.
 pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
-    let Inputs { cwd, env, cli } = inputs;
+    let Inputs {
+        cwd,
+        env,
+        cli,
+        cores,
+    } = inputs;
     let case = env.case();
     let home = home_dir(env)?;
     let mut warnings: Vec<ConfigWarning> = Vec::new();
@@ -274,7 +283,8 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         jobs: cli
             .jobs
             .or_else(|| local.and_then(|c| c.jobs))
-            .or(user.jobs),
+            .or(user.jobs)
+            .unwrap_or(cores),
         color: local.and_then(|c| c.color).or(user.color),
         verbose: local
             .and_then(|c| c.verbose)
@@ -411,6 +421,10 @@ impl Manifest {
 mod tests {
     use std::path::Path;
 
+    /// The machine's processors, as the tests pretend them: a number no
+    /// layer in them writes, so a test can tell it came from here.
+    const CORES: NonZeroU32 = NonZeroU32::new(3).unwrap();
+
     use cuno_core::NameCase;
 
     use super::*;
@@ -460,7 +474,13 @@ mod tests {
         }
 
         fn resolve(&self, cwd: &Path, env: &Env, cli: &CliSettings) -> Loaded<Settings> {
-            resolve(Inputs { cwd, env, cli }).unwrap()
+            resolve(Inputs {
+                cwd,
+                env,
+                cli,
+                cores: CORES,
+            })
+            .unwrap()
         }
     }
 
@@ -536,8 +556,9 @@ mod tests {
     }
 
     /// Mutation: swap the precedence of `jobs`, `color`, `verbose` or a tool
-    /// path, merge `[toolchain.paths]` as a whole table instead of per tool, or
-    /// change a default; this test fails.
+    /// path, merge `[toolchain.paths]` as a whole table instead of per tool,
+    /// change a default, or let the processors win over a layer's `jobs`;
+    /// this test fails.
     #[test]
     fn the_other_settings_follow_the_same_order() {
         let f = Fixture::new();
@@ -552,7 +573,7 @@ mod tests {
         let s = f
             .resolve(&f.root, &f.env(&[]), &CliSettings::default())
             .value;
-        assert_eq!(s.jobs, NonZeroU32::new(4));
+        assert_eq!(s.jobs, NonZeroU32::new(4).unwrap());
         assert_eq!(s.color, Some(ColorChoice::Never));
         assert!(s.verbose);
         let llvm = s.llvm_paths();
@@ -567,14 +588,16 @@ mod tests {
         };
         assert_eq!(
             f.resolve(&f.root, &f.env(&[]), &cli).value.jobs,
-            NonZeroU32::new(2)
+            NonZeroU32::new(2).unwrap()
         );
 
         let bare = Fixture::new();
         let s = bare
             .resolve(&bare.root, &bare.env(&[]), &CliSettings::default())
             .value;
-        assert_eq!((s.jobs, s.color, s.verbose), (None, None, false));
+        // With no layer setting it, the number of jobs is the machine's
+        // processors, last.
+        assert_eq!((s.jobs, s.color, s.verbose), (CORES, None, false));
         assert!(s.paths.is_empty());
     }
 
@@ -679,6 +702,7 @@ mod tests {
             cwd: &f.root,
             env: &env,
             cli: &CliSettings::default(),
+            cores: CORES,
         })
         .unwrap_err();
         assert!(err.help.unwrap().contains("CUNO_HOME"));
@@ -780,7 +804,13 @@ mod tests {
     }
 
     fn resolve_err(_f: &Fixture, cwd: &Path, env: &Env, cli: &CliSettings) -> ConfigError {
-        resolve(Inputs { cwd, env, cli }).unwrap_err()
+        resolve(Inputs {
+            cwd,
+            env,
+            cli,
+            cores: CORES,
+        })
+        .unwrap_err()
     }
 
     /// Mutation: let the output directory be the project root or above it, by

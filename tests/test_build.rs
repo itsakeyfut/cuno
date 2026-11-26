@@ -67,6 +67,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
         cwd: p.path(),
         env: &env,
         cli: &cli,
+        cores: std::num::NonZeroU32::MIN,
     })
     .expect("the settings")
     .value;
@@ -448,6 +449,7 @@ fn ready_asks_the_registry_it_is_given() {
             cwd: p.path(),
             env: &env,
             cli: &cli,
+            cores: std::num::NonZeroU32::MIN,
         })
         .expect("the settings")
         .value;
