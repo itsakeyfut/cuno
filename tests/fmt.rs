@@ -101,6 +101,35 @@ fn fmt_styles_in_the_package_s_language_from_cuno_toml() {
     assert_eq!(read(".clang-format"), "BasedOnStyle: Google\n");
 }
 
+/// On Windows an `exclude` pattern matches without regard to case, as the
+/// file system does: a pattern written `SRC/Third_Party/**` leaves
+/// `src/third_party/` alone (`dev-tools.md`, "`[fmt]` / `[lint]` keys").
+///
+/// Mutation: hand `targets::select` a case-sensitive comparison; this test
+/// fails.
+#[test]
+fn exclude_matches_without_regard_to_case_on_windows() {
+    if require_llvm_tool("clang-format").is_none() {
+        return;
+    }
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            &format!(
+                "{MANIFEST}[fmt]
+exclude = [\"SRC/Third_Party/**\"]
+"
+            ),
+        )
+        .file(
+            "src/main.cpp",
+            "int main() { return 0; }
+",
+        )
+        .file("src/third_party/x.cpp", UGLY);
+    project.cuno(&["fmt", "--check"]).assert(0, "", "");
+}
+
 /// A source that is a link to a file is left as it is and warned about,
 /// since its target may be outside the project (`dev-tools.md`, "Target
 /// files"). Skipped where this account may not make file links.

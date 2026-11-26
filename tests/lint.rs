@@ -297,3 +297,61 @@ path = \"src/main.cpp\"
     );
     assert!(run.stderr.contains("Linted 3 files: "), "{}", run.stderr);
 }
+
+/// A source that is a link to another of the package's files is analysed,
+/// and under `--fix` left as it is and warned about, while the file it
+/// names is fixed: whether a source is a link is asked of its own path, not
+/// of where it leads, which the two share (`commands.md`, "`cuno lint`").
+/// Skipped where this account may not make file links.
+///
+/// Mutation: decide "is a link" by where a path leads, leave links out of
+/// what is analysed, or fix through links; this test fails.
+#[cfg(windows)]
+#[test]
+fn a_link_is_analysed_and_left_by_fix_and_its_target_is_fixed() {
+    let Some(compiler) = compilers().into_iter().next() else {
+        return;
+    };
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file(
+            "src/main.cpp",
+            "int main() { return 0; }
+",
+        )
+        .file(
+            "tests/a.cpp",
+            "void a() { int* p = 0; (void)p; }
+",
+        );
+    let real = project.path().join("tests/a.cpp");
+    if std::os::windows::fs::symlink_file(&real, project.path().join("tests/b.cpp")).is_err() {
+        eprintln!("skipped: this account cannot make file links");
+        return;
+    }
+    let run = project.cuno(&["lint", "--compiler", compiler]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("Linted 3 files: 2 warnings"),
+        "{}",
+        run.stderr
+    );
+
+    let run = project.cuno(&["lint", "--fix", "--compiler", compiler]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("warning: `tests/b.cpp` is a link; cuno lint --fix leaves it"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("`tests/a.cpp` is a link"),
+        "{}",
+        run.stderr
+    );
+    assert!(
+        std::fs::read_to_string(&real).unwrap().contains("nullptr"),
+        "the file the link names was not fixed"
+    );
+}

@@ -3,6 +3,7 @@
 //! See `docs/en/specs/dev-tools.md`.
 
 pub mod format;
+pub mod targets;
 pub mod tidy;
 
 use std::fmt;

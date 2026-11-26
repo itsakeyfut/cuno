@@ -43,6 +43,8 @@ pub struct Process {
     pub host: HostOs,
     /// The temporary directory.
     pub temp: PathBuf,
+    /// How many processors this machine has: the default number of jobs.
+    pub cores: NonZeroU32,
     /// Standard output: help, the version and the usage. Any writer, so a
     /// test can read what was written.
     pub stdout: Box<dyn Write>,
@@ -285,6 +287,7 @@ pub fn run(process: Process) -> i32 {
         cwd,
         host,
         temp,
+        cores,
         mut stdout,
         stdout_is_terminal,
         mut stderr,
@@ -327,6 +330,7 @@ pub fn run(process: Process) -> i32 {
         cwd: &cwd,
         host,
         temp: &temp,
+        cores,
     };
     match dispatch(cli, given, &mut shell, stdout_color, &mut stdout) {
         Ok(code) => code,
@@ -378,6 +382,7 @@ struct Values<'a> {
     cwd: &'a Result<PathBuf, String>,
     host: HostOs,
     temp: &'a Path,
+    cores: NonZeroU32,
 }
 
 impl Values<'_> {
@@ -483,6 +488,7 @@ fn dispatch(
                 Inputs {
                     cwd: &cwd,
                     env,
+                    cores: given.cores,
                     cli: &cli,
                 },
                 shell,
@@ -529,6 +535,7 @@ fn dispatch(
                 Inputs {
                     cwd: &cwd,
                     env,
+                    cores: given.cores,
                     cli: &CliSettings::default(),
                 },
                 shell,
@@ -545,6 +552,7 @@ fn dispatch(
                 Inputs {
                     cwd: &cwd,
                     env,
+                    cores: given.cores,
                     cli: &cli,
                 },
                 shell,
@@ -561,6 +569,7 @@ fn dispatch(
                 Inputs {
                     cwd: &cwd,
                     env,
+                    cores: given.cores,
                     cli: &cli,
                 },
                 shell,
@@ -590,6 +599,7 @@ fn dispatch(
         Inputs {
             cwd: &cwd,
             env,
+            cores: given.cores,
             cli: &cli,
         },
         shell,
@@ -764,6 +774,7 @@ mod tests {
             cwd: setup.cwd.map(|_| dir.path().to_owned()),
             host: HostOs::Windows,
             temp: dir.path().to_owned(),
+            cores: NonZeroU32::new(2).unwrap(),
             stdout: Box::new(stdout.clone()),
             stdout_is_terminal: setup.stdout_is_terminal,
             stderr: Box::new(stderr.clone()),

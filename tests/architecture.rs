@@ -238,3 +238,41 @@ fn the_module_table_is_read_as_written() {
 ";
     assert_eq!(first_column(spec, "### Modules"), ["a", "d"]);
 }
+
+/// Every `.rs` file under `dir`.
+fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            rust_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Only the binary asks the machine how many processors it has; the
+/// library crates take the number as a value, so the default number of
+/// jobs is decided in one place, the settings (`architecture.md`, "What
+/// goes in `src/` and `cuno-cli`").
+///
+/// Mutation: read `available_parallelism` in a library crate again; this
+/// test fails.
+#[test]
+fn only_the_binary_reads_the_number_of_processors() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    rust_files(&root.join("crates"), &mut files);
+    let readers: Vec<String> = files
+        .iter()
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains("available_parallelism")
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(readers.is_empty(), "{readers:?}");
+    let main = std::fs::read_to_string(root.join("src/main.rs")).unwrap();
+    assert!(main.contains("available_parallelism"));
+}

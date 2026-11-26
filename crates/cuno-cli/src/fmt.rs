@@ -12,6 +12,7 @@ use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::select;
 use cuno_toolchain::{HostOs, SystemRunner};
 use cuno_tools::format::{self, ClangFormat};
+use cuno_tools::targets::{self, Targets, relative};
 
 use crate::build::{boxed, in_project};
 
@@ -39,25 +40,14 @@ pub fn fmt(
     for warning in &code.warnings {
         shell.warning(warning);
     }
-    let case = host.name_case();
-    let files: Vec<PathBuf> = code
-        .files
-        .into_iter()
-        .map(|file| file.path)
-        .filter(|path| {
-            let relative = relative(root, path);
-            !manifest
-                .fmt
-                .exclude
-                .iter()
-                .any(|glob| glob.matches(&relative, case))
-        })
-        .collect();
     // A link can lead outside the project; it is read by the build, never
     // written by fmt (dev-tools.md, "Target files").
-    let (links, files): (Vec<PathBuf>, Vec<PathBuf>) = files.into_iter().partition(|path| {
-        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
-    });
+    let Targets { files, links } = targets::select(
+        root,
+        code.files.into_iter().map(|file| file.path).collect(),
+        &manifest.fmt.exclude,
+        host.name_case(),
+    );
     for link in &links {
         shell.warning(format!(
             "`{}` is a link; cuno fmt leaves it",
@@ -88,10 +78,7 @@ pub fn fmt(
     let result = written
         .map_err(|e| boxed(scratch_error(&style, e)))
         .and_then(|()| {
-            let jobs = settings
-                .jobs
-                .map(|n| n.get() as usize)
-                .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+            let jobs = settings.jobs.get() as usize;
             let tool = ClangFormat {
                 program: &clang_format.path,
                 style: &style,
@@ -127,20 +114,6 @@ pub fn fmt(
     let noun = if changed.len() == 1 { "file" } else { "files" };
     shell.status("Formatted", format!("{} {noun}", changed.len()));
     Ok(i32::from(failed))
-}
-
-/// `path` from the project root, with `/` between its names, as `exclude`
-/// patterns are written.
-fn relative(root: &Path, path: &Path) -> String {
-    let from_root = path
-        .strip_prefix(root)
-        .or_else(|_| path.strip_prefix(cuno_core::paths::lexical(root)))
-        .unwrap_or(path);
-    from_root
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// The configuration could not be written in the scratch directory already

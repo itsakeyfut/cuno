@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob dd8142194ebddd69fd05c09c44e856bf60a00e8c -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 2d51c6f0327155977d455d09bc301dcd4d7d6ab8 -->
 
 # Internal Structure of cuno Itself
 
@@ -44,7 +44,7 @@ Only the following seven. To add anything else, change this specification first.
 
 ### What goes in `src/` and `cuno-cli`
 
-`src/` holds only `main.rs`. `main.rs` collects what only the process can provide (the command-line arguments, the environment variables, the current directory, the host, the location of the temporary directory, standard output and standard error and whether each is a terminal), passes them to `cuno-cli`, and ends the process with the exit code it returns. Only `main.rs` ends the process.
+`src/` holds only `main.rs`. `main.rs` collects what only the process can provide (the command-line arguments, the environment variables, the current directory, the host, the location of the temporary directory, the number of CPU cores, standard output and standard error and whether each is a terminal), passes them to `cuno-cli`, and ends the process with the exit code it returns. Only `main.rs` ends the process.
 
 `cuno-cli` holds only the following.
 
@@ -97,7 +97,7 @@ The allowed directions of dependency are limited to the following. `tests/archit
 - `cuno-cli` gives `cuno-tools` the list of target files in "the places where the package's code lives" ([project-layout.md](project-layout.md#where-the-packages-code-lives)), and the path of compile_commands.json. `cuno-build` builds the list with the same walk as classifying sources (the output directory, links to directories, how upper and lower case are treated). What lint acts on is decided by the list; compile_commands.json only supplies each source's command. `cuno-tools` does not depend on `cuno-build`.
   - Rationale: with two walks, the handling of the output directory and of other spellings of the same name would diverge (the same kind of mistake has been fixed several times in classifying sources). The command module (`cuno-cli`) holds no rules, so the walk is placed where classifying sources is.
 - `cuno-build` does not depend on `cuno-deps` / `cuno-script`. Resolved dependencies and script results are passed by `cuno-cli` as data.
-- **Library crates do not read the process's environment variables, command-line arguments, current directory or the location of the temporary directory directly.** The cuno binary (`main.rs`) collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
+- **Library crates do not read the process's environment variables, command-line arguments, current directory, the location of the temporary directory or the number of CPU cores directly.** The cuno binary (`main.rs`) collects them and passes them as values (for example, passing the list of environment variables to cuno home resolution and to compiler detection).
   - Likewise, the OS cuno runs on (the host) is received as a value rather than decided directly with `cfg!` and the like. The OS being built for (the target) is distinguished from the host, as in [manifest.md](manifest.md). In the MVP, the binary passes target = host.
   - Rationale: so that tests can construct any environment, and the behavior of a library does not depend on the environment of whatever process it happens to run in. Making the host a value lets branches for other OSes be tested on Windows CI as well.
 

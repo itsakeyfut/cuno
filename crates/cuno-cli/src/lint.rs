@@ -15,6 +15,7 @@ use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
 use cuno_toolchain::select;
 use cuno_toolchain::{HostOs, SystemRunner};
+use cuno_tools::targets::{self, Targets, relative};
 use cuno_tools::tidy::{self, ClangTidy};
 
 use crate::build::{boxed, in_project};
@@ -126,19 +127,19 @@ pub fn lint(
     for warning in &code.warnings {
         shell.warning(warning);
     }
-    let excluded = |path: &Path| {
-        let relative = relative(root, path);
-        manifest
-            .lint
-            .exclude
-            .iter()
-            .any(|glob| glob.matches(&relative, case))
-    };
-    let ours: Vec<Place> = code
-        .files
+    let Targets { files, links } = targets::select(
+        root,
+        code.files.into_iter().map(|file| file.path).collect(),
+        &manifest.lint.exclude,
+        case,
+    );
+    // A link is the package's to analyse, as the build reads it. Whether a
+    // described source is one is asked of its own path below, never of where
+    // it leads: a link and the file it names are the same place.
+    let ours: Vec<Place> = files
         .iter()
-        .filter(|file| !excluded(&file.path))
-        .map(|file| Place::of(&file.path, case))
+        .chain(&links)
+        .map(|path| Place::of(path, case))
         .collect();
     // In path order, as fmt goes (commands.md, "`cuno lint`"), whatever
     // order the build plans its compiles in.
@@ -166,10 +167,7 @@ pub fn lint(
     let written = std::fs::write(&config, tidy::clang_tidy_file(&manifest.lint));
     let linted = written.map_err(|e| boxed(ScratchError(config.clone(), e.to_string())));
     let linted = linted.map(|()| {
-        let jobs = settings
-            .jobs
-            .map(|n| n.get() as usize)
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+        let jobs = settings.jobs.get() as usize;
         let tool = ClangTidy {
             program: &clang_tidy.path,
             config: &config,
@@ -219,17 +217,6 @@ pub fn lint(
         ),
     );
     Ok(i32::from(linted.errors > 0 || !linted.failed.is_empty()))
-}
-
-/// `path` from the project root, with `/` between its names, as `exclude`
-/// patterns are written.
-fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// The scratch copy of the configuration could not be written: an
