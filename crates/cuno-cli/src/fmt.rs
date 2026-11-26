@@ -143,8 +143,8 @@ fn relative(root: &Path, path: &Path) -> String {
         .join("/")
 }
 
-/// A scratch file that could not be made: an environment problem
-/// (`TEMP` names a directory that does not exist or cannot be written).
+/// The configuration could not be written in the scratch directory already
+/// made: an environment problem (a full disk, a policy on the directory).
 fn scratch_error(path: &Path, e: std::io::Error) -> ScratchError {
     ScratchError {
         path: path.to_owned(),

@@ -98,7 +98,7 @@ impl CunoError for TempError {
     }
 
     fn help(&self) -> Option<String> {
-        Some("set TEMP to a directory that exists and can be written".to_owned())
+        Some("set TMP and TEMP to a directory that exists and can be written".to_owned())
     }
 }
 
@@ -164,8 +164,33 @@ mod tests {
         assert!(shown.starts_with(&start), "{shown}");
         assert_eq!(
             err.help().as_deref(),
-            Some("set TEMP to a directory that exists and can be written")
+            Some("set TMP and TEMP to a directory that exists and can be written")
         );
         assert!(!missing.exists());
+    }
+
+    /// When every name is taken, nothing is taken over: an error, and the
+    /// directories already there are left as they were. A run that took one
+    /// over would read another run's leftovers, and remove them when done.
+    ///
+    /// Mutation: take over the first name when all are taken; this test
+    /// fails.
+    #[test]
+    fn every_name_taken_is_an_error_that_takes_nothing_over() {
+        let parent = tempfile::tempdir().unwrap();
+        for n in 0..TRIES {
+            let dir = parent
+                .path()
+                .join(format!("cuno-test-{}-{n}", std::process::id()));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("theirs"), "").unwrap();
+        }
+        let (dir, e) = Scratch::new(parent.path(), "test").unwrap_err();
+        assert_eq!(dir, parent.path());
+        assert_eq!(e.to_string(), "every scratch name is taken");
+        let first = parent
+            .path()
+            .join(format!("cuno-test-{}-0", std::process::id()));
+        assert!(first.join("theirs").is_file());
     }
 }

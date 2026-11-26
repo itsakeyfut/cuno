@@ -160,7 +160,7 @@ fn fmt_leaves_a_nested_package_and_says_so() {
 
 /// A temporary directory that does not exist stops fmt with the error
 /// every command gives for it: what the directory was for, and how to fix
-/// it (`architecture.md`, "What goes in `cuno-core`"). Nothing is written.
+/// it (`architecture.md`, "What goes in `cuno-core`"). No source is rewritten.
 ///
 /// Mutation: give fmt its own error again, without the help; this test
 /// fails.
@@ -180,7 +180,7 @@ fn a_missing_temporary_directory_stops_fmt_with_the_shared_help() {
     assert!(run.stderr.contains(" to format: "), "{}", run.stderr);
     assert!(
         run.stderr.ends_with(
-            "help: set TEMP to a directory that exists and can be written
+            "help: set TMP and TEMP to a directory that exists and can be written
 "
         ),
         "{}",

@@ -1235,7 +1235,7 @@ fn msvc_with_a_missing_temporary_directory_stops_before_compiling() {
     assert!(!run.stderr.contains("check msvc"), "{}", run.stderr);
     assert!(
         run.stderr.ends_with(
-            "help: set TEMP to a directory that exists and can be written
+            "help: set TMP and TEMP to a directory that exists and can be written
 "
         ),
         "{}",
@@ -1273,7 +1273,7 @@ fn a_missing_temporary_directory_stops_the_build() {
     assert!(run.stderr.contains(" to check clang: "), "{}", run.stderr);
     assert!(
         run.stderr
-            .contains("help: set TEMP to a directory that exists and can be written\n"),
+            .contains("help: set TMP and TEMP to a directory that exists and can be written\n"),
         "{}",
         run.stderr
     );

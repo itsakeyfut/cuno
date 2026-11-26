@@ -108,6 +108,7 @@ pub fn build(
     // library, checked before anything is built (toolchain.md).
     let runner = SystemRunner::new();
     let toolchain::Ready { selected, prepared } = toolchain::ready(
+        toolchain::ReadyFor::Build,
         &settings,
         (root, manifest),
         profile,

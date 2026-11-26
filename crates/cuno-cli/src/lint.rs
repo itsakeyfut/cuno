@@ -54,6 +54,7 @@ pub fn lint(
     // of the dev profile, the one compile_commands.json describes.
     let runner = SystemRunner::new();
     let toolchain::Ready { selected, prepared } = toolchain::ready(
+        toolchain::ReadyFor::Lint,
         &settings,
         (root, manifest),
         Profile::Dev,

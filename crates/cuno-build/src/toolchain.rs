@@ -212,6 +212,27 @@ pub struct Ready {
     pub prepared: Prepared,
 }
 
+/// What a toolchain is made ready for: it names the scratch directories
+/// (`cuno-build-…`, `cuno-lint-…`), and only a build runs the compiler,
+/// which needs the temporary directory itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadyFor {
+    /// `cuno build`, `run`, `check` and `test`: the compiler runs.
+    Build,
+    /// `cuno lint`: only clang-tidy runs.
+    Lint,
+}
+
+impl ReadyFor {
+    /// The command, as scratch directories are named.
+    fn command(self) -> &'static str {
+        match self {
+            ReadyFor::Build => "build",
+            ReadyFor::Lint => "lint",
+        }
+    }
+}
+
 /// Every step a build takes before compiling: detect, select, check the
 /// edition, prepare the environment, and probe the standard library. Each
 /// variable left out of the environment is warned about here, as the build
@@ -221,6 +242,7 @@ pub struct Ready {
 // Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn ready(
+    ready_for: ReadyFor,
     settings: &Settings,
     project: (&Path, &Manifest),
     profile: Profile,
@@ -262,14 +284,14 @@ pub fn ready(
         // missing include directory is no error to any compiler.
         &bundled::include_dir(&settings.home),
     ) {
-        probe(&selected, &compile, temp, "build", runner)?;
+        probe(&selected, &compile, temp, ready_for.command(), runner)?;
     }
     // A compiler with no check still writes in the temporary directory (cl
     // stops with D8050 when it cannot), so the build asks whether it can
     // before compiling, and says how to fix it in cuno's words, not the
     // compiler's (`architecture.md`, "What goes in `cuno-core`").
-    if !stl::applies(&selected) {
-        scratch::in_temp(temp, "build", "compile").map_err(boxed)?;
+    if ready_for == ReadyFor::Build && !stl::applies(&selected) {
+        scratch::in_temp(temp, ready_for.command(), "compile").map_err(boxed)?;
     }
     Ok(Ready { selected, prepared })
 }
