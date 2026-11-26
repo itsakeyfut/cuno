@@ -1,0 +1,222 @@
+# Releases cuno when a merged pull request raises `[workspace.package].version`
+# (docs/en/specs/distribution.md, "Installation"):
+#
+# 1. `check-version` compares the version with the last `v*` tag: unchanged,
+#    nothing happens; lower, the run fails (a downgrade publishes nothing).
+# 2. `binary` builds the Windows x64 binary and packs the release zip and its
+#    SHA-256, before anything is published, so a binary that does not build
+#    publishes nothing.
+# 3. `release`, in the `crates-io` environment (which asks the owner to
+#    approve), publishes every crate not yet on crates.io, then tags
+#    `v<version>` and creates the GitHub release with CHANGELOG.md's section
+#    as its notes and the zip and checksum attached. A re-run finishes what
+#    is not done: release-plz publishes only what crates.io lacks, and a
+#    release is completed and published rather than taken for done.
+#
+# Only `x.y.z` is released, never 0.0.0 (docs/en/specs/distribution.md,
+# "Versioning policy"); the notes are checked before anything is published.
+#
+# `workflow_dispatch` runs `binary` alone on any branch, to check the zip
+# before a release depends on it: `gh workflow run release.yml --ref <branch>`.
+#
+# Actions holding the publishing token or write access are pinned to a full
+# commit SHA.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'itsakeyfut' }}
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Compare the version with the last release
+        id: check
+        run: |
+          version="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
+          last="$(git tag -l | bash .github/scripts/last-release.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          decision="$(bash .github/scripts/release-version.sh "$version" "$last")"
+          echo "$version against ${last:-no release}: $decision"
+          # A manual run only builds the binary.
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then decision=skip; fi
+          # The notes are checked before anything is built or published: a
+          # release with no notes stops here, not after crates.io has it.
+          if [ "$decision" = release ]; then
+            bash .github/scripts/changelog-section.sh "$version" CHANGELOG.md > /dev/null
+          fi
+          echo "release=$([ "$decision" = release ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  binary:
+    runs-on: windows-latest
+    needs: check-version
+    if: ${{ needs.check-version.outputs.release == 'true' || github.event_name == 'workflow_dispatch' }}
+    env:
+      ZIP: cuno-${{ needs.check-version.outputs.version }}-x86_64-pc-windows-msvc.zip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - run: cargo build --release --locked -p cuno
+      - name: Pack the zip and its checksum
+        run: |
+          mkdir stage
+          cp target/release/cuno.exe README.md LICENSE-MIT LICENSE-APACHE stage/
+          (cd stage && 7z a -tzip "../$ZIP" cuno.exe README.md LICENSE-MIT LICENSE-APACHE)
+          sha256sum "$ZIP" > "$ZIP.sha256"
+          cat "$ZIP.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-binary
+          path: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
+          if-no-files-found: error
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [check-version, binary]
+    if: ${{ needs.check-version.outputs.release == 'true' && github.event_name == 'push' }}
+    environment: crates-io
+    # Never two at once, and never cancelled: publishing cannot be undone.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      # The first release may publish with a token, before crates.io knows the
+      # crates and can trust this workflow; later ones use Trusted Publishing.
+      HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Checked again under the lock, against the tags as they are when the
+      # job starts (after approval; the checkout above has every tag): a
+      # release approved after a later one is refused, not published.
+      - name: The version is still the next release
+        run: |
+          last="$(git tag -l | bash .github/scripts/last-release.sh)"
+          decision="$(bash .github/scripts/release-version.sh "$VERSION" "$last")"
+          if [ "$decision" != release ]; then
+            echo "$VERSION is no longer the next release (last: ${last:-none})" >&2
+            exit 1
+          fi
+          bash .github/scripts/changelog-section.sh "$VERSION" CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Publish the crates (token)
+        if: ${{ env.HAS_TOKEN == 'true' }}
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Publish the crates (Trusted Publishing)
+        if: ${{ env.HAS_TOKEN != 'true' }}
+        uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-binary
+          path: dist
+      # The tag is made at this commit and checked through GitHub before the
+      # release is published; a draft is filled with exactly this run's files;
+      # a published release is never changed and stops the run. Any lookup that
+      # fails stops the run.
+      - name: Tag and create the GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v$VERSION"
+          repo="repos/$GITHUB_REPOSITORY"
+          # The commit the tag points at, or nothing when there is no tag.
+          tagged() {
+            local refs type sha
+            refs="$(gh api "$repo/git/matching-refs/tags/$tag")"
+            type="$(jq -r --arg r "refs/tags/$tag" '.[] | select(.ref == $r) | .object.type' <<< "$refs")"
+            sha="$(jq -r --arg r "refs/tags/$tag" '.[] | select(.ref == $r) | .object.sha' <<< "$refs")"
+            if [ "$type" = tag ]; then
+              sha="$(gh api "$repo/git/tags/$sha" -q .object.sha)"
+            fi
+            echo "$sha"
+          }
+          expected="$(cd dist && ls | sort)"
+
+          at="$(tagged)"
+          if [ -z "$at" ]; then
+            gh api "$repo/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+            at="$(tagged)"
+          fi
+          if [ "$at" != "$GITHUB_SHA" ]; then
+            echo "$tag points at ${at:-nothing}, not $GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          if gh release view "$tag" --json isDraft,assets > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            # Published already: never changed, and never taken for this
+            # run's work. A run cannot get here after its own success (the
+            # tag then makes the version check skip), so a person looks.
+            if [ "$(jq -r .isDraft "$RUNNER_TEMP/release.json")" != true ]; then
+              echo "$tag is already published; nothing is changed, look at it by hand" >&2
+              exit 1
+            fi
+            # A draft: emptied, then filled with this run's files and notes.
+            jq -r '.assets[].name' "$RUNNER_TEMP/release.json" | while read -r name; do
+              gh release delete-asset "$tag" "$name" --yes
+            done
+            gh release upload "$tag" dist/*
+            gh release edit "$tag" --notes-file "$RUNNER_TEMP/notes.md" --title "$tag"
+          else
+            gh release create "$tag" dist/* --draft --verify-tag \
+              --title "$tag" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+          have="$(gh release view "$tag" --json assets -q '.assets[].name' | sort)"
+          if [ "$have" != "$expected" ]; then
+            echo "draft $tag holds [$have], not [$expected]" >&2
+            exit 1
+          fi
+          gh release edit "$tag" --draft=false --latest
+          # Public now: the tag must still be this commit.
+          at="$(tagged)"
+          if [ "$at" != "$GITHUB_SHA" ]; then
+            echo "$tag points at ${at:-nothing}, not $GITHUB_SHA" >&2
+            exit 1
+          fi
