@@ -95,7 +95,7 @@ pub fn probe_compile(
 
 /// What `cuno doctor`'s clang-tidy check analyses: the probe as
 /// compile_commands.json would hold it, the settings `cuno lint` runs
-/// clang-tidy with ([`editor_settings`]), and what clang-tidy is told of
+/// clang-tidy with (`editor_settings`), and what clang-tidy is told of
 /// the compiler (`toolchain.md`, "Minimum compiler versions").
 pub struct TidyCompile {
     /// The resolved Windows environment.
