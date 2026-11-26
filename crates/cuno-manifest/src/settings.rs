@@ -236,10 +236,16 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         }
         layers.push((dir.path, source));
     }
-    let target_dir = layers
-        .into_iter()
-        .next()
-        .map_or_else(|| guarded.join("target"), |(dir, _)| dir);
+    // Normalized once, here, so the build's layout, the mark that claims the
+    // directory and `cuno clean` all name the same one: `a/link/../out`
+    // resolved by the system could be another directory than the one the
+    // layout fills (build.md, "Output directory").
+    let target_dir = paths::lexical(
+        &layers
+            .into_iter()
+            .next()
+            .map_or_else(|| guarded.join("target"), |(dir, _)| dir),
+    );
 
     let mut paths = user.paths.clone();
     if let Some(local) = local {
@@ -506,6 +512,24 @@ mod tests {
             };
             assert_eq!(settings.target_dir, expected, "top level {top}");
         }
+    }
+
+    /// An output directory written with `.` and `..` is resolved once,
+    /// lexically, so everything that uses it names the same directory.
+    ///
+    /// Mutation: leave the chosen output directory as written; this test
+    /// fails.
+    #[test]
+    fn the_output_directory_is_normalized_once() {
+        let f = Fixture::new();
+        let cwd = f.root.join("src");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let cli = CliSettings {
+            target_dir: Some("../out/./x/..".into()),
+            ..Default::default()
+        };
+        let settings = f.resolve(&cwd, &f.env(&[]), &cli).value;
+        assert_eq!(settings.target_dir, f.root.join("out"));
     }
 
     /// Mutation: swap the precedence of `jobs`, `color`, `verbose` or a tool
