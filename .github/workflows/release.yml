@@ -195,6 +195,12 @@ jobs:
                 echo "published release $tag holds [$have], not [$expected]; fix it by hand" >&2
                 exit 1
               fi
+              # A rebuilt zip is never byte-identical (timestamps), so what is
+              # checked is that the published zip matches its published
+              # checksum: what a user downloads verifies.
+              mkdir "$RUNNER_TEMP/published"
+              gh release download "$tag" --dir "$RUNNER_TEMP/published"
+              (cd "$RUNNER_TEMP/published" && sha256sum -c ./*.sha256)
               echo "$tag is already released"
               exit 0
             fi
@@ -216,3 +222,9 @@ jobs:
             exit 1
           fi
           gh release edit "$tag" --draft=false --latest
+          # Public now: the tag must still be this commit.
+          at="$(tagged)"
+          if [ "$at" != "$GITHUB_SHA" ]; then
+            echo "$tag points at ${at:-nothing}, not $GITHUB_SHA" >&2
+            exit 1
+          fi
