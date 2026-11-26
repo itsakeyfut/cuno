@@ -47,7 +47,7 @@ resolver = "3"
 [workspace.package]
 # Raising it, with CHANGELOG.md's section for it, is what releases cuno
 # (.github/workflows/release.yml; docs/en/specs/distribution.md).
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # See docs/en/specs/architecture.md, "Rust".
 rust-version = "1.88"
@@ -58,13 +58,13 @@ repository = "https://github.com/itsakeyfut/cuno"
 publish = true
 
 [workspace.dependencies]
-cuno-build = { path = "crates/cuno-build", version = "0.1.0" }
-cuno-cli = { path = "crates/cuno-cli", version = "0.1.0" }
-cuno-core = { path = "crates/cuno-core", version = "0.1.0" }
-cuno-toolchain = { path = "crates/cuno-toolchain", version = "0.1.0" }
-cuno-manifest = { path = "crates/cuno-manifest", version = "0.1.0" }
-cuno-test = { path = "crates/cuno-test", version = "0.1.0" }
-cuno-tools = { path = "crates/cuno-tools", version = "0.1.0" }
+cuno-build = { path = "crates/cuno-build", version = "0.1.1" }
+cuno-cli = { path = "crates/cuno-cli", version = "0.1.1" }
+cuno-core = { path = "crates/cuno-core", version = "0.1.1" }
+cuno-toolchain = { path = "crates/cuno-toolchain", version = "0.1.1" }
+cuno-manifest = { path = "crates/cuno-manifest", version = "0.1.1" }
+cuno-test = { path = "crates/cuno-test", version = "0.1.1" }
+cuno-tools = { path = "crates/cuno-tools", version = "0.1.1" }
 # See docs/en/specs/architecture.md, "Main external libraries".
 clap = { version = "4.6.9", features = ["derive"] }
 # The binary's standard streams: escape codes shown as colours on a Windows

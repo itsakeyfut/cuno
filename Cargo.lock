@@ -112,7 +112,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "cuno"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anstream",
  "cuno-build",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "cuno-build"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cuno-core",
  "cuno-manifest",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "cuno-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "cuno-build",
@@ -152,14 +152,14 @@ dependencies = [
 
 [[package]]
 name = "cuno-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "cuno-manifest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cuno-core",
  "cuno-toolchain",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "cuno-test"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cuno-core",
  "tempfile",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "cuno-toolchain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cuno-core",
  "serde_json",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "cuno-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cuno-core",
  "cuno-manifest",
