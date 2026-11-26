@@ -104,23 +104,9 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - name: Compiler version
-        id: rustc
-        run: echo "version=$(rustc -V | sed 's/ /_/g')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/git/db
-            target
-            !target/package
-          # No ~/.cargo/registry/cache: the crates are verified against each
-          # other as just packaged, and the published ones share their name
-          # and version (0.1.0) between releases. A cached .crate of that name
-          # and version is reused in place of the new package, so the job
-          # would verify against the published API. `noreg`: entries saved
-          # with the registry cache must not be restored.
-          key: ${{ runner.os }}-${{ github.job }}-noreg-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+      # No cache: with one restored, the crates were verified against the
+      # published 0.1.0 instead of what was just packaged, since main still
+      # carries the published version (#299); every run without one passed.
       - run: cargo package --workspace
 
   test:
