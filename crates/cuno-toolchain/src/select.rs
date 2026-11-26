@@ -241,15 +241,14 @@ pub fn select(
     host: HostOs,
 ) -> Result<Selected, ToolchainError> {
     let (kind, source) = choices.kind(host)?;
-    // On Windows every compiler uses an MSVC toolset (`toolchain.md`,
-    // "Environment resolution on Windows"), so Visual Studio is required
-    // even for Clang.
-    let newest_toolset = match host {
-        HostOs::Windows => {
-            let toolsets = usable_toolsets(found, host)?;
-            first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned()
-        }
-        HostOs::Other => None,
+    // A compiler that builds with an MSVC toolset needs Visual Studio, even
+    // a Clang, which borrows its toolset; one that does not, needs none
+    // (`CompilerKind::uses_msvc_toolset`).
+    let newest_toolset = if kind.uses_msvc_toolset(host) {
+        let toolsets = usable_toolsets(found, host)?;
+        first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned()
+    } else {
+        None
     };
     let (executable, version, msvc) = copy_of(kind, found, constraints, host)?;
     Ok(Selected {
