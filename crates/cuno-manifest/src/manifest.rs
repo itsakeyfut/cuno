@@ -1128,8 +1128,10 @@ mod tests {
     /// builds with, and one for a compiler it cannot build with yet is
     /// read as harmless, not unknown.
     ///
-    /// Mutation: skip a buildable kind in the reader, or put its
-    /// constraint in another kind's slot; this test fails.
+    /// Mutation: skip a buildable kind in the reader, or have the reader
+    /// put its constraint in another kind's slot; this test fails. (A swap
+    /// inside `Constraints::slot` itself reads back alike here; it is held
+    /// by `every_key_is_read_and_the_unwritten_ones_stay_empty`.)
     #[test]
     fn every_buildable_compiler_s_version_constraint_is_read() {
         let mut text = with(
