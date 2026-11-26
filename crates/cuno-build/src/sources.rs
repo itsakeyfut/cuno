@@ -58,7 +58,8 @@ pub struct CodeFile {
 pub struct Code {
     /// The files, sorted, each once.
     pub files: Vec<CodeFile>,
-    /// Links to directories, which are not read.
+    /// Links to directories and other packages under `src/` and `tests/`,
+    /// which are not read.
     pub warnings: Vec<SourceWarning>,
 }
 
@@ -162,6 +163,7 @@ pub fn code_files(
 ) -> Result<Code, BuildError> {
     let case = host.name_case();
     let root = paths::lexical(root);
+    code_dir_is_package(&root)?;
     let dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
     // The directory of a `[[bin]] path` outside them gives only the files
     // directly in it: at the root, the whole tree would be `.git/` and
@@ -178,6 +180,13 @@ pub fn code_files(
             return Err(BuildError::OutsideProject {
                 name: bin.name.clone(),
                 path,
+            });
+        }
+        if let Some(package) = another_package(&root, &path) {
+            return Err(BuildError::InAnotherPackage {
+                name: bin.name.clone(),
+                path: shown(&root, &path),
+                package: shown(&root, &package),
             });
         }
         if !code_places.iter().any(|dir| place.within(dir))
@@ -242,8 +251,9 @@ pub fn language(path: &Path) -> Option<Lang> {
 /// Classifies the sources of the package at `root`: the entry files and the
 /// body under `src/`, and the integration tests and their helpers under
 /// `tests/`, both walked alike, skipping `target_dir` when it lies under
-/// either and warning about links to directories. On a Windows `host`, paths
-/// and names are compared without regard to case, as its file systems do
+/// either and warning about links to directories and other packages in them.
+/// On a Windows `host`, paths and names are compared without regard to case,
+/// as its file systems do
 /// (`project-layout.md`, "Entry files and package body").
 pub fn classify(
     root: &Path,
@@ -260,6 +270,7 @@ pub fn classify(
     // `src/` is the project's own even when it is a link that leads out of
     // it (`project-layout.md`, "Source collection and linking").
     let in_project = |p: &Place| p.within(&root_place) || p.within(&src_place);
+    code_dir_is_package(&root)?;
     let mut found = Vec::new();
     let mut warnings = Vec::new();
     if src.is_dir() {
@@ -345,6 +356,13 @@ pub fn classify(
                     return Err(BuildError::OutsideProject {
                         name: bin.name.clone(),
                         path,
+                    });
+                }
+                if let Some(package) = another_package(&root, &path) {
+                    return Err(BuildError::InAnotherPackage {
+                        name: bin.name.clone(),
+                        path: shown(&root, &path),
+                        package: shown(&root, &package),
                     });
                 }
                 if !path.is_file() {
@@ -597,6 +615,33 @@ impl Walk<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// The directory below `root` holding its own `cuno.toml` that `path` lies
+/// in (another package), the nearest first, if there is one
+/// (`docs/en/specs/project-layout.md`, "Entry files and package body").
+fn another_package(root: &Path, path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .take_while(|dir| *dir != root && dir.starts_with(root))
+        .find(|dir| dir.join("cuno.toml").is_file())
+        .map(Path::to_owned)
+}
+
+/// An error if `src/` or `tests/` holds its own `cuno.toml`: the package's
+/// code would be another package, which the build would compile and fmt and
+/// lint leave out (`docs/en/specs/project-layout.md`, "Entry files and
+/// package body").
+fn code_dir_is_package(root: &Path) -> Result<(), BuildError> {
+    match [SRC_DIR, TESTS_DIR]
+        .into_iter()
+        .find(|d| root.join(d).join("cuno.toml").is_file())
+    {
+        Some(dir) => Err(BuildError::CodeDirIsPackage {
+            dir: dir.to_owned(),
+        }),
+        None => Ok(()),
     }
 }
 
@@ -856,8 +901,8 @@ path = \"main.cpp\"
         assert_eq!(got, ["main.cpp", "src/a.cpp", "util.hpp"]);
     }
 
-    /// A code directory, or the directory of a `[[bin]] path`, that holds its
-    /// own `cuno.toml` is another package and is left out; the root's own
+    /// A code directory other than `src/` and `tests/` that holds its own
+    /// `cuno.toml` is another package and is left out; the root's own
     /// `cuno.toml` does not leave out the files beside it.
     ///
     /// Mutation: check `cuno.toml` only below the directories walked, or
@@ -867,17 +912,12 @@ path = \"main.cpp\"
         let (_d, root, m) = project(
             "c++",
             "[[bin]]
-name = \"x\"
-path = \"sub/pkg/main.cpp\"
-             [[bin]]
 name = \"app\"
 path = \"main.cpp\"
 ",
             &[
                 "main.cpp",
                 "src/a.cpp",
-                "sub/pkg/cuno.toml",
-                "sub/pkg/main.cpp",
                 "examples/cuno.toml",
                 "examples/e.cpp",
             ],
@@ -1522,5 +1562,67 @@ path = \"src/main.cpp\"
                 why: NotBuilt::AnotherPackage,
             }]
         );
+    }
+
+    /// A `[[bin]] path` inside another package is refused, by the build and
+    /// by fmt and lint alike, rather than built by one and skipped by the
+    /// others (`project-layout.md`, "Entry files and package body").
+    ///
+    /// Mutation: drop the check from `classify` or from `code_files`, or
+    /// look only at the entry file's own directory; this test fails.
+    #[test]
+    fn an_entry_file_in_another_package_is_an_error() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]
+name = \"t\"
+path = \"src/sub/deep/main.cpp\"
+",
+            &["src/sub/cuno.toml", "src/sub/deep/main.cpp"],
+        );
+        let target = root.join("target");
+        let errors = [
+            classify(&root, &m, &target, HostOs::Windows).unwrap_err(),
+            code_files(&root, &m, &target, HostOs::Windows).unwrap_err(),
+        ];
+        for err in errors {
+            assert_eq!(
+                err.to_string(),
+                "the entry file of `t` is in another package: src/sub/deep/main.cpp (src/sub has its own cuno.toml)"
+            );
+            assert_eq!(
+                cuno_core::CunoError::exit_class(&err),
+                cuno_core::ExitClass::Setup
+            );
+        }
+    }
+
+    /// `src/` or `tests/` holding its own `cuno.toml` is refused by the build
+    /// and by fmt and lint alike; before, the build compiled it and fmt and
+    /// lint left it out (`project-layout.md`, "Entry files and package body").
+    ///
+    /// Mutation: drop the check from `classify` or from `code_files`, or check
+    /// `src/` only; this test fails.
+    #[test]
+    fn src_or_tests_holding_a_manifest_is_an_error() {
+        for dir in ["src", "tests"] {
+            let manifest = format!("{dir}/cuno.toml");
+            let (_d, root, m) = project("c++", "", &["src/main.cpp", "tests/t.cpp", &manifest]);
+            let target = root.join("target");
+            let errors = [
+                classify(&root, &m, &target, HostOs::Windows).unwrap_err(),
+                code_files(&root, &m, &target, HostOs::Windows).unwrap_err(),
+            ];
+            for err in errors {
+                assert_eq!(
+                    err.to_string(),
+                    format!("{dir}/ has its own cuno.toml, which would make it another package")
+                );
+                assert_eq!(
+                    cuno_core::CunoError::exit_class(&err),
+                    cuno_core::ExitClass::Setup
+                );
+            }
+        }
     }
 }
