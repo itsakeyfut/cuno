@@ -4,6 +4,7 @@
 //! these, so they diagnose and build with the same answers.
 
 use std::ffi::OsStr;
+use std::path::PathBuf;
 
 use cuno_core::Env;
 
@@ -62,6 +63,19 @@ pub struct Prepared {
 }
 
 impl Prepared {
+    /// The include directories the compiler searches for the system and
+    /// standard headers: the resolved `INCLUDE`, in order, when the
+    /// environment was prepared for an MSVC toolset, else none, whatever the
+    /// process's own `INCLUDE` says. The one place an MSVC environment's
+    /// include path is read, so a compiler with no toolset never inherits it
+    /// (compile_commands.json, the build records, clang-tidy).
+    pub fn include_dirs(&self) -> Vec<PathBuf> {
+        match self.sdk {
+            Some(_) => crate::flags::include_dirs(self.env.get("INCLUDE")),
+            None => Vec::new(),
+        }
+    }
+
     /// What besides each compile's arguments identifies its command: the
     /// compiler's `version`, and the variables of the environment that
     /// decide which headers and libraries it reads (`build.md`, "Deciding
@@ -115,6 +129,41 @@ mod tests {
     use cuno_core::NameCase;
     use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
+
+    /// The include directories are the prepared `INCLUDE`, in order, only
+    /// when the environment was prepared for a toolset; without one, an
+    /// `INCLUDE` the process had is not the compiler's.
+    ///
+    /// Mutation: read `INCLUDE` whether or not a toolset was used, or lose
+    /// the order; this test fails.
+    #[test]
+    fn include_dirs_are_the_toolset_s_only() {
+        let env = Env::from_pairs(
+            [("INCLUDE".into(), "C:/msvc/include;;C:/sdk/ucrt".into())],
+            NameCase::Insensitive,
+        );
+        let with_toolset = Prepared {
+            env: env.clone(),
+            sdk: Some(WindowsSdk {
+                dir: "C:/sdk".into(),
+                version: "10.0.28000.0".to_owned(),
+            }),
+            ignored: Vec::new(),
+        };
+        assert_eq!(
+            with_toolset.include_dirs(),
+            [
+                PathBuf::from("C:/msvc/include"),
+                PathBuf::from("C:/sdk/ucrt")
+            ]
+        );
+        let without = Prepared {
+            env,
+            sdk: None,
+            ignored: Vec::new(),
+        };
+        assert!(without.include_dirs().is_empty());
+    }
 
     /// A step's command is identified by the compiler's version and the
     /// `INCLUDE`, `LIB` and `LIBPATH` it runs with, so an updated compiler

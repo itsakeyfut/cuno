@@ -76,12 +76,14 @@ pub fn lint(
         .into_iter()
         .map(OsStr::to_owned)
         .collect();
+    let include = prepared.include_dirs();
     let compiler = Toolchain {
         kind: selected.kind,
         executable: &selected.executable,
         version: &selected.version,
         msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
         env: &prepared.env,
+        include: &include,
         identity,
     };
     let described = pipeline::write_compile_commands(

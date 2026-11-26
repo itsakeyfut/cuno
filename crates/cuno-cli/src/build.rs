@@ -147,6 +147,7 @@ pub fn build(
         Goal::Test { .. } => (pipeline::Goal::Test, None),
     };
     let bundled = bundled::expand(&settings.home).map_err(boxed)?;
+    let include = prepared.include_dirs();
     let request = Request {
         root,
         manifest,
@@ -163,6 +164,7 @@ pub fn build(
             version: &selected.version,
             msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
             env: &prepared.env,
+            include: &include,
             identity,
         },
         spawner: &SystemSpawner,
