@@ -133,12 +133,14 @@ pub fn lint(
         &manifest.lint.exclude,
         case,
     );
+    // A link is the package's to analyse, as the build reads it. Whether a
+    // described source is one is asked of its own path below, never of where
+    // it leads: a link and the file it names are the same place.
     let ours: Vec<Place> = files
         .iter()
         .chain(&links)
         .map(|path| Place::of(path, case))
         .collect();
-    let is_link = |place: &Place| links.iter().any(|link| Place::of(link, case).same(place));
     // In path order, as fmt goes (commands.md, "`cuno lint`"), whatever
     // order the build plans its compiles in.
     let mut described = described;
@@ -149,7 +151,8 @@ pub fn lint(
         if !ours.iter().any(|ours| ours.same(&place)) {
             continue;
         }
-        if fix && is_link(&place) {
+        let link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        if fix && link {
             shell.warning(format!(
                 "`{}` is a link; cuno lint --fix leaves it",
                 relative(root, &path)
