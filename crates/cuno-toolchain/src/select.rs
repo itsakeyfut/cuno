@@ -196,6 +196,16 @@ pub struct Constraints {
 }
 
 impl Constraints {
+    /// The constraint written for `kind`, to set: every kind has one, so a
+    /// new kind must say where its constraint lives.
+    pub fn slot(&mut self, kind: CompilerKind) -> &mut Option<VersionReq> {
+        match kind {
+            CompilerKind::Msvc => &mut self.msvc,
+            CompilerKind::Clang => &mut self.clang,
+            CompilerKind::ClangCl => &mut self.clang_cl,
+        }
+    }
+
     fn of(&self, kind: CompilerKind) -> Option<&VersionReq> {
         match kind {
             CompilerKind::Msvc => self.msvc.as_ref(),

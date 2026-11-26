@@ -299,6 +299,21 @@ impl From<CompilerKind> for CompilerName {
     }
 }
 
+impl CompilerName {
+    /// The compiler cuno builds with by this name, or `None` for one it
+    /// recognises but cannot build with yet (`gcc`, `safec`): the inverse of
+    /// `From<CompilerKind>`, so a name's settings are read for exactly the
+    /// compilers cuno can use, and supporting one here turns them on.
+    pub fn kind(self) -> Option<CompilerKind> {
+        match self {
+            CompilerName::Msvc => Some(CompilerKind::Msvc),
+            CompilerName::Clang => Some(CompilerKind::Clang),
+            CompilerName::ClangCl => Some(CompilerKind::ClangCl),
+            CompilerName::Gcc | CompilerName::Safec => None,
+        }
+    }
+}
+
 choices!(
     /// A profile; only the two built in exist so far.
     Profile {
@@ -884,12 +899,11 @@ impl Check<'_> {
         let mut constraints = Constraints::default();
         for (name, text) in raw.unwrap_or_default() {
             let path = format!("toolchain.version.{}", key(&name));
-            let slot = match CompilerName::parse(&name) {
-                Some(CompilerName::Msvc) => &mut constraints.msvc,
-                Some(CompilerName::Clang) => &mut constraints.clang,
-                Some(CompilerName::ClangCl) => &mut constraints.clang_cl,
-                // Harmless until that compiler is used (manifest.md).
-                Some(CompilerName::Gcc | CompilerName::Safec) => continue,
+            let slot = match CompilerName::parse(&name).map(CompilerName::kind) {
+                Some(Some(kind)) => constraints.slot(kind),
+                // A compiler cuno cannot build with yet: harmless until it
+                // is used (manifest.md).
+                Some(None) => continue,
                 None => {
                     self.unknown.push(path);
                     continue;
@@ -1087,6 +1101,63 @@ mod tests {
                 CompilerName::parse(kind.name()),
                 Some(CompilerName::from(kind))
             );
+        }
+    }
+
+    /// A name maps back to the kind it was made from, for every kind cuno
+    /// builds with; `gcc` and `safec` map to none until cuno can build
+    /// with them.
+    ///
+    /// Mutation: map a kind's name to `None`, or to another kind; this test
+    /// fails.
+    #[test]
+    fn a_compiler_name_maps_back_to_its_kind() {
+        for kind in CompilerKind::ALL {
+            assert_eq!(
+                CompilerName::from(kind).kind(),
+                Some(kind),
+                "{}",
+                kind.name()
+            );
+        }
+        assert_eq!(CompilerName::Gcc.kind(), None);
+        assert_eq!(CompilerName::Safec.kind(), None);
+    }
+
+    /// `[toolchain.version]` reaches the constraint of every compiler cuno
+    /// builds with, and one for a compiler it cannot build with yet is
+    /// read as harmless, not unknown.
+    ///
+    /// Mutation: skip a buildable kind in the reader, or have the reader
+    /// put its constraint in another kind's slot; this test fails. (A swap
+    /// inside `Constraints::slot` itself reads back alike here; it is held
+    /// by `every_key_is_read_and_the_unwritten_ones_stay_empty`.)
+    #[test]
+    fn every_buildable_compiler_s_version_constraint_is_read() {
+        let mut text = with(
+            "[toolchain.version]
+",
+        );
+        // A different requirement per kind, so one read into another
+        // kind's slot shows.
+        for (i, kind) in CompilerKind::ALL.into_iter().enumerate() {
+            text.push_str(&format!(
+                "{} = \">={}\"
+",
+                kind.name(),
+                i + 1
+            ));
+        }
+        text.push_str(
+            "gcc = \">=13\"
+",
+        );
+        let loaded = read(&text).unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let mut constraints = loaded.value.constraints.clone();
+        for (i, kind) in CompilerKind::ALL.into_iter().enumerate() {
+            let read = constraints.slot(kind).as_ref().map(ToString::to_string);
+            assert_eq!(read, Some(format!(">={}", i + 1)), "{}", kind.name());
         }
     }
 
