@@ -29,6 +29,8 @@ cuno の決定済み仕様をまとめたドキュメント群。設計・実装
 | [distribution.md](distribution.md) | cuno 自体の配布と運営、ライセンス、管理ディレクトリ |
 | [architecture.md](architecture.md) | cuno 本体の内部構成（クレート構成、リポジトリ構成） |
 
+仕様ではないが、ほかのツール（CMake、Visual Studio、clang-format など）から移る人向けの対応表は [移行ガイド](../guides/migration.md) にある。
+
 ## 記法
 
 ### 未決事項
