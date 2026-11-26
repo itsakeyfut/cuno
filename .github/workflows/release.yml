@@ -157,7 +157,7 @@ jobs:
           path: dist
       # The tag is made at this commit and checked through GitHub before the
       # release is published; a draft is filled with exactly this run's files;
-      # a published release is never changed, only checked. Any lookup that
+      # a published release is never changed and stops the run. Any lookup that
       # fails stops the run.
       - name: Tag and create the GitHub release
         env:
@@ -189,20 +189,12 @@ jobs:
           fi
 
           if gh release view "$tag" --json isDraft,assets > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            # Published already: never changed, and never taken for this
+            # run's work. A run cannot get here after its own success (the
+            # tag then makes the version check skip), so a person looks.
             if [ "$(jq -r .isDraft "$RUNNER_TEMP/release.json")" != true ]; then
-              have="$(jq -r '.assets[].name' "$RUNNER_TEMP/release.json" | sort)"
-              if [ "$have" != "$expected" ]; then
-                echo "published release $tag holds [$have], not [$expected]; fix it by hand" >&2
-                exit 1
-              fi
-              # A rebuilt zip is never byte-identical (timestamps), so what is
-              # checked is that the published zip matches its published
-              # checksum: what a user downloads verifies.
-              mkdir "$RUNNER_TEMP/published"
-              gh release download "$tag" --dir "$RUNNER_TEMP/published"
-              (cd "$RUNNER_TEMP/published" && sha256sum -c ./*.sha256)
-              echo "$tag is already released"
-              exit 0
+              echo "$tag is already published; nothing is changed, look at it by hand" >&2
+              exit 1
             fi
             # A draft: emptied, then filled with this run's files and notes.
             jq -r '.assets[].name' "$RUNNER_TEMP/release.json" | while read -r name; do
