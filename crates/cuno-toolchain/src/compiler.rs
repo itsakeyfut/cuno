@@ -6,7 +6,7 @@
 
 use crate::llvm::Tool;
 use crate::select::Source;
-use crate::{ToolchainError, Version};
+use crate::{HostOs, ToolchainError, Version};
 
 /// A compiler cuno can build with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +83,19 @@ impl CompilerKind {
         match self {
             CompilerKind::Msvc => Family::Msvc,
             CompilerKind::Clang | CompilerKind::ClangCl => Family::Llvm,
+        }
+    }
+
+    /// Whether it builds with an MSVC toolset (its standard library, the
+    /// Windows SDK and its environment) on `host`, so selecting it needs
+    /// Visual Studio (`docs/en/specs/toolchain.md`, "Environment resolution
+    /// on Windows"). cl always does; Clang and clang-cl target the MSVC ABI
+    /// on Windows and borrow its toolset, and use none elsewhere. A new
+    /// compiler must answer here before it can be selected.
+    pub fn uses_msvc_toolset(self, host: HostOs) -> bool {
+        match self {
+            CompilerKind::Msvc => true,
+            CompilerKind::Clang | CompilerKind::ClangCl => host == HostOs::Windows,
         }
     }
 
@@ -173,6 +186,24 @@ impl CompilerKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// cl always uses an MSVC toolset; Clang and clang-cl do on Windows
+    /// only. Every kind is asked, so a new one is too.
+    ///
+    /// Mutation: answer false for clang on Windows, or true elsewhere; this
+    /// test fails.
+    #[test]
+    fn which_kinds_use_an_msvc_toolset() {
+        for kind in CompilerKind::ALL {
+            let windows = kind.uses_msvc_toolset(HostOs::Windows);
+            let other = kind.uses_msvc_toolset(HostOs::Other);
+            let want = match kind {
+                CompilerKind::Msvc => (true, true),
+                CompilerKind::Clang | CompilerKind::ClangCl => (true, false),
+            };
+            assert_eq!((windows, other), want, "{}", kind.name());
+        }
+    }
 
     /// Mutation: answer true for clang or clang-cl, or false for MSVC; this
     /// test fails.
