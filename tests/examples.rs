@@ -3,7 +3,8 @@
 //! example with tests also passes `cuno test`, with the results its
 //! `expected/test.txt` says.
 //!
-//! An example is any directory under `examples/` holding a `cuno.toml`.
+//! An example is a directory under `examples/c/` or `examples/cpp/`, by its
+//! package's language.
 //! Every example is a test of its own, so the examples run in parallel, and
 //! a new one fails [`every_example_has_a_test`] until it is added to
 //! `examples!`.
@@ -13,7 +14,7 @@
 
 mod support;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use support::Project;
 use support::compilers::{Compiler, Language, require};
@@ -35,14 +36,32 @@ fn here(compiler: Compiler) -> bool {
     require(compiler, Language::C, "x.c", "x.exe").is_some()
 }
 
-/// Every example directory, sorted.
-fn examples() -> Vec<PathBuf> {
+/// The language directories under `examples/`, each holding that
+/// language's examples.
+const LANGUAGES: [&str; 2] = ["c", "cpp"];
+
+/// Every example directory, as `<language>/<example>`, sorted. A directory
+/// beside the language directories, or one holding no `cuno.toml`, is
+/// named too, so an example put in the wrong place is not left unrun.
+fn examples() -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(&root)
-        .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
-        .map(|entry| entry.unwrap().path())
-        .filter(|dir| dir.join("cuno.toml").is_file())
-        .collect();
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(&root).unwrap_or_else(|e| panic!("{}: {e}", root.display())) {
+        let dir = entry.unwrap().path();
+        let language = dir.file_name().unwrap().to_string_lossy().into_owned();
+        if !dir.is_dir() {
+            continue;
+        }
+        if !LANGUAGES.contains(&language.as_str()) {
+            found.push(language);
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let example = entry.unwrap().path();
+            let name = example.file_name().unwrap().to_string_lossy().into_owned();
+            found.push(format!("{language}/{name}"));
+        }
+    }
     found.sort();
     found
 }
@@ -135,7 +154,11 @@ fn executables(dir: &Path) -> Vec<String> {
 /// Builds, checks, tests and runs `example` on every compiler here, as the
 /// module comment says.
 fn check(example: &Path) {
-    let name = example.file_name().unwrap().to_string_lossy();
+    let name = example
+        .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"))
+        .unwrap_or(example)
+        .to_string_lossy()
+        .replace('\\', "/");
     let tests = std::fs::read_to_string(example.join("expected").join("test.txt")).ok();
     assert!(
         tests.is_some() || !has_tests(example),
@@ -212,34 +235,53 @@ macro_rules! examples {
 }
 
 examples! {
-    bin_path = "bin-path",
-    c_in_cpp = "c-in-cpp",
-    edition_release_c = "edition-release-c",
-    edition_release_cpp = "edition-release-cpp",
-    hello_c = "hello-c",
-    hello_cpp = "hello-cpp",
-    include_dirs = "include-dirs",
-    multi_file_c = "multi-file-c",
-    multi_file_cpp = "multi-file-cpp",
-    per_compiler_flags = "per-compiler-flags",
-    several_bins = "several-bins",
-    testing_c = "testing-c",
-    testing_cpp = "testing-cpp",
+    c_edition_release = "c/edition-release",
+    c_hello = "c/hello",
+    c_multi_file = "c/multi-file",
+    c_testing = "c/testing",
+    cpp_bin_path = "cpp/bin-path",
+    cpp_c_in_cpp = "cpp/c-in-cpp",
+    cpp_edition_release = "cpp/edition-release",
+    cpp_hello = "cpp/hello",
+    cpp_include_dirs = "cpp/include-dirs",
+    cpp_multi_file = "cpp/multi-file",
+    cpp_per_compiler_flags = "cpp/per-compiler-flags",
+    cpp_several_bins = "cpp/several-bins",
+    cpp_testing = "cpp/testing",
 }
 
-/// Every directory under `examples/` holding a `cuno.toml` has a test of its
-/// own above, and every test names one.
+/// Every example under `examples/c/` and `examples/cpp/` has a test of its
+/// own above, and every test names one; a directory beside `c/` and `cpp/`
+/// is named as missing too.
 ///
-/// Mutation: add an example directory without adding it to `examples!`, or
-/// name one that is not there; this test fails, naming it.
+/// Mutation: add an example under either language without adding it to
+/// `examples!`, name one that is not there, or search one language only;
+/// this test fails, naming it.
 #[test]
 fn every_example_has_a_test() {
-    let found: Vec<String> = examples()
-        .iter()
-        .map(|dir| dir.file_name().unwrap().to_string_lossy().into_owned())
-        .collect();
+    let found = examples();
     assert!(!found.is_empty(), "no examples found");
     let mut tested: Vec<&str> = TESTED.to_vec();
     tested.sort_unstable();
     assert_eq!(found, tested, "examples/ and the tests differ");
+}
+
+/// Each example sits under its package's language: `c/` for `lang = "c"`,
+/// `cpp/` for C++, the default.
+///
+/// Mutation: put a C package under `cpp/`, or a C++ one under `c/`; this
+/// test fails, naming it.
+#[test]
+fn each_example_sits_under_its_language() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    for example in examples() {
+        let Some((language, _)) = example.split_once('/') else {
+            continue;
+        };
+        let manifest = std::fs::read_to_string(root.join(&example).join("cuno.toml"))
+            .unwrap_or_else(|e| panic!("{example}: {e}"));
+        let c = manifest.lines().any(|line| line.trim() == "lang = \"c\"");
+        let want = if c { "c" } else { "cpp" };
+        assert_eq!(language, want, "{example} is a {want} package");
+    }
 }
