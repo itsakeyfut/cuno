@@ -94,20 +94,41 @@ jobs:
 
   # Every crate packaged as crates.io would receive it, and built from that
   # package alone, so a file embedded from outside its crate, or an internal
-  # dependency with no version, fails here and not at a release
-  # (docs/en/specs/architecture.md, "Repository layout").
+  # dependency with no version, fails before a release publishes anything
+  # (docs/en/specs/architecture.md, "Repository layout"). Only a release
+  # needs it: on the release pull request (the version above the last
+  # release, which crates.io does not have yet) and on manual runs. Other
+  # runs skip the work but still report, so a required check is satisfied.
+  # Run on main's own version, cargo would take crates.io's copies of the
+  # internal crates in place of the ones just packaged.
   package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The release tags, to compare the version with.
+          fetch-depth: 0
+      - name: Whether this is a release
+        id: release
+        shell: bash
+        run: |
+          version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
+          last="$(git tag --list 'v*' | bash .github/scripts/last-release.sh)"
+          # Fails when the version is lower than the last release.
+          decision="$(bash .github/scripts/release-version.sh "$version" "$last")"
+          package=false
+          if [ "$decision" = release ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            package=true
+          fi
+          echo "$version against ${last:-no release}: $decision; package: $package"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
       - name: Install toolchain
+        if: steps.release.outputs.package == 'true'
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      # No cache: with one restored, the crates were verified against the
-      # published 0.1.0 instead of what was just packaged, since main still
-      # carries the published version (#299); every run without one passed.
-      - run: cargo package --workspace
+      - if: steps.release.outputs.package == 'true'
+        run: cargo package --workspace
 
   test:
     runs-on: windows-latest
