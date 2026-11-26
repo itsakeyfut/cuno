@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/concept.md @ blob d4a428c4ab2e4aa818694df0bbc6a9c67e02f384 -->
+<!-- translated-from: docs/ja/concept.md @ blob de3b19044d1b28c04f04586d8948a516954bcd12 -->
 
 # cuno concept
 
@@ -105,11 +105,28 @@ Working in real-world settings takes priority over ideals. For example, the foll
 - The C runtime default was chosen so that mixing in prebuilt dependencies does not cause link errors
 - A mechanism that does not depend on the output language was chosen so that cuno works with the Japanese edition of Visual Studio
 
+### 9. Allow complex configuration, and never be silently wrong
+
+The special, complex configuration of large projects can also be written. There are three tiers, and anything that can be written in a higher tier is written there: declarations in `cuno.toml`, custom rules (`[[build.rule]]`), and Lua build scripts, in that order ([build.md](specs/build.md#custom-build-steps-three-layers)).
+
+In every tier, whenever the result could differ from what was written, cuno reports an error instead of guessing. For example:
+
+- A pattern that matches no files
+- An output that was declared but not produced
+- A value that changes silently, outside the layering rules (a script overriding a declaration, for example)
+- An input missed by the rebuild check
+
+Reporting success and doing something different damages users' trust far more than stopping with an error because something cannot be written. A survey of complaints about existing tools found that the most serious took this form ([survey](../research/build-tool-complaints.md) (in Japanese)).
+
+The exception to stopping with an error is unknown keys in `cuno.toml` / `config.toml`. So that an older cuno can still read items added by a newer one, they are not an error: cuno warns, showing the file and line ([manifest.md "Unknown keys"](specs/manifest.md#unknown-keys)).
+
+Keep the amount to learn small. New concepts are not required until they are needed. The order in which settings are read, and which layer wins, are explained on one page. Today, [manifest.md "Settings layering"](specs/manifest.md#settings-layering) explains the layering inside `cuno.toml`. When custom rules and build scripts arrive (M7), the same page will also say when they are evaluated.
+
 ## What cuno does not do
 
 - **It does not aim to coexist with existing CMake projects.** cuno is a replacement for CMake.
 - **It does not enforce a directory layout or coding rules.** There are defaults, but you are not forced to follow them.
-- **It does not become a general-purpose build system that can do anything.** It focuses on C/C++ development. For complex processing, Lua build scripts are provided as an escape hatch, but the aim is for most projects never to need them.
+- **It does not become a general-purpose build system that can do anything.** It focuses on C/C++ development. For complex processing, Lua build scripts are provided as an escape hatch, but the aim is for most projects never to need them. The escape hatch, too, is never silently wrong, as principle 9 requires.
 
 ## How cuno differs from existing tools
 
