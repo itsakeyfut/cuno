@@ -2,7 +2,8 @@
 //! one answer every crate asks (`docs/en/specs/project-layout.md`, "Source
 //! collection and linking"; `docs/en/specs/architecture.md`, "What goes in
 //! `cuno-core`"). Only comparing uses where a path leads; the path a caller
-//! goes on to use or show stays as written.
+//! goes on to use or show stays as written, unless the caller normalizes it
+//! with [`lexical`] on purpose (the output directory is, once).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf, Prefix};

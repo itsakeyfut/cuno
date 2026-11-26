@@ -55,7 +55,9 @@ pub struct Settings {
     pub constraints: Constraints,
     /// `[toolchain.paths]`, merged per tool: the project's over the user's.
     pub paths: BTreeMap<Tool, PathBuf>,
-    /// The output directory.
+    /// The output directory, normalized with `paths::lexical`: every user of
+    /// it (the build's layout, the mark claiming it, `cuno clean`) names the
+    /// same directory.
     pub target_dir: PathBuf,
     /// `-j` or `[build] jobs`; `None` means the number of CPU cores.
     pub jobs: Option<NonZeroU32>,
@@ -237,9 +239,10 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
         layers.push((dir.path, source));
     }
     // Normalized once, here, so the build's layout, the mark that claims the
-    // directory and `cuno clean` all name the same one: `a/link/../out`
-    // resolved by the system could be another directory than the one the
-    // layout fills (build.md, "Output directory").
+    // directory and `cuno clean` all name the same one: where the system
+    // resolves `..` after following a link (Unix, or a `\\?\` path on
+    // Windows), `a/link/../out` is another directory than the lexical one the
+    // layout fills.
     let target_dir = paths::lexical(
         &layers
             .into_iter()

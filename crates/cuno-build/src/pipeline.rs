@@ -8,7 +8,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use cuno_core::{Env, NameCase, Shell};
+use cuno_core::{Env, NameCase, Shell, paths};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
 use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, ToolContext, include_dirs};
@@ -133,7 +133,7 @@ pub struct Request<'a> {
     pub root: &'a Path,
     /// Its `cuno.toml`.
     pub manifest: &'a Manifest,
-    /// The output directory.
+    /// The output directory, normalized as `Settings::target_dir` is.
     pub target_dir: &'a Path,
     /// The profile built.
     pub profile: Profile,
@@ -305,8 +305,10 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     }
 
     // So that `cuno clean` knows the output directory is cuno's; one it
-    // cannot mark is only one `cuno clean` will refuse.
-    let _ = layout::claim(target_dir);
+    // cannot mark is only one `cuno clean` will refuse. Normalized again, as
+    // the layout normalizes it, so a caller that hands a path as written
+    // still marks the directory the layout fills.
+    let _ = layout::claim(&paths::lexical(target_dir));
     let records = Records::new(
         tool.identity.iter().map(OsString::as_os_str),
         &include,
