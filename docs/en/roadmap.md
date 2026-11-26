@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/roadmap.md @ blob 29739f3584f57c7ef63e029bcc241145b70f1052 -->
+<!-- translated-from: docs/ja/roadmap.md @ blob e9ad7ceffecab9c05b084aa4a263a9376bba294a -->
 
 # cuno Roadmap
 
@@ -119,7 +119,7 @@ Make existing libraries (SDL3, FFmpeg, etc.) usable with just `cuno add`.
 - Mechanism for invoking existing build systems (CMake, etc.) behind the scenes according to a recipe
 - `cuno vendor`
 - features, system libraries (`system = true`), license display and warnings
-- Custom rules (`[[build.rule]]`) and Lua build scripts (implemented here because recipes also need them)
+- Custom rules (`[[build.rule]]`) and Lua build scripts (implemented here because recipes also need them). Both are designed according to [design principle 9](concept.md#9-allow-complex-configuration-and-never-be-silently-wrong) (allow complex configuration, and never be silently wrong)
 
 **Completion criteria**: a project using SDL3 can be run with `cuno add sdl3` → `cuno run`.
 

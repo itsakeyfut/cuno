@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 587e230075bc0ebcffee42a14ccb091c7059f584 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 8bc786d3d00476ec0962db3711e69966ba9e2bdb -->
 
 # Build
 
@@ -268,4 +268,5 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
 
 - [manifest.md](manifest.md) is the source of truth for the exact item names of each setting (the examples above are an overview)
 - All items of custom rules
+- The cases in which custom rules and build scripts report an error according to [design principle 9](../concept.md#9-allow-complex-configuration-and-never-be-silently-wrong) (no matching files, a declared output not produced, overriding a declaration, an input missed by the change check), and the evaluation order (written on the same page as [manifest.md "Settings layering"](manifest.md#settings-layering))
 - Build script file name, Lua version (Lua 5.4 / LuaJIT / Luau, etc.), and API
