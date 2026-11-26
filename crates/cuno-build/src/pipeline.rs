@@ -24,9 +24,11 @@ use crate::sources::{self, Bin, Sources};
 use crate::state::Records;
 
 /// Writes compile_commands.json for the package at `root`, as every build
-/// writes it, without building: what `cuno lint` analyses
-/// (`docs/en/specs/dev-tools.md`). The outer error is the package's layout,
-/// the inner one the write, which the caller reports as it decides.
+/// writes it, without building, and returns the sources it holds commands
+/// for, each path once, in the plan's order: what `cuno lint` analyses (`docs/en/specs/dev-tools.md`),
+/// so lint can never analyse fewer sources than the file describes. The
+/// outer error is the package's layout, the inner one the write, which the
+/// caller reports as it decides.
 pub fn write_compile_commands(
     root: &Path,
     manifest: &Manifest,
@@ -34,7 +36,7 @@ pub fn write_compile_commands(
     host: HostOs,
     tool: &Toolchain<'_>,
     bundled: &Path,
-) -> Result<std::io::Result<()>, BuildError> {
+) -> Result<std::io::Result<Vec<PathBuf>>, BuildError> {
     let sources = sources::classify(root, manifest, target_dir, host)?;
     Ok(compile_commands(
         root, manifest, target_dir, host, tool, bundled, &sources,
@@ -42,7 +44,7 @@ pub fn write_compile_commands(
 }
 
 /// compile_commands.json from sources already classified, with the same
-/// settings whatever is built (`editor_settings`).
+/// settings whatever is built (`editor_settings`); the sources it describes.
 fn compile_commands(
     root: &Path,
     manifest: &Manifest,
@@ -51,7 +53,7 @@ fn compile_commands(
     tool: &Toolchain<'_>,
     bundled: &Path,
     sources: &Sources,
-) -> std::io::Result<()> {
+) -> std::io::Result<Vec<PathBuf>> {
     let for_editors =
         |lang, _: Purpose| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
     // Never linked; the plan takes link settings all the same.
@@ -82,7 +84,20 @@ fn compile_commands(
         include: &include,
         msvc: tool.msvc,
     };
-    compdb::write(root, &editors, context)
+    compdb::write(root, &editors, context)?;
+    let mut described: Vec<PathBuf> = Vec::new();
+    for step in &editors.steps {
+        // Every kind answers, so a new kind of step that compiles a source
+        // cannot be left out of what lint analyses unnoticed.
+        let source = match &step.kind {
+            StepKind::Compile { source } | StepKind::Check { source } => source,
+            StepKind::Link { .. } => continue,
+        };
+        if !described.contains(source) {
+            described.push(source.clone());
+        }
+    }
+    Ok(described)
 }
 
 /// The compiler a build runs, once the toolchain is ready.
@@ -1098,6 +1113,58 @@ defines = [\"X=1\"]
             matches!(result, Err(BuildError::NoExecutable { .. })),
             "{result:?}"
         );
+    }
+
+    /// The sources `write_compile_commands` returns are exactly those the
+    /// file it wrote has entries for: entry files, the body, the tests in
+    /// `tests/` and their helpers, so lint analyses no fewer and no more.
+    ///
+    /// Mutation: return no sources, or leave compiles out of those returned;
+    /// this test fails.
+    #[test]
+    fn the_sources_returned_are_the_files_entries() {
+        let (root, manifest) = package_with("", &["util.cpp", "bin/tool.cpp"]);
+        write_old(root.path(), "tests/t.cpp");
+        write_old(root.path(), "tests/support/help.cpp");
+        let env = Env::from_pairs([], NameCase::Insensitive);
+        let version = Version::find_in("22.1.8").unwrap();
+        let tool = Toolchain {
+            kind: CompilerKind::Clang,
+            executable: Path::new("clang.exe"),
+            version: &version,
+            msvc: None,
+            env: &env,
+            identity: vec![OsString::from("22.1.8")],
+        };
+        let returned = write_compile_commands(
+            root.path(),
+            &manifest,
+            &root.path().join("target"),
+            HostOs::Windows,
+            &tool,
+            Path::new(BUNDLED),
+        )
+        .unwrap()
+        .unwrap();
+        let text = std::fs::read_to_string(root.path().join(compdb::FILE)).unwrap();
+        let entries: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let mut in_file: Vec<PathBuf> = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| PathBuf::from(e["file"].as_str().unwrap()))
+            .collect();
+        let mut returned = returned;
+        in_file.sort();
+        returned.sort();
+        assert_eq!(returned, in_file);
+        let names: Vec<String> = returned
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        for name in ["main.cpp", "util.cpp", "tool.cpp", "t.cpp", "help.cpp"] {
+            assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
+        }
     }
 
     /// Two test executables of one name stop the build before anything
