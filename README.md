@@ -1,5 +1,11 @@
 # cuno
 
+[![Crates.io](https://img.shields.io/crates/v/cuno.svg)](https://crates.io/crates/cuno)
+[![GitHub Release](https://img.shields.io/github/v/release/itsakeyfut/cuno)](https://github.com/itsakeyfut/cuno/releases/latest)
+[![CI](https://github.com/itsakeyfut/cuno/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/itsakeyfut/cuno/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6.svg)](#installation)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 **Everything C/C++ development needs, in one tool.**
 
 cuno brings package management, build management, toolchain management, and developer tools for C and C++ together under a single command.
