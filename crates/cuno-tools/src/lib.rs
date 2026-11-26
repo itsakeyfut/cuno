@@ -5,6 +5,7 @@
 pub mod format;
 pub mod targets;
 pub mod tidy;
+pub mod write;
 
 use std::fmt;
 use std::io;
@@ -61,28 +62,20 @@ fn write_generated(
     content: &str,
 ) -> Result<(), EditorFileWarning> {
     let path = root.join(file);
-    match std::fs::symlink_metadata(&path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(EditorFileWarning::Failed(file, e)),
-        // Never followed: a link would have cuno write outside the project.
-        Ok(meta) if !meta.file_type().is_file() => {
-            let what = if meta.file_type().is_symlink() {
-                "it is a link, which cuno does not follow"
-            } else {
-                "it is not a file"
-            };
-            return Err(EditorFileWarning::Failed(file, io::Error::other(what)));
+    // Never followed: a link would have cuno write outside the project.
+    match write::generated(&path, marker) {
+        Ok(()) => {}
+        Err(write::Refusal::HandWritten) => return Err(EditorFileWarning::Kept(file)),
+        Err(write::Refusal::Unreadable(e)) => return Err(EditorFileWarning::Failed(file, e)),
+        Err(other) => {
+            return Err(EditorFileWarning::Failed(
+                file,
+                io::Error::other(other.to_string()),
+            ));
         }
-        Ok(_) => {
-            let existing = std::fs::read(&path).map_err(|e| EditorFileWarning::Failed(file, e))?;
-            if existing == content.as_bytes() {
-                return Ok(());
-            }
-            let first = existing.split(|b| *b == b'\n').next().unwrap_or_default();
-            if first.strip_suffix(b"\r").unwrap_or(first) != marker.as_bytes() {
-                return Err(EditorFileWarning::Kept(file));
-            }
-        }
+    }
+    if std::fs::read(&path).is_ok_and(|held| held == content.as_bytes()) {
+        return Ok(());
     }
     std::fs::write(&path, content).map_err(|e| EditorFileWarning::Failed(file, e))
 }

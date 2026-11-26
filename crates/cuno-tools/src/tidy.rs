@@ -357,7 +357,12 @@ fn fix_one(
         .map(|text| fix_targets(&text))
         .unwrap_or_default();
     let _ = std::fs::remove_file(&exported);
-    if let Some(foreign) = targets.iter().find(|t| !ours(&tool.root.join(t))) {
+    // Every file a fix would change must be one cuno may write: the
+    // package's, a file, not a link (`write::code`).
+    if let Some(foreign) = targets
+        .iter()
+        .find(|t| crate::write::code(&tool.root.join(t), ours).is_err())
+    {
         return Run {
             output: looked,
             foreign: Some(foreign.clone()),
