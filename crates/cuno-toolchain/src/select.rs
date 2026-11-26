@@ -244,7 +244,7 @@ pub fn select(
     // A compiler that builds with an MSVC toolset needs Visual Studio, even
     // a Clang, which borrows its toolset; one that does not, needs none
     // (`CompilerKind::uses_msvc_toolset`).
-    let newest_toolset = if kind.uses_msvc_toolset(host) && host == HostOs::Windows {
+    let newest_toolset = if kind.uses_msvc_toolset(host) {
         let toolsets = usable_toolsets(found, host)?;
         first_newest(toolsets.iter().map(|t| (t, t.cl_version))).cloned()
     } else {

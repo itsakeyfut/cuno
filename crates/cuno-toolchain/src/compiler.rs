@@ -89,13 +89,15 @@ impl CompilerKind {
     /// Whether it builds with an MSVC toolset (its standard library, the
     /// Windows SDK and its environment) on `host`, so selecting it needs
     /// Visual Studio (`docs/en/specs/toolchain.md`, "Environment resolution
-    /// on Windows"). cl always does; Clang and clang-cl target the MSVC ABI
-    /// on Windows and borrow its toolset, and use none elsewhere. A new
-    /// compiler must answer here before it can be selected.
+    /// on Windows"). On Windows cl does, and Clang and clang-cl target the
+    /// MSVC ABI and borrow its toolset; elsewhere none does (cl does not run
+    /// there, and is refused as not found). A new compiler must answer here
+    /// before it can be selected.
     pub fn uses_msvc_toolset(self, host: HostOs) -> bool {
         match self {
-            CompilerKind::Msvc => true,
-            CompilerKind::Clang | CompilerKind::ClangCl => host == HostOs::Windows,
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
+                host == HostOs::Windows
+            }
         }
     }
 
@@ -187,8 +189,8 @@ impl CompilerKind {
 mod tests {
     use super::*;
 
-    /// cl always uses an MSVC toolset; Clang and clang-cl do on Windows
-    /// only. Every kind is asked, so a new one is too.
+    /// On Windows every kind today uses an MSVC toolset, and none does
+    /// elsewhere. Every kind is asked, so a new one is too.
     ///
     /// Mutation: answer false for clang on Windows, or true elsewhere; this
     /// test fails.
@@ -198,8 +200,7 @@ mod tests {
             let windows = kind.uses_msvc_toolset(HostOs::Windows);
             let other = kind.uses_msvc_toolset(HostOs::Other);
             let want = match kind {
-                CompilerKind::Msvc => (true, true),
-                CompilerKind::Clang | CompilerKind::ClangCl => (true, false),
+                CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => (true, false),
             };
             assert_eq!((windows, other), want, "{}", kind.name());
         }
