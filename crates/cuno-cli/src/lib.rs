@@ -58,7 +58,7 @@ pub struct Process {
 /// implement them (docs/en/roadmap.md).
 #[derive(Parser)]
 #[command(
-    // `name` is what `--version` prints ("cuno 0.0.0"); `bin_name` is what
+    // `name` is what `--version` prints ("cuno <version>"); `bin_name` is what
     // the usage line prints. Without `bin_name`, clap takes the executable's
     // file name, which is `cuno.exe` on Windows.
     name = "cuno",
