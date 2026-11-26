@@ -36,6 +36,20 @@ pub enum BuildError {
         /// The path.
         path: PathBuf,
     },
+    /// An entry file inside a directory with its own `cuno.toml`.
+    InAnotherPackage {
+        /// The executable's name.
+        name: String,
+        /// The entry file, as shown.
+        path: String,
+        /// The other package's directory, as shown.
+        package: String,
+    },
+    /// `src/` or `tests/` holding its own `cuno.toml`.
+    CodeDirIsPackage {
+        /// The directory, as shown (`src`).
+        dir: String,
+    },
     /// Two executables with the same name.
     DuplicateName {
         /// The name.
@@ -95,6 +109,18 @@ impl fmt::Display for BuildError {
                 "the entry file of `{name}` is outside the project: {}",
                 path.display()
             ),
+            BuildError::InAnotherPackage {
+                name,
+                path,
+                package,
+            } => write!(
+                f,
+                "the entry file of `{name}` is in another package: {path} ({package} has its own cuno.toml)"
+            ),
+            BuildError::CodeDirIsPackage { dir } => write!(
+                f,
+                "{dir}/ has its own cuno.toml, which would make it another package"
+            ),
             BuildError::DuplicateName { name, entries } => write!(
                 f,
                 "two executables are named `{name}`: {} and {}",
@@ -129,6 +155,8 @@ impl CunoError for BuildError {
             | BuildError::BinPathMissing { .. }
             | BuildError::NotASource { .. }
             | BuildError::OutsideProject { .. }
+            | BuildError::InAnotherPackage { .. }
+            | BuildError::CodeDirIsPackage { .. }
             | BuildError::DuplicateName { .. }
             | BuildError::DuplicateTestName { .. }
             | BuildError::Unreadable { .. } => ExitClass::Setup,
@@ -146,6 +174,12 @@ impl CunoError for BuildError {
             BuildError::OutsideProject { .. } => Some(
                 "move it into the project, or point [[bin]] path at a file inside it".to_owned(),
             ),
+            BuildError::InAnotherPackage { package, .. } => Some(format!(
+                "move it out of {package}, or point [[bin]] path at a file of this package"
+            )),
+            BuildError::CodeDirIsPackage { dir } => Some(format!(
+                "remove {dir}/cuno.toml, or move that package out of {dir}/"
+            )),
             BuildError::DuplicateName { .. } => {
                 Some("give one of them another name with [[bin]] name".to_owned())
             }

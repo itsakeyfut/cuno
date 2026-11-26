@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 7de1c1e0adc627b27199dac97996d3fdfbf0e719 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob da2db1abcc5ffc898ef1087fe422414d1c7a8246 -->
 
 # Project Kinds and Layout
 
@@ -48,7 +48,7 @@ sources = ["Private"]
 
 ### Target files
 
-- All sources under `src/` are compiled.
+- All sources under `src/` are compiled, except that a directory with its own `cuno.toml` (another package) is not read (see below).
 - The language is determined by file extension.
   - `.c`: compiled as C.
   - `.cpp` / `.cc` / `.cxx`: compiled as C++.
@@ -70,6 +70,10 @@ sources = ["Private"]
   - There is no executable (no default entry file, nothing in `src/bin/`, and no `[[bin]]` written).
   - A `[[bin]]` `path` has no file, or is not a C/C++ source (`.c` / `.cpp` / `.cc` / `.cxx`).
   - An entry file is outside the project, since where its object file goes is decided from the source's place in the project ([build.md](build.md#output-directory)).
+  - A `[[bin]]` `path` is inside a directory with its own `cuno.toml` (another package) (``error: the entry file of `t` is in another package: src/sub/main.cpp (src/sub has its own cuno.toml)``). `cuno fmt` and `cuno lint` make it the same error.
+    - Rationale: cuno does not read inside another package (see below), so if only the entry file were built, the build would use that file while `cuno fmt` / `cuno lint` skipped it as another package. Code that is neither formatted nor analyzed would end up in the executable while both report success.
+  - `src/` or `tests/` itself has its own `cuno.toml` (`error: src/ has its own cuno.toml, which would make it another package`). `cuno fmt` and `cuno lint` make it the same error.
+    - Rationale: the place where the package's code lives being another package is almost certainly a mistake. Read silently, it would again leave the build alone using that code, as above.
   - Two executables get the same name (a `[[bin]]` `name` written twice, or an auto-detected `src/bin/app.cpp` beside the default executable `app`, for example), since they would be the same file in the output directory. On Windows names are compared without regard to case (`Tool` and `tool` are the same file too).
 - On Windows, file and directory names are handled without regard to case: `src/Main.cpp` is the default entry file too, and a `[[bin]]` `path` written `SRC/Main.cpp` is the same file as `src/main.cpp`.
   - Rationale: counting the same file twice under two spellings would put an entry file in the package body as well, compiling it twice and defining `main` twice.
@@ -83,6 +87,8 @@ sources = ["Private"]
   - An object file's place is decided by where the source's directory leads and where the source file's name sits. A source file that is itself a link pointing outside the project is still compiled as a source in `src/`. A `[[bin]]` `path` naming a link to a file outside the project, on the other hand, is an error, since the entry file is outside the project.
 - A link to a directory inside `src/` or `tests/` (a symbolic link or a junction) is not read, and cuno warns about it.
   - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
+- A directory inside `src/` or `tests/` with its own `cuno.toml` is another package: cuno does not read it and prints `warning: src/sub is not built: it has its own cuno.toml (another package)`. The build, `cuno fmt` and `cuno lint` all treat it the same way ([Where the package's code lives](#where-the-packages-code-lives)).
+  - Rationale: if only the build linked the sources in it while `cuno fmt` / `cuno lint` skipped it as another package, code that is neither formatted nor analyzed would end up in the executable while both report success.
 
 ### Where the package's code lives
 
@@ -95,7 +101,7 @@ The places where the package's code (the C/C++ sources and headers the user writ
 The following are excluded:
 
 - The output directory (judged by the absolute path of the output directory actually used, including when it is changed with `--target-dir` and the like; [build.md](build.md#output-directory))
-- A directory with its own `cuno.toml` (another package). This includes one of the places listed above that has one itself. The project root is not excluded.
+- A directory with its own `cuno.toml` (another package). This includes one of the places listed above that has one itself. The project root is not excluded. When `src/` or `tests/` itself has one, it is an error ([Entry files and package body](#entry-files-and-package-body)).
 
 - `include-dirs` is not part of these places.
   - Rationale: `include-dirs` often points at third-party headers (`third_party/include` and the like), and formatting them would rewrite files that do not belong to the user. Also, `include-dirs` can be added in `[platform.<OS>.build]` / `[profile.<name>.build]`, so deciding its value needs the compiler and profile selected, whereas `cuno fmt` must work without a compiler.

@@ -130,6 +130,34 @@ fn fmt_leaves_a_link_and_says_so() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), UGLY);
 }
 
+/// A directory under `src/` with its own `cuno.toml` is another package:
+/// fmt names it with the build's warning and leaves its files alone
+/// (`project-layout.md`, "Source collection and linking").
+///
+/// Mutation: stop printing the code's warnings in `cuno fmt`, or format the
+/// nested package; this test fails.
+#[test]
+fn fmt_leaves_a_nested_package_and_says_so() {
+    if require_llvm_tool("clang-format").is_none() {
+        return;
+    }
+    let project = Project::new()
+        .file("cuno.toml", MANIFEST)
+        .file(
+            "src/main.cpp",
+            "int main() { return 0; }
+",
+        )
+        .file("src/sub/cuno.toml", MANIFEST)
+        .file("src/sub/x.cpp", UGLY);
+    project.cuno(&["fmt", "--check"]).assert(
+        0,
+        "",
+        "warning: src/sub is not built: it has its own cuno.toml (another package)
+",
+    );
+}
+
 /// A `[fmt.clang-format]` clang-format refuses is a settings problem, exit
 /// 3, before any file is formatted, and names neither a source nor a
 /// scratch file (`commands.md`, "`cuno fmt`").
