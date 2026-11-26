@@ -22,7 +22,7 @@ cuno の設定は `cuno.toml` 1 つに書きます。項目の詳細は [manifes
 | `add_executable(app src/main.cpp)` | 何も書かない。`src/main.cpp`（または `.c`）が既定の実行ファイルになる。名前やパスを変えるなら `[[bin]]` |
 | 実行ファイルを複数作る | `src/bin/` にソースを置く（ファイルごとに 1 つ）、または `[[bin]]` を複数書く |
 | `add_library(...)` | 未対応（M6、`[lib]`）。その間は 1 つのパッケージのソースとして `src/` に置く |
-| ソースを `file(GLOB ...)` や一覧で列挙する | 何も書かない。`src/` 以下のソースはすべてコンパイルされる |
+| ソースを `file(GLOB ...)` や一覧で列挙する | 何も書かない。`src/` 以下のソースはすべてコンパイルされる（`src/main.*` と `src/bin/` は実行ファイルの入口になり、それ以外がパッケージ本体として各実行ファイルにリンクされる） |
 | `target_include_directories` | `[build]` の `include-dirs` |
 | `target_compile_definitions` | `[build]` の `defines` |
 | `target_compile_options` | 警告の強さなどは `[build]` の項目（`warnings`、`warnings-as-errors` など）。生のフラグはコンパイラごとに `[build.msvc]` などの `flags` |
@@ -132,7 +132,7 @@ cuno のテストは、同梱のヘッダで書き、`cuno test` で動かしま
 | `vcpkg install sdl3` / `conan install` | 未対応（M6 で Git / URL、M7 で `cuno add sdl3`） |
 | `vcpkg-configuration.json` のベースライン、`conan.lock` | 未対応（M6、`cuno.lock`） |
 | features（vcpkg）/ options（Conan） | 未対応（M7） |
-| バイナリキャッシュ | 未対応（将来） |
+| バイナリキャッシュ | 未対応。マシン内のキャッシュは依存管理とともに入る予定（時期は未定）。チームや CI での共有は将来 |
 | 依存のソースをリポジトリに置く | 未対応（M7、`cuno vendor`）。その間は、ソースを `src/` 以下に置けば一緒にビルドされる |
 | ビルド済みのライブラリを使う | `[build]` の `include-dirs`、`lib-dirs`、`links` |
 
@@ -168,7 +168,7 @@ cuno は Cargo を手本にしているので、多くのことは同じ形で�
 | `premake5 vs2022` でプロジェクトを生成してビルドする | `cuno build`。生成の段階はない。Visual Studio のプロジェクトの生成は未対応（M9、`cuno ide vs`） |
 | `kind "ConsoleApp"` / `"WindowedApp"` | `[[bin]]` の `subsystem`（`console` / `windows`） |
 | `kind "StaticLib"` / `"SharedLib"` | 未対応（M6、`[lib]` の `kind`） |
-| `files { "src/**.cpp" }` | 何も書かない。`src/` 以下のソースはすべてコンパイルされる |
+| `files { "src/**.cpp" }` | 何も書かない。`src/` 以下のソースはすべてコンパイルされる（`src/main.*` と `src/bin/` は実行ファイルの入口になり、それ以外がパッケージ本体として各実行ファイルにリンクされる） |
 | `includedirs` / `defines` / `links` / `libdirs` | `[build]` の `include-dirs` / `defines` / `links` / `lib-dirs` |
 | `buildoptions` | `[build.msvc]` などの `flags` |
 | `configurations { "Debug", "Release" }` と `filter "configurations:Debug"` | `[profile.dev.build]` / `[profile.release.build]` |

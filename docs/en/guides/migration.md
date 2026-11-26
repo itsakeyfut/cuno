@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/guides/migration.md @ blob ba32cc3406bed4ee988703115a71c6c531bf0a7b -->
+<!-- translated-from: docs/ja/guides/migration.md @ blob a78d80634c26187b5d35e13c50c425a1163bde76 -->
 
 # Migrating from other tools
 
@@ -24,7 +24,7 @@ cuno's configuration goes into a single `cuno.toml`. See [manifest.md](../specs/
 | `add_executable(app src/main.cpp)` | Write nothing. `src/main.cpp` (or `.c`) becomes the default executable. To change its name or path, use `[[bin]]` |
 | Build several executables | Put sources in `src/bin/` (one per file), or write several `[[bin]]` |
 | `add_library(...)` | Not yet supported (M6, `[lib]`). In the meantime, put the sources in `src/` as sources of a single package |
-| List sources with `file(GLOB ...)` or an explicit list | Write nothing. Every source under `src/` is compiled |
+| List sources with `file(GLOB ...)` or an explicit list | Write nothing. Every source under `src/` is compiled (`src/main.*` and `src/bin/` become the executables' entry files; the rest is the package body, linked into each executable) |
 | `target_include_directories` | `include-dirs` in `[build]` |
 | `target_compile_definitions` | `defines` in `[build]` |
 | `target_compile_options` | Warning level and similar go in `[build]` entries (`warnings`, `warnings-as-errors`, etc.). Raw flags go in `flags` per compiler, such as `[build.msvc]` |
@@ -134,7 +134,7 @@ Dependency management arrives in M6 and M7. Until then, use a library by writing
 | `vcpkg install sdl3` / `conan install` | Not yet supported (Git / URL in M6, `cuno add sdl3` in M7) |
 | The baseline in `vcpkg-configuration.json`, `conan.lock` | Not yet supported (M6, `cuno.lock`) |
 | features (vcpkg) / options (Conan) | Not yet supported (M7) |
-| Binary caching | Not yet supported (Future) |
+| Binary caching | Not yet supported. A cache on the machine comes with dependency management (no milestone yet); one shared across a team or CI is future |
 | Keep dependency sources in the repository | Not yet supported (M7, `cuno vendor`). In the meantime, sources placed under `src/` are built along with the package |
 | Use prebuilt libraries | `include-dirs`, `lib-dirs`, `links` in `[build]` |
 
@@ -170,7 +170,7 @@ cuno takes Cargo as its model, so many things work the same way.
 | Generate projects with `premake5 vs2022` and build them | `cuno build`. There is no generate step. Generating Visual Studio projects is not yet supported (M9, `cuno ide vs`) |
 | `kind "ConsoleApp"` / `"WindowedApp"` | `subsystem` in `[[bin]]` (`console` / `windows`) |
 | `kind "StaticLib"` / `"SharedLib"` | Not yet supported (M6, `kind` in `[lib]`) |
-| `files { "src/**.cpp" }` | Write nothing. Every source under `src/` is compiled |
+| `files { "src/**.cpp" }` | Write nothing. Every source under `src/` is compiled (`src/main.*` and `src/bin/` become the executables' entry files; the rest is the package body, linked into each executable) |
 | `includedirs` / `defines` / `links` / `libdirs` | `include-dirs` / `defines` / `links` / `lib-dirs` in `[build]` |
 | `buildoptions` | `flags` in `[build.msvc]` and the like |
 | `configurations { "Debug", "Release" }` and `filter "configurations:Debug"` | `[profile.dev.build]` / `[profile.release.build]` |
