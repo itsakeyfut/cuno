@@ -83,7 +83,7 @@ pub fn lint(
         env: &prepared.env,
         identity,
     };
-    pipeline::write_compile_commands(
+    let described = pipeline::write_compile_commands(
         root,
         manifest,
         &settings.target_dir,
@@ -140,18 +140,8 @@ pub fn lint(
         .filter(|file| !excluded(&file.path))
         .map(|file| Place::of(&file.path, case))
         .collect();
-    let classified =
-        sources::classify(root, manifest, &settings.target_dir, host).map_err(boxed)?;
-    let commanded = classified
-        .bins
-        .iter()
-        .map(|bin| &bin.entry)
-        .chain(&classified.body)
-        .chain(&classified.integration_tests)
-        .chain(&classified.test_helpers)
-        .map(|source| source.path.clone());
     let mut analysed: Vec<PathBuf> = Vec::new();
-    for path in commanded {
+    for path in described {
         let place = Place::of(&path, case);
         if !ours.iter().any(|ours| ours.same(&place)) {
             continue;
