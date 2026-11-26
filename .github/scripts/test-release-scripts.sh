@@ -33,6 +33,22 @@ expect "a lower version fails" ":1" "$(version 0.1.0 0.2.0)"
 expect "a lower patch fails" ":1" "$(version 0.2.1 0.2.10)"
 expect "a pre-release is not a release version" ":1" "$(version 0.2.0-rc.1 0.1.0)"
 expect "build metadata is not a release version" ":1" "$(version 0.2.0+b1 0.1.0)"
+expect "main between releases is never released" "skip:0" "$(version 0.2.0-dev 0.1.0)"
+expect "only -dev is skipped among pre-releases" ":1" "$(version 0.2.0-dev.1 0.1.0)"
+
+dev() {
+    bash "$here/dev-version.sh" "$@" 2>/dev/null
+    echo "$?"
+}
+
+expect "a -dev above the last release passes" "0" "$(dev 0.2.0-dev 0.1.0)"
+expect "a release version above the last passes" "0" "$(dev 0.2.0 0.1.0)"
+expect "with no release yet anything x.y.z passes" "0" "$(dev 0.1.0 '')"
+expect "main still on the released version fails" "1" "$(dev 0.1.0 0.1.0)"
+expect "a -dev of the released version fails" "1" "$(dev 0.1.0-dev 0.1.0)"
+expect "a -dev below the last release fails" "1" "$(dev 0.1.5-dev 0.2.0)"
+expect "versions compare as numbers" "0" "$(dev 0.10.0-dev 0.9.0)"
+expect "another pre-release is not main's form" "1" "$(dev 0.2.0-rc.1 0.1.0)"
 
 last() {
     printf '%s\n' "$@" | bash "$here/last-release.sh"

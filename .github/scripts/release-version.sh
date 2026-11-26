@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Whether the workspace version is to be released: prints `release` when it is
 # the first release or higher than the last released one, `skip` when it
-# equals it or is 0.0.0 (not released yet), and fails when it is lower, so a
-# mistaken downgrade publishes nothing. Only `x.y.z` is a release version;
-# anything else fails (docs/en/specs/distribution.md, "Versioning policy").
+# equals it, is 0.0.0 (not released yet) or is `x.y.z-dev` (main between
+# releases), and fails when it is lower, so a mistaken downgrade publishes
+# nothing. Only `x.y.z` is a release version; anything else fails
+# (docs/en/specs/distribution.md, "Versioning policy").
 #
 # Usage: release-version.sh <version> <last released version, or empty>
 set -euo pipefail
@@ -11,6 +12,11 @@ set -euo pipefail
 new="${1:?the workspace version}"
 last="${2:-}"
 plain='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+if [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev$ ]]; then
+    echo skip
+    exit 0
+fi
 
 if ! [[ "$new" =~ $plain ]]; then
     echo "version $new is not of the form x.y.z, the only form cuno releases" >&2
