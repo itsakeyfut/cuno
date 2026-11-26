@@ -225,8 +225,9 @@ pub struct Linted {
     /// Sources clang-tidy could not analyse, with why.
     pub failed: Vec<(PathBuf, String)>,
     /// Under `--fix`, sources left unfixed because a fix would change the
-    /// file given, which is not the package's.
-    pub not_fixed: Vec<(PathBuf, PathBuf)>,
+    /// file given, which cuno may not write, and why
+    /// ([`crate::write::Refusal`]).
+    pub not_fixed: Vec<(PathBuf, PathBuf, String)>,
 }
 
 /// Analyses `sources` with `tool`, keeping only the findings in files
@@ -266,8 +267,8 @@ pub fn lint(
     let mut seen: HashSet<Vec<u8>> = HashSet::new();
     for (i, run) in runs {
         let source = &sources[i];
-        if let Some(foreign) = run.foreign {
-            linted.not_fixed.push((source.clone(), foreign));
+        if let Some((foreign, why)) = run.foreign {
+            linted.not_fixed.push((source.clone(), foreign, why));
         }
         let output = match run.output {
             Ok(output) => output,
@@ -326,7 +327,7 @@ pub fn lint(
 /// fix would have changed, when one did and nothing was fixed.
 struct Run {
     output: std::io::Result<cuno_toolchain::Output>,
-    foreign: Option<PathBuf>,
+    foreign: Option<(PathBuf, String)>,
 }
 
 /// How clang-tidy is run on a source.
@@ -357,10 +358,18 @@ fn fix_one(
         .map(|text| fix_targets(&text))
         .unwrap_or_default();
     let _ = std::fs::remove_file(&exported);
-    if let Some(foreign) = targets.iter().find(|t| !ours(&tool.root.join(t))) {
+    // Every file a fix would change must be one cuno may write: the
+    // package's, a file, not a link (`write::code`); the first that is not
+    // is named, with why.
+    let refused = targets.iter().find_map(|t| {
+        crate::write::code(&tool.root.join(t), ours)
+            .err()
+            .map(|why| (t.clone(), why.which()))
+    });
+    if let Some(foreign) = refused {
         return Run {
             output: looked,
-            foreign: Some(foreign.clone()),
+            foreign: Some(foreign),
         };
     }
     if targets.is_empty() {
@@ -890,5 +899,108 @@ warn = [\"bugprone-easily-swappable-parameters\"]
         assert!(lines[1].starts_with("Checks: '-*,bugprone-*,"), "{text}");
         assert_eq!(lines[2], "WarningsAsErrors: 'bugprone-*'");
         assert_eq!(lines[3], "HeaderFilterRegex: ''");
+    }
+
+    /// A runner whose clang-tidy exports one fix, to `file`, and finds
+    /// nothing to show.
+    struct Exports {
+        file: String,
+    }
+
+    impl Runner for Exports {
+        fn run(
+            &self,
+            _program: &Path,
+            args: &[&OsStr],
+            _env: &Env,
+        ) -> std::io::Result<cuno_toolchain::Output> {
+            for arg in args {
+                if let Some(out) = arg.to_string_lossy().strip_prefix("--export-fixes=") {
+                    std::fs::write(
+                        out,
+                        format!(
+                            "Diagnostics:
+  - Replacements:
+      - FilePath: '{}'
+",
+                            self.file
+                        ),
+                    )?;
+                }
+            }
+            Ok(cuno_toolchain::Output {
+                success: true,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    /// Under `--fix`, a source whose fix would change a file cuno may not
+    /// write is left unfixed, and the reason given is the file's own: a
+    /// link in the package is named as a link, a file outside it as not the
+    /// package's (`commands.md`, "`cuno lint`").
+    ///
+    /// Mutation: ask only whether the file is the package's, or drop the
+    /// reason; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_fix_that_would_change_a_link_or_another_s_file_is_not_made() {
+        let root = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = root.path().join("inc");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        let source = root.path().join("a.cpp");
+        std::fs::write(&source, "").unwrap();
+        let env = Env::from_pairs([], cuno_core::NameCase::Insensitive);
+        let tool = ClangTidy {
+            program: Path::new("clang-tidy"),
+            config: Path::new("c"),
+            root: root.path(),
+            env: &env,
+            jobs: 1,
+            fix: true,
+            scratch: scratch.path(),
+        };
+        let ours = |p: &Path| p.starts_with(root.path());
+        let fix = |file: &Path| {
+            super::lint(
+                std::slice::from_ref(&source),
+                &tool,
+                &ours,
+                &Exports {
+                    file: file.display().to_string(),
+                },
+            )
+            .not_fixed
+        };
+        assert_eq!(
+            fix(&link),
+            [(
+                source.clone(),
+                link.clone(),
+                "which is a link cuno does not write through".to_owned()
+            )]
+        );
+        let outside = tempfile::tempdir().unwrap();
+        let theirs = outside.path().join("v.h");
+        std::fs::write(&theirs, "").unwrap();
+        assert_eq!(
+            fix(&theirs),
+            [(
+                source.clone(),
+                theirs.clone(),
+                "which is not the package's".to_owned()
+            )]
+        );
+        std::fs::remove_dir(&link).unwrap();
     }
 }

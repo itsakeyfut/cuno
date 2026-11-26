@@ -192,9 +192,9 @@ pub fn lint(
     let linted = linted?;
 
     shell.raw(&linted.shown);
-    for (source, target) in &linted.not_fixed {
+    for (source, target, which) in &linted.not_fixed {
         shell.warning(format!(
-            "`{}` is not fixed: a fix would change `{}`, which is not the package's",
+            "`{}` is not fixed: a fix would change `{}`, {which}",
             relative(root, source),
             cuno_core::paths::lexical(&root.join(target)).display()
         ));
