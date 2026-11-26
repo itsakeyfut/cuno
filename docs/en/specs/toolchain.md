@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 5488f66062fb8d1806686718f09854670ec8cb9b -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 8d40a122311686e86d3829a3bd93a0a880c2980c -->
 
 # Toolchain
 
@@ -31,7 +31,8 @@ All three major families are supported.
 
 - OS: Windows 11
 - Compilers: **MSVC** and **Clang (including clang-cl)**
-- GCC is added right after MVP.
+- GCC is added right after MVP, starting with MinGW-w64 on Windows (target `x86_64-w64-mingw32`). MinGW does not use the MSVC toolset and runs on its own runtime, so it works without Visual Studio.
+  - Rationale: cuno itself stays on Windows and only the set of compilers grows. GCC on Linux is handled in M8, where cuno itself runs on Linux.
 
 ## Language standards
 
@@ -127,7 +128,7 @@ A compiler must accept a C++20 specification.
 ### Clang on Windows runs in MSVC-compatible mode
 
 - For both `clang` / `clang-cl`, the target is `x86_64-pc-windows-msvc` (same ABI as MSVC). Libraries built with MSVC can be mixed and linked.
-- MinGW-based Clang is out of scope (handled when GCC / MinGW is supported).
+- MinGW-based Clang is out of scope.
 
 ### Linker
 
@@ -177,6 +178,17 @@ A compiler must accept a C++20 specification.
   - Rationale: silently using another tool in place of the one written would build or lint with a tool other than the one the user named and report success.
 - A tool not being found is not itself an error in detection. Whether it is needed is decided by each command that uses it (`cuno doctor`, `cuno fmt` / `cuno lint`, the build commands).
 
+### MinGW (GCC)
+
+- GCC (`gcc` and `g++`) is looked for in the following order, and every one found is recorded.
+  1. The path written in `[toolchain.paths] gcc` ([manifest.md](manifest.md))
+  2. Each directory on `PATH` (absolute ones only, as for LLVM)
+  3. On Windows, the standard MSYS2 locations (`C:\msys64\ucrt64\bin`, then `C:\msys64\mingw64\bin`)
+  - Rationale: installing MSYS2 is enough to use it, without setting `PATH`. This is the same idea as searching the location of the official LLVM installer.
+- The same file found from several places counts as one. When several are found, which one is used is decided by "Selection", as for LLVM: among those that run, are not pre-releases and target MinGW-w64 (`*-w64-mingw32`), the newest that satisfies the version conditions.
+- `g++` is the one in the same directory as the `gcc` used. There is no separate setting for where `g++` is.
+- When `[toolchain.paths] gcc` is written, only that file is used, as for LLVM, and if it does not meet the conditions it is an error (exit code 3).
+
 ## Selection
 
 Precedence (higher wins):
@@ -223,5 +235,4 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 
 ## Open questions
 
-- The search order for detecting other compilers such as GCC (Visual Studio and LLVM are settled above)
 - List of supported targets, and how to detect each target's tools

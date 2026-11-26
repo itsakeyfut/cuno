@@ -42,7 +42,8 @@ pub fn detect(
     runner: &dyn Runner,
 ) -> Detected {
     let explicit = settings.map(Settings::llvm_paths).unwrap_or_default();
-    prepare::detect(env, host, &explicit, runner)
+    let gcc = settings.and_then(Settings::gcc_path);
+    prepare::detect(env, host, &explicit, gcc, runner)
 }
 
 /// What the standard library probe compiles: the build's settings for a

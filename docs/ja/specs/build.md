@@ -137,6 +137,8 @@
 - `debug-info` に `/Zi` を使わないのは、並列ビルドで PDB への書き込みが競合し、sccache でキャッシュできないため。`clang -g` は CodeView を出し、`/DEBUG` 相当でリンクする。
 - `opt-level = 1` は MSVC に同等の段階がないため `/O2`。
 - デバッグ版の C ランタイム（`/MDd`）は既定にしない。ビルド済みの依存と混ぜるとリンクエラーになるため（Rust と同じ方針）。
+- MinGW の GCC では、`runtime = "dynamic"` でも GCC のランタイム（`libgcc`、`libstdc++`）は静的にリンクする（`-static-libgcc -static-libstdc++`）。C のランタイム（UCRT）は動的のまま。`runtime = "static"` は `-static`。
+  - 理由: GCC のランタイムの DLL（`libstdc++-6.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
 
 ## カスタムビルド処理（3 層構造）
 
