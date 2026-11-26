@@ -109,6 +109,9 @@ pub enum NotBuilt {
     NotListed,
     /// A link to a directory, which is not read.
     DirectoryLink,
+    /// A directory under `src/` or `tests/` with its own `cuno.toml`,
+    /// another package, which is not read.
+    AnotherPackage,
 }
 
 impl fmt::Display for SourceWarning {
@@ -122,6 +125,11 @@ impl fmt::Display for SourceWarning {
             NotBuilt::DirectoryLink => {
                 write!(f, "{} is not read: it is a link to a directory", self.path)
             }
+            NotBuilt::AnotherPackage => write!(
+                f,
+                "{} is not built: it has its own cuno.toml (another package)",
+                self.path
+            ),
         }
     }
 }
@@ -506,10 +514,9 @@ struct Walk<'a> {
 /// What a [`Walk`] collects.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Keep {
-    /// The sources a build compiles, everywhere under the directory.
+    /// The sources a build compiles.
     Sources,
-    /// The package's code, headers included, leaving out another package's
-    /// directory.
+    /// The package's code, headers included.
     Code,
 }
 
@@ -566,12 +573,23 @@ impl Walk<'_> {
                     why: NotBuilt::DirectoryLink,
                 });
             } else if kind.is_dir() {
-                // A directory with its own cuno.toml is another package.
-                let other_package = match self.keep {
-                    Keep::Sources => false,
-                    Keep::Code => path.join("cuno.toml").is_file(),
-                };
-                if !other_package {
+                // A directory with its own cuno.toml is another package, for
+                // the build and for fmt and lint alike: built by one and not
+                // the others, its code would ship unformatted and unanalysed
+                // while both report success (`docs/en/specs/project-layout.md`,
+                // "Source collection and linking").
+                if path.join("cuno.toml").is_file() {
+                    let place = Place::of(&path, self.case);
+                    if [SRC_DIR, TESTS_DIR]
+                        .iter()
+                        .any(|d| place.within(&Place::of(&self.root.join(d), self.case)))
+                    {
+                        self.warnings.push(SourceWarning {
+                            path: shown(self.root, &path),
+                            why: NotBuilt::AnotherPackage,
+                        });
+                    }
+                } else {
                     self.dir(&path)?;
                 }
             } else if path.is_file() && self.keeps(&path) {
@@ -1437,6 +1455,71 @@ path = \"src/main.cpp\"
             [SourceWarning {
                 path: "tests/shared".to_owned(),
                 why: NotBuilt::DirectoryLink,
+            }]
+        );
+    }
+
+    /// A directory under `src/` or `tests/` with its own `cuno.toml` is
+    /// another package: the build does not compile it, and says so once
+    /// for each (`project-layout.md`, "Source collection and linking").
+    ///
+    /// Mutation: walk into such a directory when classifying, or drop the
+    /// warning; this test fails.
+    #[test]
+    fn a_nested_package_is_not_built_and_is_warned_about() {
+        let (_d, root, m) = project(
+            "c++",
+            "",
+            &[
+                "src/main.cpp",
+                "src/sub/cuno.toml",
+                "src/sub/x.cpp",
+                "tests/t.cpp",
+                "tests/pkg/cuno.toml",
+                "tests/pkg/h.cpp",
+            ],
+        );
+        let s = classify(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        assert!(body(&root, &s).is_empty(), "{:?}", body(&root, &s));
+        assert!(s.test_helpers.is_empty(), "{:?}", s.test_helpers);
+        let warned = |path: &str| SourceWarning {
+            path: path.to_owned(),
+            why: NotBuilt::AnotherPackage,
+        };
+        assert_eq!(s.warnings, [warned("src/sub"), warned("tests/pkg")]);
+        assert_eq!(
+            s.warnings[0].to_string(),
+            "src/sub is not built: it has its own cuno.toml (another package)"
+        );
+    }
+
+    /// fmt and lint leave out the same nested package the build does, with
+    /// the same warning; one outside `src/` and `tests/` is left out quietly,
+    /// as before.
+    ///
+    /// Mutation: warn only when classifying, or warn under `examples/` too;
+    /// this test fails.
+    #[test]
+    fn the_code_leaves_out_a_nested_package_with_the_build_s_warning() {
+        let (_d, root, m) = project(
+            "c++",
+            "",
+            &[
+                "src/main.cpp",
+                "src/sub/cuno.toml",
+                "src/sub/x.cpp",
+                "examples/other/cuno.toml",
+                "examples/other/src/main.cpp",
+            ],
+        );
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["src/main.cpp"]);
+        assert_eq!(
+            code.warnings,
+            [SourceWarning {
+                path: "src/sub".to_owned(),
+                why: NotBuilt::AnotherPackage,
             }]
         );
     }

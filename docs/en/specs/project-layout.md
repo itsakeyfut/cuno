@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob 7de1c1e0adc627b27199dac97996d3fdfbf0e719 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 552fb848e6f991c571877fe5e7e10e8c6183cbd4 -->
 
 # Project Kinds and Layout
 
@@ -48,7 +48,7 @@ sources = ["Private"]
 
 ### Target files
 
-- All sources under `src/` are compiled.
+- All sources under `src/` are compiled, except that a directory with its own `cuno.toml` (another package) is not read (see below).
 - The language is determined by file extension.
   - `.c`: compiled as C.
   - `.cpp` / `.cc` / `.cxx`: compiled as C++.
@@ -83,6 +83,8 @@ sources = ["Private"]
   - An object file's place is decided by where the source's directory leads and where the source file's name sits. A source file that is itself a link pointing outside the project is still compiled as a source in `src/`. A `[[bin]]` `path` naming a link to a file outside the project, on the other hand, is an error, since the entry file is outside the project.
 - A link to a directory inside `src/` or `tests/` (a symbolic link or a junction) is not read, and cuno warns about it.
   - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
+- A directory inside `src/` or `tests/` with its own `cuno.toml` is another package: cuno does not read it and prints `warning: src/sub is not built: it has its own cuno.toml (another package)`. The build, `cuno fmt` and `cuno lint` all treat it the same way ([Where the package's code lives](#where-the-packages-code-lives)).
+  - Rationale: if only the build linked the sources in it while `cuno fmt` / `cuno lint` skipped it as another package, code that is neither formatted nor analyzed would end up in the executable while both report success.
 
 ### Where the package's code lives
 
