@@ -45,7 +45,9 @@ default-members = [".", "crates/*"]
 resolver = "3"
 
 [workspace.package]
-# Raising it, with CHANGELOG.md's section for it, is what releases cuno
+# Between releases the next version with -dev, which is never released.
+# Removing -dev here and in every cuno-* requirement below, with
+# CHANGELOG.md's section for it, is what releases cuno
 # (.github/workflows/release.yml; docs/en/specs/distribution.md).
 version = "0.2.0-dev"
 edition = "2024"

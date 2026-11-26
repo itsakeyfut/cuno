@@ -19,6 +19,9 @@ fi
 
 IFS=. read -r a1 a2 a3 <<< "$base"
 IFS=. read -r b1 b2 b3 <<< "$last"
+# Base 10 always: a field such as 08 is not octal.
+a1=$((10#$a1)) a2=$((10#$a2)) a3=$((10#$a3))
+b1=$((10#$b1)) b2=$((10#$b2)) b3=$((10#$b3))
 if (( a1 > b1 || (a1 == b1 && (a2 > b2 || (a2 == b2 && a3 > b3))) )); then
     exit 0
 fi

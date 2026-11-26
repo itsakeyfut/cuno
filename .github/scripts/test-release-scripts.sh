@@ -49,6 +49,7 @@ expect "a -dev of the released version fails" "1" "$(dev 0.1.0-dev 0.1.0)"
 expect "a -dev below the last release fails" "1" "$(dev 0.1.5-dev 0.2.0)"
 expect "versions compare as numbers" "0" "$(dev 0.10.0-dev 0.9.0)"
 expect "another pre-release is not main's form" "1" "$(dev 0.2.0-rc.1 0.1.0)"
+expect "a field with a leading zero is read in base 10" "0" "$(dev 0.9.0-dev 0.08.0)"
 
 last() {
     printf '%s\n' "$@" | bash "$here/last-release.sh"

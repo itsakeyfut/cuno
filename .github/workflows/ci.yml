@@ -100,7 +100,13 @@ jobs:
         run: |
           version="$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")"
           last="$(git tag --list 'v*' | bash .github/scripts/last-release.sh)"
-          echo "$version against ${last:-no release}"
+          # cuno has been released, so no release tag means none was
+          # fetched, not that there is none: failing beats passing unchecked.
+          if [ -z "$last" ]; then
+            echo "no v* release tag was fetched; the check needs fetch-depth: 0" >&2
+            exit 1
+          fi
+          echo "$version against $last"
           bash .github/scripts/dev-version.sh "$version" "$last"
 
   # Every crate packaged as crates.io would receive it, and built from that

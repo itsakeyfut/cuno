@@ -2,7 +2,8 @@
 # (docs/en/specs/distribution.md, "Installation"):
 #
 # 1. `check-version` compares the version with the last `v*` tag: unchanged,
-#    nothing happens; lower, the run fails (a downgrade publishes nothing).
+#    or `x.y.z-dev` (main between releases), nothing happens; lower, the run
+#    fails (a downgrade publishes nothing).
 # 2. `binary` builds the Windows x64 binary and packs the release zip and its
 #    SHA-256, before anything is published, so a binary that does not build
 #    publishes nothing.

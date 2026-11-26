@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob d0bf68e30b4cbd919e3547fd0caa9fe78634ed07 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob 54ddfc710562588bacf6496dfb2b8faf0c8f7f71 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -54,7 +54,7 @@ Supported in the order Windows x64 → Linux x64 → macOS (arm64).
 - cuno itself uses semantic versioning.
 - Only versions of the form `x.y.z` are released. Pre-releases (such as `0.2.0-rc.1`) and versions with build metadata are not. `0.0.0` means "not released yet" and is never released.
   - Reason: tools that compare versions disagree on where a pre-release sorts (`0.2.0-rc.1` comes before `0.2.0`). Keeping to the one form that every tool orders alike means a release is never misjudged.
-- Between releases, `main` carries the next version to be released with `-dev` appended (`0.2.0-dev` after `0.1.0` is released). The pull request that releases removes `-dev`, and right after a release a pull request raises it to the next version's `-dev`.
+- Between releases, `main` carries the next version to be released with `-dev` appended (`0.2.0-dev` after `0.1.0` is released). The pull request that releases removes `-dev` (from the workspace version and from every requirement on a cuno crate), and right after a release a pull request raises it to the next version's `-dev`.
   - Reason: when the contents change under the same name and version as a published release, anything that resolves that version (such as `cargo package`'s verification) cannot tell whether it gets the published one or `main`'s. A `cuno --version` built from `main` could not be told from the published one either.
 - The release check treats `x.y.z-dev` as "not released". A pre-release other than `-dev`, or anything that is neither `x.y.z` nor `x.y.z-dev`, is an error.
 - CI checks that the `x.y.z` part of `main`'s version is greater than the last released version. When it is equal or lower, it fails and says to raise it to the next version's `-dev`.
