@@ -114,6 +114,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
+            # Never restored: the crates unpacked there for verifying are
+            # named by version only, so a cached copy of an internal crate
+            # whose API changed without a Cargo.lock change would be built
+            # against instead of the new one.
+            !target/package
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo package --workspace
 
