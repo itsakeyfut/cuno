@@ -88,37 +88,78 @@ fn instance_of(table: &str, pattern: &str) -> bool {
     })
 }
 
-/// Every command the guide names is one `cuno --help` lists or one the
-/// roadmap plans, so the guide never sends a reader to a command that is
-/// neither there nor coming.
+/// Each command the roadmap plans under a milestone heading (`## M6: …`),
+/// with that milestone (`M6`). A command named only outside a milestone,
+/// as in "Future considerations", is not planned.
+fn commands_planned() -> Vec<(String, String)> {
+    let mut planned = Vec::new();
+    let mut milestone: Option<String> = None;
+    for line in read("docs/en/roadmap.md").lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            milestone = heading
+                .split(':')
+                .next()
+                .filter(|m| m.starts_with('M') && m[1..].chars().all(|c| c.is_ascii_digit()))
+                .map(str::to_owned);
+        } else if let Some(m) = &milestone {
+            for (_, name) in commands_named(line) {
+                planned.push((name, m.clone()));
+            }
+        }
+    }
+    planned
+}
+
+/// Whether `line` names `milestone` (`M1`), and not a longer one (`M10`).
+fn names_milestone(line: &str, milestone: &str) -> bool {
+    line.match_indices(milestone).any(|(i, m)| {
+        let after = line[i + m.len()..].chars().next();
+        !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+/// Every command the guide names is one `cuno --help` lists, or one the
+/// roadmap plans under a milestone and that the guide's line gives the
+/// same milestone, so the guide never sends a reader to a command that is
+/// neither there nor coming, nor promises it in the wrong milestone.
 ///
-/// Mutation: write `` `cuno frobnicate` `` in the guide; this test fails.
+/// Mutation: write `` `cuno frobnicate` ``, `` `cuno doc` `` (future, no
+/// milestone) or `` `cuno init` `` with `(M7)` in the guide; this test
+/// fails.
 #[test]
 fn every_command_in_the_guide_exists_or_is_planned() {
     let today = commands_today();
-    let planned: Vec<String> = commands_named(&read("docs/en/roadmap.md"))
+    let planned = commands_planned();
+    let text = guide();
+    let lines: Vec<&str> = text.lines().collect();
+    let wrong: Vec<String> = commands_named(&text)
         .into_iter()
-        .map(|(_, name)| name)
-        .collect();
-    let unknown: Vec<String> = commands_named(&guide())
-        .into_iter()
-        .filter(|(_, name)| !today.contains(name) && !planned.contains(name))
+        .filter(|(_, name)| !today.contains(name))
+        .filter(|(line, name)| {
+            !planned
+                .iter()
+                .any(|(p, m)| p == name && names_milestone(lines[line - 1], m))
+        })
         .map(|(line, name)| format!("line {line}: cuno {name}"))
         .collect();
     assert!(
-        unknown.is_empty(),
-        "the guide names commands cuno neither has nor plans:\n{}",
-        unknown.join("\n")
+        wrong.is_empty(),
+        "the guide names commands cuno neither has nor plans in the milestone given:
+{}",
+        wrong.join(
+            "
+"
+        )
     );
 }
 
-/// Every command cuno has appears in the guide, so a new command fails
-/// here until the guide has its row.
+/// Every command cuno has is named in the guide, so a new command fails
+/// here until the guide mentions it.
 ///
 /// Mutation: remove every mention of `cuno doctor` from the guide; this
 /// test fails.
 #[test]
-fn every_command_has_a_row_in_the_guide() {
+fn every_command_is_named_in_the_guide() {
     let named: Vec<String> = commands_named(&guide())
         .into_iter()
         .map(|(_, name)| name)
