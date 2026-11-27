@@ -246,3 +246,102 @@ fn the_whole_flow_works_with_gcc() {
         );
     }
 }
+
+/// A package `cuno new` makes under a directory that is not ASCII, with a
+/// source and a test file named so too, builds, runs and tests with GCC,
+/// also when the temporary directory is not ASCII (a Japanese user name),
+/// and a second build runs nothing. What cannot be named in ASCII, LTO with
+/// such a temporary directory or a target directory outside the project,
+/// is refused before compiling (`docs/en/specs/toolchain.md`, "MinGW
+/// (GCC)").
+///
+/// Mutation: drop `-pipe`, name GCC's objects or executable absolutely,
+/// leave the output names unencoded, or skip the checks; this test fails.
+#[test]
+fn paths_that_are_not_ascii_build_or_are_refused() {
+    if require_driver(Compiler::Gcc, Language::C).is_none() {
+        return;
+    }
+    let parent = Project::new();
+    let japanese = parent.path().join("日本語");
+    std::fs::create_dir(&japanese).unwrap();
+    let temp = parent.path().join("一時");
+    std::fs::create_dir(&temp).unwrap();
+    let cuno = |dir: &Path, args: &[&str], vars: &[(&str, &Path)]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(args).current_dir(dir);
+        for (name, value) in vars {
+            cmd.env(name, value);
+        }
+        parent.run_command(cmd)
+    };
+    let made = cuno(
+        &japanese,
+        &["new", "app", "--lang", "c", "--vcs", "none"],
+        &[],
+    );
+    assert_eq!(made.code, Some(0), "{}", made.stderr);
+    let app = japanese.join("app");
+    std::fs::write(
+        app.join("src/漢字.c"),
+        "int twice(int x) { return 2 * x; }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(app.join("tests")).unwrap();
+    std::fs::write(
+        app.join("tests/試験.c"),
+        "#include <cuno/test.h>\nint twice(int x);\ncuno_test(doubles) { cuno_check_eq(twice(2), 4); }\n",
+    )
+    .unwrap();
+    let temps: &[(&str, &Path)] = &[("TMP", &temp), ("TEMP", &temp)];
+    // Older than a build's start by the margin the records keep, so the
+    // first build records them (build.md, "Deciding what changed").
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    for args in [
+        &["build", "--compiler", "gcc"][..],
+        &["run", "--compiler", "gcc"],
+        &["test", "--compiler", "gcc"],
+    ] {
+        let run = cuno(&app, args, temps);
+        assert_eq!(run.code, Some(0), "{args:?}: {}", run.stderr);
+    }
+    let again = cuno(&app, &["-v", "build", "--compiler", "gcc"], temps);
+    assert_eq!(again.code, Some(0), "{}", again.stderr);
+    assert!(
+        !again.stderr.contains("Running"),
+        "built again:\n{}",
+        again.stderr
+    );
+
+    std::fs::write(
+        app.join("cuno.toml"),
+        std::fs::read_to_string(app.join("cuno.toml")).unwrap()
+            + "\n[profile.release]\nlto = true\n",
+    )
+    .unwrap();
+    let lto = cuno(&app, &["build", "--release", "--compiler", "gcc"], temps);
+    assert_eq!(lto.code, Some(3), "{}", lto.stderr);
+    assert!(
+        lto.stderr.contains("the temporary directory"),
+        "{}",
+        lto.stderr
+    );
+    let outside = parent.path().join("出力");
+    let target = cuno(
+        &app,
+        &[
+            "build",
+            "--compiler",
+            "gcc",
+            "--target-dir",
+            outside.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert_eq!(target.code, Some(3), "{}", target.stderr);
+    assert!(
+        target.stderr.contains("the target directory"),
+        "{}",
+        target.stderr
+    );
+}

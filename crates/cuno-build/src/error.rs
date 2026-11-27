@@ -91,6 +91,26 @@ pub enum BuildError {
         /// Whether the first failure was a link.
         link: bool,
     },
+    /// A path a compiler's tools would be given that is not ASCII, which
+    /// they cannot open (`toolchain.md`, "MinGW (GCC)").
+    NotAscii {
+        /// Which path.
+        what: NotAscii,
+        /// The path.
+        path: PathBuf,
+    },
+}
+
+/// Which path a compiler's tools could not open, for
+/// [`BuildError::NotAscii`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotAscii {
+    /// The target directory, outside the project.
+    Target,
+    /// A `lib-dirs` directory.
+    LibDir,
+    /// The temporary directory, which link-time optimisation writes to.
+    Temp,
 }
 
 impl fmt::Display for BuildError {
@@ -140,6 +160,23 @@ impl fmt::Display for BuildError {
                 let what = if *link { "link" } else { "compile" };
                 write!(f, "could not {what} `{package}`")
             }
+            BuildError::NotAscii { what, path } => {
+                let path = path.display();
+                match what {
+                    NotAscii::Target => write!(
+                        f,
+                        "the target directory {path} is not ASCII, which MinGW's assembler and linker cannot open"
+                    ),
+                    NotAscii::LibDir => write!(
+                        f,
+                        "`lib-dirs` names {path}, which is not ASCII, which MinGW's linker cannot open"
+                    ),
+                    NotAscii::Temp => write!(
+                        f,
+                        "the temporary directory {path} is not ASCII, which GCC's link-time optimisation cannot use"
+                    ),
+                }
+            }
         }
     }
 }
@@ -159,7 +196,8 @@ impl CunoError for BuildError {
             | BuildError::CodeDirIsPackage { .. }
             | BuildError::DuplicateName { .. }
             | BuildError::DuplicateTestName { .. }
-            | BuildError::Unreadable { .. } => ExitClass::Setup,
+            | BuildError::Unreadable { .. }
+            | BuildError::NotAscii { .. } => ExitClass::Setup,
         }
     }
 
@@ -193,7 +231,16 @@ impl CunoError for BuildError {
             BuildError::SeveralBins { available } | BuildError::NoSuchBin { available, .. } => {
                 Some(format!("available: {available}"))
             }
+            BuildError::NotAscii { what, .. } => Some(
+                match what {
+                    NotAscii::Target => "build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)",
+                    NotAscii::LibDir => "move the libraries to a directory whose path is ASCII",
+                    NotAscii::Temp => "set TMP and TEMP to a directory whose path is ASCII, or set lto = false",
+                }
+                .to_owned(),
+            ),
             BuildError::Unreadable { .. } | BuildError::Failed { .. } => None,
+
         }
     }
 }

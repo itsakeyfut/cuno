@@ -268,6 +268,24 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     // the executables the build leaves.
     let layout = Layout::new(target_dir, profile, root, host);
     let layout = if test { layout.for_tests() } else { layout };
+    // What the compiler's tools could not open, refused before anything
+    // compiles (toolchain.md, "MinGW (GCC)"). `lib-dirs` and `lto` are the
+    // same for every source.
+    let link = compile(
+        Lang::Cxx,
+        Purpose {
+            test,
+            mode: Mode::Compile,
+        },
+    );
+    crate::ascii::check(
+        tool.kind,
+        &layout,
+        target_dir,
+        &link.build.lib_dirs,
+        link.profile.lto,
+        tool.env,
+    )?;
     // Chosen, and named, before anything is built, so a wrong `--bin` or
     // two test executables of one name cost nothing.
     let (mode, exe) = match goal {

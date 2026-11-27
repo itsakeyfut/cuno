@@ -122,6 +122,17 @@ impl CompilerKind {
         }
     }
 
+    /// Whether the tools it runs open paths in the ANSI code page, so that
+    /// what they create or read must be named in ASCII: MinGW's assembler
+    /// and linker do (`docs/en/specs/toolchain.md`, "MinGW (GCC)"); cl,
+    /// the Clangs and lld open them as Unicode.
+    pub fn needs_ascii_paths(self) -> bool {
+        match self {
+            CompilerKind::Gcc => true,
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => false,
+        }
+    }
+
     /// The driver that links objects compiled by `program`, when any is C++
     /// (`cxx`): GCC's `gcc` adds no C++ standard library, so C++ links with
     /// the `g++` beside it (`docs/en/specs/build.md`, "Linking"); every other
@@ -325,6 +336,18 @@ mod tests {
                 Path::new("x/cc.exe")
             );
         }
+    }
+
+    /// Only GCC's tools open paths in the ANSI code page.
+    ///
+    /// Mutation: change the answer for any compiler; this test fails.
+    #[test]
+    fn only_gcc_needs_ascii_paths() {
+        let ascii: Vec<bool> = CompilerKind::ALL
+            .iter()
+            .map(|k| k.needs_ascii_paths())
+            .collect();
+        assert_eq!(ascii, [false, false, false, true]);
     }
 
     /// Mutation: say any compiler but GCC does not use the MSVC standard
