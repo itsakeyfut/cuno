@@ -256,7 +256,9 @@ fn the_whole_flow_works_with_gcc() {
 /// (GCC)").
 ///
 /// Mutation: drop `-pipe`, name GCC's objects or executable absolutely,
-/// leave the output names unencoded, or skip the checks; this test fails.
+/// leave the output names unencoded, skip the checks, refuse a check for
+/// LTO's temporary directory, or let an executable named in another script
+/// through; this test fails.
 #[test]
 fn paths_that_are_not_ascii_build_or_are_refused() {
     if require_driver(Compiler::Gcc, Language::C).is_none() {
@@ -343,5 +345,19 @@ fn paths_that_are_not_ascii_build_or_are_refused() {
         target.stderr.contains("the target directory"),
         "{}",
         target.stderr
+    );
+    // A check links nothing, so LTO's temporary directory does not stop it.
+    let check = cuno(&app, &["check", "--release", "--compiler", "gcc"], temps);
+    assert_eq!(check.code, Some(0), "{}", check.stderr);
+    // An executable named after a file in `src/bin/` that is not ASCII
+    // cannot be written by the linker, and is refused.
+    std::fs::create_dir_all(app.join("src/bin")).unwrap();
+    std::fs::write(app.join("src/bin/道具.c"), "int main(void) { return 0; }\n").unwrap();
+    let bin = cuno(&app, &["build", "--compiler", "gcc"], temps);
+    assert_eq!(bin.code, Some(3), "{}", bin.stderr);
+    assert!(
+        bin.stderr.contains("names an executable that is not ASCII"),
+        "{}",
+        bin.stderr
     );
 }

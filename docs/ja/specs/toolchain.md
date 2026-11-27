@@ -239,9 +239,11 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
   - GCC に渡すパスのうち、`as` と `ld` が開くもの（オブジェクト、実行ファイル、`lib-dirs`）は、プロジェクトの中にあれば、プロジェクトのルートからの相対パスで書く（GCC はルートで実行する）。プロジェクトのディレクトリ名が ASCII でなくても、ビルドできるようにするため。
   - 出力先の中のファイル名は、ASCII でない文字を書き換える（[build.md](build.md#出力先ディレクトリ)）。ソースやテストの名前が ASCII でなくても、ビルドできるようにするため。
   - それでも `as` や `ld` に ASCII でないパスを渡すことになる場合は、コンパイルの前にエラー（終了コード 3）にし、そのパスを示す。
-    - 出力先がプロジェクトの外にあり、そのパスが ASCII でない: `error: the target directory <パス> is not ASCII, which MinGW's assembler and linker cannot open`、`help: build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)`。
-    - `lib-dirs` のディレクトリのパスが、プロジェクトのルートからの相対で書いても ASCII でない: `` error: `lib-dirs` names <パス>, which is not ASCII, which MinGW's linker cannot open ``、`help: move the libraries to a directory whose path is ASCII`。
-    - `lto = true` で、GCC が使う一時ディレクトリ（`TMP`、なければ `TEMP`）が ASCII でない（LTO のリンクは一時ディレクトリにファイルを書いて `ld` に渡し、`-pipe` では避けられない）: `error: the temporary directory <パス> is not ASCII, which GCC's link-time optimisation cannot use`、`help: set TMP and TEMP to a directory whose path is ASCII, or set lto = false`。
+    - 出力先のパスが、プロジェクトの中ならルートからの相対で書いても、外ならそのままで、ASCII でない: `error: the target directory <パス> is not ASCII, which MinGW's assembler and linker cannot open`、`help: build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)`。
+    - `lib-dirs` のディレクトリのパスが、プロジェクトのルートからの相対で書いても ASCII でない: `` error: `lib-dirs` names <パス>, which is not ASCII, which MinGW's linker cannot open ``、`help: move the libraries to a directory whose path is ASCII`。リンクするとき（`cuno check` 以外）だけ。
+    - `src/bin/` のファイル名から付く実行ファイルの名前が ASCII でない: `error: <パス> names an executable that is not ASCII, which MinGW's linker cannot write`、`help: rename the file to an ASCII name, or list it in [[bin]] with an ASCII name`。`<パス>` はそのファイル。プログラムをリンクするとき（`cuno build`、`cuno run`）だけ。実行ファイルの名前は利用者が使うものなので、書き換えはしない。
+    - `lto = true` でリンクするとき、GCC が使う一時ディレクトリ（Windows が決めるとおり、`TMP`、なければ `TEMP`、なければ `USERPROFILE`）が ASCII でない（LTO のリンクは一時ディレクトリにファイルを書いて `ld` に渡し、`-pipe` では避けられない）: `error: the temporary directory <パス> is not ASCII, which GCC's link-time optimisation cannot use`、`help: set TMP and TEMP to a directory whose path is ASCII, or set lto = false`。
+  - 避けられないもの: リンクのコマンドラインがとても長い（3 万文字ほど）と、GCC は引数を一時ディレクトリのファイルに書いて `ld` に渡す。一時ディレクトリが ASCII でないと、このリンクは `ld` の、文字化けしたパスのエラーで失敗する。前もって確かめる確実な方法がないため、cuno は止めない。
   - 理由: 黙って失敗させると、GCC のアセンブラの、文字化けしたパスのエラーだけが出る。ソースの名前が ASCII でない場合は、`as` が文字化けした名前でオブジェクトを書き、cuno が記録したオブジェクトがいつまでもないため、何も変えなくても毎回コンパイルとリンクをし直す。
 - GCC は MSVC のツールセットを使わないため、GCC を選んでも Visual Studio は要らない。MSVC の環境（`INCLUDE`、`LIB`、`LIBPATH`）も組み立てない。
 - `[toolchain.paths] gcc` に書いた場合は、LLVM と同じく、そのファイルだけを使い、条件を満たさなければエラー（終了コード 3）にする。

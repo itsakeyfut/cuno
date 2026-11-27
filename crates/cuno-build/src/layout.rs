@@ -17,7 +17,9 @@ use crate::sources::SOURCE_DIRS;
 /// can open it, and no two names become one (`docs/en/specs/build.md`,
 /// "Output directory"). An ASCII name without `%` is returned as it is.
 fn ascii_name(name: &std::ffi::OsStr) -> OsString {
-    let text = name.to_string_lossy();
+    let Some(text) = name.to_str() else {
+        return unpaired_name(name);
+    };
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         if c.is_ascii() && c != '%' {
@@ -27,6 +29,39 @@ fn ascii_name(name: &std::ffi::OsStr) -> OsString {
             for b in c.encode_utf8(&mut bytes).bytes() {
                 out.push_str(&format!("%{b:02X}"));
             }
+        }
+    }
+    out.into()
+}
+
+/// [`ascii_name`] for a name that is not Unicode (on Windows, one holding
+/// an unpaired surrogate): each UTF-16 unit that is not ASCII, and `%`,
+/// written `%u` and four hex digits, which no Unicode name's encoding
+/// holds, so two such names never become one, nor one another's.
+#[cfg(windows)]
+fn unpaired_name(name: &std::ffi::OsStr) -> OsString {
+    use std::os::windows::ffi::OsStrExt;
+    let mut out = String::new();
+    for unit in name.encode_wide() {
+        match u8::try_from(unit) {
+            Ok(b) if b.is_ascii() && b != b'%' => out.push(char::from(b)),
+            _ => out.push_str(&format!("%u{unit:04X}")),
+        }
+    }
+    out.into()
+}
+
+/// [`ascii_name`] for a name that is not UTF-8: each byte that is not
+/// ASCII, and `%`, written `%u00` and two hex digits.
+#[cfg(not(windows))]
+fn unpaired_name(name: &std::ffi::OsStr) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::new();
+    for &b in name.as_bytes() {
+        if b.is_ascii() && b != b'%' {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%u00{b:02X}"));
         }
     }
     out.into()
@@ -336,6 +371,20 @@ mod tests {
             test.test_exe("app", "日本"),
             test.test_dir().join("app/bin/%E6%97%A5%E6%9C%AC.exe")
         );
+    }
+
+    /// Names that are not Unicode stay apart: each unpaired surrogate is
+    /// written as itself, never as one replacement character.
+    ///
+    /// Mutation: read such a name lossily; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn names_that_are_not_unicode_stay_apart() {
+        use std::os::windows::ffi::OsStringExt;
+        let name = |unit| OsString::from_wide(&[unit, u16::from(b'.'), u16::from(b'c')]);
+        let (a, b) = (name(0xD800), name(0xD801));
+        assert_eq!(ascii_name(&a), "%uD800.c");
+        assert_ne!(ascii_name(&a), ascii_name(&b));
     }
 
     /// A source spelled with another case than the root, or with `..`, gets

@@ -409,7 +409,6 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             kind: StepKind::Link { bin: name },
             program: p.kind.link_driver(p.program, cxx),
             args: link_args(&input, &objects, &from_root(&exe)),
-
             output: exe,
             after,
             echo: None,
@@ -751,11 +750,6 @@ mod tests {
         );
     }
 
-    /// GCC links a program with C++ in it with `g++`, one of C only with
-    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries.
-    ///
-    /// Mutation: link C++ with `gcc`, C with `g++`, or look for one name
-    /// only; this test fails.
     /// GCC is given the objects, the executable and `lib-dirs` inside the
     /// project written from its root, where the step runs, as its assembler
     /// and linker cannot open a path that is not ASCII and the root's may
@@ -833,6 +827,19 @@ mod tests {
                     );
                 }
             }
+            // Each compile names its own object as the link does.
+            for step in &g.steps {
+                if let StepKind::Compile { .. } = step.kind {
+                    let named: Vec<String> = step
+                        .args
+                        .iter()
+                        .map(|a| a.to_string_lossy().replace('\\', "/"))
+                        .collect();
+                    let output = step.output.to_string_lossy().replace('\\', "/");
+                    let absolute = named.iter().any(|a| a.ends_with(&output));
+                    assert_eq!(absolute, !relative, "{kind:?} {named:?}");
+                }
+            }
             // Outside the root, a path stays as it is; the records keep the
             // absolute paths either way.
             assert!(args.iter().any(|a| a.contains("D:/elsewhere")), "{kind:?}");
@@ -840,6 +847,11 @@ mod tests {
         }
     }
 
+    /// GCC links a program with C++ in it with `g++`, one of C only with
+    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries.
+    ///
+    /// Mutation: link C++ with `gcc`, C with `g++`, or look for one name
+    /// only; this test fails.
     #[test]
     fn gcc_links_cxx_with_g_plus_plus_and_looks_for_every_name() {
         let layout = Layout::new(

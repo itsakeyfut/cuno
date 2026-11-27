@@ -105,10 +105,13 @@ pub enum BuildError {
 /// [`BuildError::NotAscii`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotAscii {
-    /// The target directory, outside the project.
+    /// The target directory, written from the project root when inside
+    /// it.
     Target,
     /// A `lib-dirs` directory.
     LibDir,
+    /// An executable named after its entry file, the path given.
+    Bin,
     /// The temporary directory, which link-time optimisation writes to.
     Temp,
 }
@@ -170,6 +173,10 @@ impl fmt::Display for BuildError {
                     NotAscii::LibDir => write!(
                         f,
                         "`lib-dirs` names {path}, which is not ASCII, which MinGW's linker cannot open"
+                    ),
+                    NotAscii::Bin => write!(
+                        f,
+                        "{path} names an executable that is not ASCII, which MinGW's linker cannot write"
                     ),
                     NotAscii::Temp => write!(
                         f,
@@ -235,12 +242,12 @@ impl CunoError for BuildError {
                 match what {
                     NotAscii::Target => "build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)",
                     NotAscii::LibDir => "move the libraries to a directory whose path is ASCII",
+                    NotAscii::Bin => "rename the file to an ASCII name, or list it in [[bin]] with an ASCII name",
                     NotAscii::Temp => "set TMP and TEMP to a directory whose path is ASCII, or set lto = false",
                 }
                 .to_owned(),
             ),
             BuildError::Unreadable { .. } | BuildError::Failed { .. } => None,
-
         }
     }
 }
