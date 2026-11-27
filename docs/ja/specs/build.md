@@ -17,7 +17,7 @@
 ### 変更の判定
 
 - 各手順（ソース 1 つのコンパイル、実行ファイル 1 つのリンク）について、前回成功したときの次の内容を記録する。
-  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`。GCC では、すべてのプログラムにリンクするランタイムのファイル（`crt2.o`、`libmingw32.a`、`libmingwex.a`、`libgcc.a`、`libgcc_eh.a`、`libstdc++.a`、`libwinpthread.a`、`libucrt.a` のうち、GCC のライブラリのディレクトリで見つかるもの）それぞれの場所・サイズ・更新時刻も含める。MSYS2 は、これらを GCC のバージョンを変えずに更新するため）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang と GCC に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
+  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`。GCC では、すべてのプログラムにリンクするランタイムのファイル（`crt2.o`、`libmingw32.a`、`libmingwex.a`、`libgcc.a`、`libgcc_eh.a`、`libstdc++.a`、`libstdc++exp.a`、`libwinpthread.a`、`libucrt.a` のうち、GCC のライブラリのディレクトリで見つかるもの）それぞれの場所・サイズ・更新時刻も含める。MSYS2 は、これらを GCC のバージョンを変えずに更新するため）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang と GCC に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
   - 入力ごとの更新時刻・サイズ・内容のハッシュ。入力は、コンパイルならソースとそれが読んだすべてのヘッダ（上のヘッダ依存）、リンクならオブジェクトファイルと、`links` のうち `lib-dirs` で見つかるライブラリ（`lib-dirs` を順に探し、最初に見つかったライブラリのファイル。MSVC と Clang では `<lib>.lib`。GCC では、ディレクトリごとに、その `ld` が探す順 `lib<lib>.dll.a`、`<lib>.dll.a`、`lib<lib>.a`、`<lib>.lib`、`lib<lib>.lib`、`lib<lib>.dll`、`<lib>.dll` で探したもの。この順は `-Wl,--verbose` が示す）。見つからないもの（`kernel32` などシステムのライブラリ）は、上の `LIB` で識別する（GCC では、GCC に付属するライブラリなので、コンパイラのバージョンと、上のランタイムのファイルで識別する）
 - 次のビルドでは、次のどれかに当てはまる手順だけを実行する。
   - 記録がない、または出力がない
@@ -111,7 +111,7 @@
 | `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` | `-L<dir>` |
 | `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` | `-mconsole` |
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
-| `runtime` `dynamic` / `static` | なし（コンパイルで指定） | なし（コンパイルで指定） | なし（コンパイルで指定） | どちらも C では `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`、C++ では `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
+| `runtime` `dynamic` / `static` | なし（コンパイルで指定） | なし（コンパイルで指定） | なし（コンパイルで指定） | どちらも C では `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`、C++ では `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic`（GCC 14 以上は `-lstdc++` の前に `-lstdc++exp`） |
 | `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
 | `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
 | `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | ひとつずつ `-Xlinker <flag>` として最後に | ひとつずつ `-Xlinker <flag>` として最後に |
@@ -142,6 +142,7 @@
 - MinGW の GCC では、`runtime` によらず、GCC のランタイム（`libgcc`、`libstdc++`）とスレッドのライブラリ（`winpthread`）を静的にリンクし、C のランタイム（UCRT）は動的のままにする。`runtime = "static"` は `dynamic` と同じ。
   - 理由: GCC のランタイムと `winpthread` の DLL（`libstdc++-6.dll`、`libwinpthread-1.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
   - `-static-libgcc -static-libstdc++` だけでは、`libstdc++` が `libwinpthread-1.dll` を読む。そのため `winpthread` も名前を挙げて静的にする。`-lstdc++` を先に挙げるのは、`winpthread` が、`libstdc++` の使う関数を解決するため。
+  - GCC 14 以上の C++ では、`-lstdc++exp` も静的にリンクする。MinGW の libstdc++ は、C++23 の `std::print` / `std::println` が端末に書く部分を `libstdc++exp` に置いており、ないとリンクで失敗する（GCC 16.2.0 で確認）。静的ライブラリなので、使ったときだけ取り込まれる。GCC 13 以前は `<print>` がないため付けない（ないライブラリを指定すると、すべての C++ のリンクが失敗する）。
   - `static` を `dynamic` と同じにする理由: MinGW では UCRT を静的にリンクできない（`-static` でも UCRT の DLL を読む）。そのうえ `-static` は、`links` の DLL のインポートライブラリ（`libfoo.dll.a`）をリンクできなくする。
   - `links` に書いたライブラリは、静的にする対象に含めない。`ld` が上の順で見つけたものをリンクする。たとえば `links = ["pthread"]` は `libpthread.dll.a` を見つけ、作った実行ファイルは `libwinpthread-1.dll` を読む。
 - GCC の `subsystem = "windows"` は `-mwindows`。MinGW の起動コードは GUI のプログラムでも `main` を呼ぶため、入口の指定は要らない。

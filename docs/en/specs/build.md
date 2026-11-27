@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 60e51b06b9aa5fd6394f80567157c27e6d448e3c -->
+<!-- translated-from: docs/ja/specs/build.md @ blob cbcc5b5f7d4b6c77a5258370a167c8c0f55b3294 -->
 
 # Build
 
@@ -19,7 +19,7 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds; on GCC, also the location, size and modification time of each runtime file linked into every program (those of `crt2.o`, `libmingw32.a`, `libmingwex.a`, `libgcc.a`, `libgcc_eh.a`, `libstdc++.a`, `libwinpthread.a` and `libucrt.a` found in GCC's library directories), because MSYS2 updates them without changing GCC's version). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang and GCC color their output ([commands.md](commands.md#format)) are not part of it;
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds; on GCC, also the location, size and modification time of each runtime file linked into every program (those of `crt2.o`, `libmingw32.a`, `libmingwex.a`, `libgcc.a`, `libgcc_eh.a`, `libstdc++.a`, `libstdc++exp.a`, `libwinpthread.a` and `libucrt.a` found in GCC's library directories), because MSYS2 updates them without changing GCC's version). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang and GCC color their output ([commands.md](commands.md#format)) are not part of it;
   - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first library file found, searching `lib-dirs` in order: `<lib>.lib` on MSVC and Clang; on GCC, the file found by searching each directory in the order its `ld` uses, `lib<lib>.dll.a`, `<lib>.dll.a`, `lib<lib>.a`, `<lib>.lib`, `lib<lib>.lib`, `lib<lib>.dll`, `<lib>.dll`; `-Wl,--verbose` shows this order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above (on GCC, where they ship with GCC, by the compiler's version and the runtime files above).
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
@@ -113,7 +113,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 | `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` | `-L<dir>` |
 | `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` | `-mconsole` |
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
-| `runtime` `dynamic` / `static` | None (given when compiling) | None (given when compiling) | None (given when compiling) | Both: for C, `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`; for C++, `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
+| `runtime` `dynamic` / `static` | None (given when compiling) | None (given when compiling) | None (given when compiling) | Both: for C, `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`; for C++, `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` (from GCC 14, `-lstdc++exp` before `-lstdc++`) |
 | `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
 | `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
 | `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Xlinker <flag>` | Last, each as `-Xlinker <flag>` |
@@ -144,6 +144,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - With MinGW GCC, whatever `runtime` says, GCC's runtime (`libgcc`, `libstdc++`) and the threading library (`winpthread`) are linked statically, and the C runtime (UCRT) stays dynamic. `runtime = "static"` is the same as `dynamic`.
   - Rationale: the DLLs of GCC's runtime and of `winpthread` (`libstdc++-6.dll`, `libwinpthread-1.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
   - With `-static-libgcc -static-libstdc++` alone, `libstdc++` loads `libwinpthread-1.dll`, so `winpthread` is also named and made static. `-lstdc++` comes first because `winpthread` resolves functions that `libstdc++` uses.
+  - For C++ with GCC 14 or later, `-lstdc++exp` is linked statically too. MinGW's libstdc++ keeps the part of C++23's `std::print` / `std::println` that writes to a terminal in `libstdc++exp`, and the link fails without it (checked with GCC 16.2.0). Being a static library, it is pulled in only when used. GCC 13 and earlier have no `<print>`, so it is not given there (naming a library that does not exist would fail every C++ link).
   - Why `static` is the same as `dynamic`: MinGW cannot link UCRT statically (even with `-static`, the UCRT DLL is loaded). On top of that, `-static` makes the import libraries of the DLLs in `links` (`libfoo.dll.a`) impossible to link.
   - The libraries written in `links` are not among those made static. What `ld` finds in the order above is linked. For example, `links = ["pthread"]` finds `libpthread.dll.a`, and the built executable loads `libwinpthread-1.dll`.
 - GCC's `subsystem = "windows"` is `-mwindows`. MinGW's startup code calls `main` even for a GUI program, so no entry point needs to be given.
