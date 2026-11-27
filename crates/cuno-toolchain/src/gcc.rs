@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use cuno_core::Env;
 
+use crate::prepare::TOOL_OPTION_VARIABLES;
 use crate::{HostOs, Runner, ToolchainError, Version};
 
 /// The MSYS2 directories searched on Windows after `PATH`, in order: the
@@ -163,10 +164,14 @@ fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-/// `env` with the directory holding `gcc` first on `PATH`: its compiler
-/// proper loads DLLs from there, and fails silently when it is not on
-/// `PATH` (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
+/// The environment `gcc` runs in, for detection and the build alike: `env`
+/// without the variables compilers read flags and paths from
+/// ([`TOOL_OPTION_VARIABLES`]), so detection judges the GCC the build
+/// runs, and with the directory holding `gcc` first on `PATH`, since its
+/// compiler proper loads DLLs from there and fails silently when it is not
+/// on `PATH` (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
 pub fn env_for(gcc: &Path, env: &Env) -> Env {
+    let env = &env.without(&TOOL_OPTION_VARIABLES);
     let Some(dir) = gcc.parent() else {
         return env.clone();
     };
@@ -575,6 +580,58 @@ mod tests {
         let env = env_for(&gcc, &env_with_path(&[&a, &b]));
         let path: Vec<PathBuf> = std::env::split_paths(env.get("PATH").unwrap()).collect();
         assert_eq!(path, [root.path().join("gcc"), a, b]);
+    }
+
+    /// A `CPATH` holding another `_mingw.h` would make the UCRT check read
+    /// it; detection runs GCC without the variables the build leaves out,
+    /// so it judges the GCC the build runs. The runner records every
+    /// question GCC was asked while one of them reached it.
+    ///
+    /// Mutation: keep the variables in `env_for`, or ask any one question
+    /// (`--version`, `-dumpmachine`, ...) in the environment detection was
+    /// given; this test fails.
+    #[test]
+    fn detection_runs_gcc_without_the_variables_the_build_leaves_out() {
+        struct Recording {
+            told: std::cell::RefCell<Vec<String>>,
+        }
+
+        impl Runner for Recording {
+            fn run(&self, _: &Path, args: &[&OsStr], env: &Env) -> std::io::Result<Output> {
+                let asked = args[0].to_string_lossy().into_owned();
+                if TOOL_OPTION_VARIABLES.iter().any(|v| env.get(v).is_some()) {
+                    self.told.borrow_mut().push(asked.clone());
+                }
+                let text = match asked.as_str() {
+                    "-dumpfullversion" => "15.2.0",
+                    "-dumpmachine" => "x86_64-w64-mingw32",
+                    "-dM" => "#define _UCRT 1",
+                    _ => "",
+                };
+                Ok(Output {
+                    success: true,
+                    stdout: text.as_bytes().to_vec(),
+                    stderr: Vec::new(),
+                })
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let gcc = root.path().join("gcc.exe");
+        std::fs::write(&gcc, "").unwrap();
+        for name in TOOL_OPTION_VARIABLES {
+            let env = env_with_path(&[]).with(name, "C:/elsewhere".into());
+            let runner = Recording {
+                told: Default::default(),
+            };
+            let found = find_in(&env, HostOs::Windows, Some(&gcc), &[], &runner).unwrap();
+            assert!(matches!(found[0].probe, Probe::Ran { ucrt: true, .. }));
+            assert!(
+                runner.told.borrow().is_empty(),
+                "{name} reached GCC when asked {:?}",
+                runner.told.borrow()
+            );
+        }
     }
 
     /// A configured path with no file is an error naming the setting.
