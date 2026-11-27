@@ -862,10 +862,13 @@ mod tests {
     }
 
     /// GCC links a program with C++ in it with `g++`, one of C only with
-    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries.
+    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries. The
+    /// plan's GCC version reaches the link, so GCC 16 links `libstdc++exp`
+    /// for C++.
     ///
-    /// Mutation: link C++ with `gcc`, C with `g++`, or look for one name
-    /// only; this test fails.
+    /// Mutation: link C++ with `gcc`, C with `g++`, look for one name only,
+    /// or hand the link a fixed GCC 13 instead of the plan's version; this
+    /// test fails.
     #[test]
     fn gcc_links_cxx_with_g_plus_plus_and_looks_for_every_name() {
         let layout = Layout::new(
@@ -918,6 +921,12 @@ mod tests {
                     _ => "C:/m/bin/gcc.exe",
                 };
                 assert_eq!(step.program, Path::new(want), "{:?}", step.kind);
+                // The version reaches the link: GCC 16 links libstdc++exp
+                // for C++ (`build.md`, "Settings and flags").
+                if matches!(step.kind, StepKind::Link { .. }) {
+                    let exp = step.args.iter().any(|a| a == "-lstdc++exp");
+                    assert_eq!(exp, driver.ends_with("g++.exe"), "{:?}", step.kind);
+                }
             }
             assert_eq!(
                 last.looked_for,
