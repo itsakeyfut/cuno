@@ -6,6 +6,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use cuno_toolchain::Version;
 use cuno_toolchain::compiler::{CompilerKind, Dependencies};
 use cuno_toolchain::flags::{
     BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, color_args, compile_args,
@@ -157,6 +158,8 @@ pub struct Plan<'a> {
     pub layout: &'a Layout,
     /// The compiler.
     pub kind: CompilerKind,
+    /// Its version, which some of its link flags depend on.
+    pub version: Version,
     /// Its driver, which compiles and links.
     pub program: &'a Path,
     /// The settings a source of each language compiles with.
@@ -400,6 +403,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         let cxx = after.iter().any(|&i| cxx[i]);
         let input = LinkInput {
             kind: p.kind,
+            version: p.version,
             build: &link_build,
             profile: p.link.1,
             subsystem,
@@ -544,6 +548,11 @@ mod tests {
             products: Products::Programs { mode },
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/cl.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),
@@ -791,6 +800,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/m/bin/cc.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -848,10 +862,13 @@ mod tests {
     }
 
     /// GCC links a program with C++ in it with `g++`, one of C only with
-    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries.
+    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries. The
+    /// plan's GCC version reaches the link, so GCC 16 links `libstdc++exp`
+    /// for C++.
     ///
-    /// Mutation: link C++ with `gcc`, C with `g++`, or look for one name
-    /// only; this test fails.
+    /// Mutation: link C++ with `gcc`, C with `g++`, look for one name only,
+    /// or hand the link a fixed GCC 13 instead of the plan's version; this
+    /// test fails.
     #[test]
     fn gcc_links_cxx_with_g_plus_plus_and_looks_for_every_name() {
         let layout = Layout::new(
@@ -887,6 +904,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/m/bin/gcc.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -899,6 +921,12 @@ mod tests {
                     _ => "C:/m/bin/gcc.exe",
                 };
                 assert_eq!(step.program, Path::new(want), "{:?}", step.kind);
+                // The version reaches the link: GCC 16 links libstdc++exp
+                // for C++ (`build.md`, "Settings and flags").
+                if matches!(step.kind, StepKind::Link { .. }) {
+                    let exp = step.args.iter().any(|a| a == "-lstdc++exp");
+                    assert_eq!(exp, driver.ends_with("g++.exe"), "{:?}", step.kind);
+                }
             }
             assert_eq!(
                 last.looked_for,
@@ -959,6 +987,11 @@ mod tests {
             },
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/cl.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),
@@ -1011,6 +1044,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/clang.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -1132,6 +1170,11 @@ mod tests {
             products,
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/clang.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),

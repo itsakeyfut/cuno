@@ -170,9 +170,9 @@ fn fix_leaves_other_packages_alone_and_their_errors_show() {
 /// templates or in cuno's bundled test headers is a finding under the
 /// default preset.
 ///
-/// Mutation: put `bugprone-throwing-static-initialization` back in the
-/// preset, or drop the NOLINT on `CUNO_TEST_VALUE`'s conditional; this
-/// test fails.
+/// Mutation: put `bugprone-throwing-static-initialization` or
+/// `bugprone-exception-escape` back in the preset, or drop the NOLINT on
+/// `CUNO_TEST_VALUE`'s conditional; this test fails.
 #[test]
 fn a_fresh_package_lints_clean() {
     for name in compilers() {

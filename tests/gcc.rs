@@ -377,3 +377,24 @@ fn paths_that_are_not_ascii_build_or_are_refused() {
         bin.stderr
     );
 }
+
+/// The C++23 sample `cuno new` writes prints with `std::println`, which
+/// MinGW's libstdc++ keeps in `libstdc++exp`: it links and runs with GCC
+/// (`build.md`, "Settings and flags").
+///
+/// Mutation: leave out `-lstdc++exp`; this test fails to link.
+#[test]
+fn the_cxx23_sample_prints_with_gcc() {
+    if require_driver(Compiler::Gcc, Language::Cxx).is_none() {
+        return;
+    }
+    let parent = Project::new();
+    let made = parent.cuno(&["new", "app", "--edition", "c++23", "--vcs", "none"]);
+    assert_eq!(made.code, Some(0), "{}", made.stderr);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+    cmd.args(["run", "--compiler", "gcc"])
+        .current_dir(parent.path().join("app"));
+    let run = parent.run_command(cmd);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(run.stdout.trim_end(), "1 + 2 = 3");
+}

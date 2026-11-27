@@ -150,6 +150,12 @@ fn build(
     let cxx = input.lang == Lang::Cxx;
     let link = LinkInput {
         kind,
+        // libstdc++exp is not what these check, and a GCC before 14 links none.
+        version: cuno_toolchain::Version {
+            major: 13,
+            minor: 0,
+            patch: 0,
+        },
         build: input.build,
         profile: input.profile,
         subsystem,
@@ -536,6 +542,12 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
         );
         let link = LinkInput {
             kind,
+            // libstdc++exp is not what these check, and a GCC before 14 links none.
+            version: cuno_toolchain::Version {
+                major: 13,
+                minor: 0,
+                patch: 0,
+            },
             build: &lenient,
             profile: &profile,
             subsystem: Subsystem::Console,

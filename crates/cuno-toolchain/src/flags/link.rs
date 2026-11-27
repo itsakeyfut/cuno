@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::{BuildSettings, OptLevel, ProfileSettings, Subsystem, TARGET_SWITCH};
+use crate::Version;
 use crate::compiler::{CompilerKind, Family};
 
 /// What one link of the build is made from.
@@ -13,6 +14,9 @@ use crate::compiler::{CompilerKind, Family};
 pub struct LinkInput<'a> {
     /// The driver.
     pub kind: CompilerKind,
+    /// Its version: GCC links `libstdc++exp` from 14 (`build.md`, "Settings
+    /// and flags").
+    pub version: Version,
     /// The resolved build settings (`links`, `lib-dirs`, `link-flags`).
     pub build: &'a BuildSettings,
     /// The resolved profile (`debug-info`, `lto`, and `opt-level` for LTO).
@@ -54,25 +58,23 @@ pub fn library_files(kind: CompilerKind, lib: &str) -> Vec<String> {
 /// either `runtime` (`docs/en/specs/build.md`, "Settings and flags"): their
 /// DLLs are not part of Windows. `-lstdc++` comes before `-lwinpthread`,
 /// which resolves what libstdc++ uses; `-Bdynamic` after them leaves the
-/// libraries the driver adds (UCRT's) as they are.
-fn gcc_runtime_args(cxx: bool) -> &'static [&'static str] {
+/// libraries the driver adds (UCRT's) as they are. From GCC 14, C++ also
+/// links `libstdc++exp`, where MinGW's libstdc++ keeps what `std::print`
+/// writes to a terminal with; before 14 there is no `<print>` to need it.
+fn gcc_runtime_args(cxx: bool, version: Version) -> Vec<&'static str> {
+    let mut args = vec!["-static-libgcc"];
     if cxx {
-        &[
-            "-static-libgcc",
-            "-static-libstdc++",
-            "-Wl,-Bstatic",
-            "-lstdc++",
-            "-lwinpthread",
-            "-Wl,-Bdynamic",
-        ]
-    } else {
-        &[
-            "-static-libgcc",
-            "-Wl,-Bstatic",
-            "-lwinpthread",
-            "-Wl,-Bdynamic",
-        ]
+        args.push("-static-libstdc++");
     }
+    args.push("-Wl,-Bstatic");
+    if cxx {
+        if version.major >= 14 {
+            args.push("-lstdc++exp");
+        }
+        args.push("-lstdc++");
+    }
+    args.extend(["-lwinpthread", "-Wl,-Bdynamic"]);
+    args
 }
 
 /// The arguments for the driver to link `objects` into `exe`: the driver's
@@ -154,7 +156,7 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
                 },
             );
             if gcc {
-                push(&mut args, gcc_runtime_args(input.cxx));
+                push(&mut args, &gcc_runtime_args(input.cxx, input.version));
             } else if profile.lto {
                 args.push(format!("-Wl,/opt:lldlto={lto_level}").into());
             }
@@ -282,8 +284,15 @@ mod tests {
         subsystem: Subsystem,
         cxx: bool,
     ) -> Vec<String> {
+        // A GCC from before libstdc++exp, so each case's expected arguments
+        // need not say which GCC; the version's own test is below.
         let input = LinkInput {
             kind,
+            version: Version {
+                major: 13,
+                minor: 2,
+                patch: 0,
+            },
             build,
             profile,
             subsystem,
@@ -526,5 +535,33 @@ mod tests {
             let gcc = args(CompilerKind::Gcc, &build(), &p, Subsystem::Console);
             assert!(!gcc.iter().any(|a| a.contains("lldlto")), "{gcc:?}");
         }
+    }
+
+    /// GCC 14 and later link `libstdc++exp` for C++, right before
+    /// `libstdc++` and statically; GCC 13, which has none, and C do not.
+    ///
+    /// Mutation: give it whatever the version, after `-lstdc++`, or to C;
+    /// this test fails.
+    #[test]
+    fn gcc_14_links_libstdcxx_exp_for_cxx() {
+        let v = |major| Version {
+            major,
+            minor: 1,
+            patch: 0,
+        };
+        assert_eq!(
+            gcc_runtime_args(true, v(14)),
+            [
+                "-static-libgcc",
+                "-static-libstdc++",
+                "-Wl,-Bstatic",
+                "-lstdc++exp",
+                "-lstdc++",
+                "-lwinpthread",
+                "-Wl,-Bdynamic",
+            ]
+        );
+        assert!(!gcc_runtime_args(true, v(13)).contains(&"-lstdc++exp"));
+        assert!(!gcc_runtime_args(false, v(16)).contains(&"-lstdc++exp"));
     }
 }

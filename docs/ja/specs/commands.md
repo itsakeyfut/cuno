@@ -131,7 +131,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | ファイル | 内容 |
 |---|---|
 | `Cuno.toml` | `[package]` の `name` / `version`（`0.1.0`）/ `lang` / `edition` のみ。コンパイラは書かない（自動選択に任せる） |
-| `src/main.cpp`（C は `src/main.c`） | `src/calc.cpp` の関数を呼ぶ `main` |
+| `src/main.cpp`（C は `src/main.c`） | `src/calc.cpp` の関数を呼び、結果を出力する `main`。出力は規格に合わせる。C++17 / C++20 は `std::cout << ... << '\n'`、C++23 は `std::println`、C は `printf` |
 | `src/calc.cpp` / `src/calc.h`（C は `.c` / `.h`） | 小さな関数と、そのソース内テスト（[testing.md](testing.md)）。標準ヘッダ（`math.h` 等）と同じ名前を避ける（`src/` はインクルードパスに入るため、衝突すると標準ライブラリ側の `#include <math.h>` がこちらを読み込んでしまう） |
 | `.gitignore` | `target/`、`.cuno/`、`compile_commands.json`、`.clang-format`、`.clang-tidy`（後の 3 つは cuno の生成物。[dev-tools.md](dev-tools.md)） |
 

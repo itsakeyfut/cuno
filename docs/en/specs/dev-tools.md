@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 704fde7d1ce11a905ae1a2960cf5fa9dfd0f1774 -->
+<!-- translated-from: docs/ja/specs/dev-tools.md @ blob 0a5adfa507e7eadcb4fdeae11101e465edcbcd1e -->
 
 # Development Tools
 
@@ -148,6 +148,7 @@ Check names are clang-tidy group names.
 - Excluded:
   - `bugprone-easily-swappable-parameters` (very many false positives).
   - `bugprone-throwing-static-initialization` (cuno's tests, `static cuno::test::suite tests = [] { ... };`, always get this finding, since the check reads through the lambda in the initializer. A static initialization that really throws always stops the program at start-up, so it is never missed silently).
+  - `bugprone-exception-escape` (with exceptions on, which is the default `exceptions = true`, a `main` that only prints with `std::cout` or `std::println` always gets this finding, since printing may throw. An exception escaping `main` or a destructor stops the program through `std::terminate`, so it is never missed silently. `warn` turns it back on where wanted).
 
 **strict**: recommended plus the following.
 

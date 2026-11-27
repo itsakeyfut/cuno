@@ -146,6 +146,7 @@ exclude = []           # 解析しないファイル
 - 除外:
   - `bugprone-easily-swappable-parameters`（誤検知が非常に多い）。
   - `bugprone-throwing-static-initialization`（cuno のテスト `static cuno::test::suite tests = [] { ... };` は、初期化式のラムダを辿られて必ずこの指摘を受ける。静的初期化が実際に例外を投げれば起動時に必ず止まるので、気づかないまま誤ることはない）。
+  - `bugprone-exception-escape`（例外を使う設定、つまり既定の `exceptions = true` では、`std::cout` や `std::println` で出力するだけの `main` が、出力が例外を投げうるとして必ずこの指摘を受ける。`main` やデストラクタから漏れた例外は `std::terminate` でプログラムを止めるので、気づかないまま誤ることはない。必要なら `warn` で有効に戻せる）。
 
 **strict**: recommended に加えて次のもの。
 

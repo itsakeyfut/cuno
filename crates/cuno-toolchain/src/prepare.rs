@@ -452,8 +452,8 @@ mod tests {
     ///
     /// Mutation: give GCC the environment unchanged, put its directory on
     /// another compiler's `PATH`, leave its include directories out, keep
-    /// the `..`, or leave a runtime file out of the identity; this test
-    /// fails.
+    /// the `..`, or leave a runtime file (`libstdc++exp.a` among them) out
+    /// of the identity; this test fails.
     #[test]
     fn gcc_finds_its_own_dlls() {
         let path = |dirs: &[&str]| std::env::join_paths(dirs).unwrap();
@@ -468,6 +468,7 @@ mod tests {
         };
         let libs = tempfile::tempdir().unwrap();
         std::fs::write(libs.path().join("libstdc++.a"), "x").unwrap();
+        std::fs::write(libs.path().join("libstdc++exp.a"), "x").unwrap();
         let answers = Answers {
             libs: libs.path().to_owned(),
         };
@@ -488,12 +489,14 @@ mod tests {
         );
         let identity = prepared.identity("16.2.0");
         let runtime: Vec<&OsString> = identity[4..].iter().collect();
-        assert_eq!(runtime.len(), 1, "{identity:?}");
-        let stamp = runtime[0].to_string_lossy();
-        assert!(
-            stamp.starts_with(&format!("{} 1 ", libs.path().join("libstdc++.a").display())),
-            "{stamp}"
-        );
+        assert_eq!(runtime.len(), 2, "{identity:?}");
+        for (stamp, file) in runtime.iter().zip(["libstdc++.a", "libstdc++exp.a"]) {
+            let stamp = stamp.to_string_lossy();
+            assert!(
+                stamp.starts_with(&format!("{} 1 ", libs.path().join(file).display())),
+                "{stamp}"
+            );
+        }
 
         assert_eq!(
             prepared.env.get("PATH"),

@@ -80,6 +80,7 @@ fn compile_commands(
         // compiled with `CUNO_TEST` (build.md, "Output").
         layout: &Layout::new(target_dir, Profile::Dev, root, host),
         kind: tool.selected.kind,
+        version: tool.selected.version,
         program: &tool.selected.executable,
         compile: &for_editors,
         link: (&link.build, &link.profile),
@@ -336,6 +337,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             products,
             layout: &Layout::new(target_dir, profile, root, host),
             kind: tool.selected.kind,
+            version: tool.selected.version,
             program: &tool.selected.executable,
             compile: &compile,
             link: (&link.build, &link.profile),

@@ -241,13 +241,14 @@ pub struct Install {
 
 /// The files GCC links into every program, statically: its start-up code,
 /// MinGW's runtime, its own and the C++ runtime, and winpthread.
-pub const RUNTIME_FILES: [&str; 8] = [
+pub const RUNTIME_FILES: [&str; 9] = [
     "crt2.o",
     "libmingw32.a",
     "libmingwex.a",
     "libgcc.a",
     "libgcc_eh.a",
     "libstdc++.a",
+    "libstdc++exp.a",
     "libwinpthread.a",
     "libucrt.a",
 ];
