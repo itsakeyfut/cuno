@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob ffe7bcf943b32c3ded65f71e378bda89e7d9070a -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 18e0657b0f866d76d0196a4c5e7e7c856f320689 -->
 
 # Build
 
@@ -67,7 +67,7 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 
 | When | MSVC | clang-cl | clang | GCC |
 |---|---|---|---|---|
-| Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` | — |
+| Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` | `-pipe` ([toolchain.md](toolchain.md#mingw-gcc)) |
 | For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — | — |
 | Build / `check` | `/c` / `/c` (the same as the build; see below) | `/c` / `/Zs` | `-c` / `-fsyntax-only` | `-c` / `-c` (the same as the build; see below) |
 | Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` | `-x c` / `-x c++` |
@@ -228,6 +228,8 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
     - When two test executables would have the same name (`tests/foo.c` and `tests/foo.cpp`, or a package named `tests-foo` and `tests/foo.cpp`, etc.), it is an error (exit code 3) that names both files (`` error: two test executables are named `tests-foo`: src/ and tests/foo.cpp ``; in-source tests are shown as `src/`). Names are compared the same way as for duplicate executable names ([project-layout.md](project-layout.md)): case-insensitively on Windows.
       - Reason: building them under the same name would let one link overwrite the other, and that test would never run while the run is still reported as a success.
   - Intermediate files (objects, etc.): `target/<profile name>/obj/<package name>/`. Prevents collisions when multiple projects share the output directory.
+  - Within the output directory, the names of the files and directories that cuno makes from the names of sources and tests (objects, test executables, etc.) have each character that is not ASCII written as `%` followed by two uppercase hexadecimal digits for each of its UTF-8 bytes (`日本語.c` becomes `%E6%97%A5%E6%9C%AC%E8%AA%9E.c.obj`). `%` itself is also written as `%25`. A name that cannot be read as Unicode (one holding an unpaired surrogate) has each UTF-16 unit that is not ASCII, and `%`, written as `%u` followed by four uppercase hexadecimal digits. This is the same for every compiler.
+    - Rationale: MinGW's GCC assembler and linker cannot open paths that are not ASCII ([toolchain.md](toolchain.md#mingw-gcc)). Because `%` is rewritten too, two different names never become the same name.
 - `cuno clean` (with no arguments) deletes the entire output directory, as in Cargo.
 - A build (`build` / `run` / `check`) puts a marker file `.cuno-target` directly in the output directory when it creates the directory, or when it starts using an empty one. It does not put one in an existing directory that has contents. `cuno clean` does not delete an output directory without this marker.
   - Rationale: even when the output directory points inside the project, it may be a directory cuno did not create, such as `src` or `.git`. Naming rules cannot fully guard against this, so cuno deletes only what it knows it created itself.

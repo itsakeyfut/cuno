@@ -3,6 +3,7 @@
 //!
 //! See `docs/en/specs/build.md`.
 
+mod ascii;
 pub mod bundled;
 mod compdb;
 mod deps;

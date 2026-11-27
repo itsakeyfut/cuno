@@ -71,7 +71,11 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     match input.kind.family() {
         Family::Llvm => out.push(&[TARGET_SWITCH]),
         // cl targets what it is; MinGW's GCC targets only MinGW-w64.
-        Family::Msvc | Family::Gnu => {}
+        Family::Msvc => {}
+        // GCC otherwise hands its assembly to the assembler through a file
+        // in the temporary directory, which it cannot open when that path
+        // is not ASCII (toolchain.md, "MinGW (GCC)").
+        Family::Gnu => out.push(&["-pipe"]),
     }
     if msvc_style && cxx {
         out.push(&["/Zc:__cplusplus"]);
@@ -461,7 +465,7 @@ mod tests {
                 "-fms-runtime-lib=dll",
                 "-O0",
             ],
-            &["-std=c++20", "-O0"],
+            &["-pipe", "-std=c++20", "-O0"],
         ];
         for (kind, expected) in DRIVERS.into_iter().zip(expected) {
             assert_eq!(case.flags(kind), expected, "{kind:?}");

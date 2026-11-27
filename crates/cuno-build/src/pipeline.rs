@@ -268,6 +268,28 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     // the executables the build leaves.
     let layout = Layout::new(target_dir, profile, root, host);
     let layout = if test { layout.for_tests() } else { layout };
+    // What the compiler's tools could not open, refused before anything
+    // compiles (toolchain.md, "MinGW (GCC)"). `lib-dirs` and `lto` are the
+    // same for every source.
+    let link = compile(
+        Lang::Cxx,
+        Purpose {
+            test,
+            mode: Mode::Compile,
+        },
+    );
+    // A check links nothing; a test build links no program.
+    let linking = |bins| crate::ascii::Linking {
+        lib_dirs: &link.build.lib_dirs,
+        lto: link.profile.lto,
+        bins,
+    };
+    let linking = match goal {
+        Goal::Check { .. } => None,
+        Goal::Build | Goal::Run { .. } => Some(linking(&sources.bins[..])),
+        Goal::Test => Some(linking(&[][..])),
+    };
+    crate::ascii::check(tool.kind, &layout, target_dir, linking, tool.env)?;
     // Chosen, and named, before anything is built, so a wrong `--bin` or
     // two test executables of one name cost nothing.
     let (mode, exe) = match goal {

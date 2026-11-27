@@ -11,6 +11,72 @@ use cuno_toolchain::HostOs;
 
 use crate::sources::SOURCE_DIRS;
 
+/// `name` with each character that is not ASCII written as `%` and two
+/// upper-case hex digits per UTF-8 byte, and `%` itself as `%25`, so that
+/// MinGW's assembler and linker, which open paths in the ANSI code page,
+/// can open it, and no two names become one (`docs/en/specs/build.md`,
+/// "Output directory"). An ASCII name without `%` is returned as it is.
+fn ascii_name(name: &std::ffi::OsStr) -> OsString {
+    let Some(text) = name.to_str() else {
+        return unpaired_name(name);
+    };
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii() && c != '%' {
+            out.push(c);
+        } else {
+            let mut bytes = [0; 4];
+            for b in c.encode_utf8(&mut bytes).bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    out.into()
+}
+
+/// [`ascii_name`] for a name that is not Unicode (on Windows, one holding
+/// an unpaired surrogate): each UTF-16 unit that is not ASCII, and `%`,
+/// written `%u` and four hex digits, which no Unicode name's encoding
+/// holds, so two such names never become one, nor one another's.
+#[cfg(windows)]
+fn unpaired_name(name: &std::ffi::OsStr) -> OsString {
+    use std::os::windows::ffi::OsStrExt;
+    let mut out = String::new();
+    for unit in name.encode_wide() {
+        match u8::try_from(unit) {
+            Ok(b) if b.is_ascii() && b != b'%' => out.push(char::from(b)),
+            _ => out.push_str(&format!("%u{unit:04X}")),
+        }
+    }
+    out.into()
+}
+
+/// [`ascii_name`] for a name that is not UTF-8: each byte that is not
+/// ASCII, and `%`, written `%u00` and two hex digits.
+#[cfg(not(windows))]
+fn unpaired_name(name: &std::ffi::OsStr) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::new();
+    for &b in name.as_bytes() {
+        if b.is_ascii() && b != b'%' {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%u00{b:02X}"));
+        }
+    }
+    out.into()
+}
+
+/// `path` with [`ascii_name`] applied to each of its names.
+fn ascii_path(path: &Path) -> PathBuf {
+    path.components()
+        .map(|part| match part {
+            std::path::Component::Normal(name) => ascii_name(name),
+            other => other.as_os_str().to_owned(),
+        })
+        .collect()
+}
+
 /// The file a build leaves in an output directory it made, and without
 /// which `cuno clean` removes nothing (`docs/en/specs/build.md`, "Output
 /// directory").
@@ -172,13 +238,24 @@ impl Layout {
                 self.root.display()
             );
         };
-        let mut name = OsString::from(file);
+        let mut name = ascii_name(file);
         name.push(suffix);
         let dir = match self.variant {
             Variant::Normal => self.profile_dir.join("obj"),
             Variant::Test => self.test_dir(),
         };
-        dir.join(package).join(under).join(name)
+        dir.join(package).join(ascii_path(&under)).join(name)
+    }
+
+    /// `path` written from the project root when it is inside it, where
+    /// every step runs, or as it is: for a compiler whose tools cannot open
+    /// a path that is not ASCII, which the root's own may be
+    /// (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
+    pub fn from_root(&self, path: &Path) -> PathBuf {
+        match paths::relative(&paths::lexical(path), &self.root, self.host.name_case()) {
+            Some(relative) if !relative.as_os_str().is_empty() => relative,
+            _ => path.to_owned(),
+        }
     }
 
     /// The program's executable `bin`. A test build makes none: its
@@ -195,10 +272,11 @@ impl Layout {
     /// layout has one; asking another is a bug in cuno.
     pub fn test_exe(&self, package: &str, name: &str) -> PathBuf {
         assert!(self.is_test(), "a test executable from a program's layout");
+        let name = ascii_name(std::ffi::OsStr::new(name));
         self.test_dir()
             .join(package)
             .join("bin")
-            .join(self.executable(name))
+            .join(self.executable(&name.to_string_lossy()))
     }
 
     /// The object of `file`, a source of cuno's bundled test runtime, for
@@ -262,6 +340,51 @@ mod tests {
         for path in objects.iter().chain([&dev.exe("app")]) {
             assert!(path.starts_with("C:/p/target"), "{}", path.display());
         }
+    }
+
+    /// The names cuno makes from sources and tests are ASCII: a character
+    /// that is not becomes `%` and hex per UTF-8 byte, `%` becomes `%25`,
+    /// and ASCII is left as it is, in directories and file names alike, for
+    /// objects, check stamps and test executables; the project's own path
+    /// is not changed.
+    ///
+    /// Mutation: leave a name, a directory or `%` unencoded, encode in
+    /// lower case, or encode the target directory itself; this test fails.
+    #[test]
+    fn names_made_from_sources_are_ascii() {
+        let root = Path::new("C:/日本/p");
+        let dev = Layout::new(&root.join("target"), Profile::Dev, root, HostOs::Windows);
+        assert_eq!(
+            dev.object("app", &root.join("src/日本語/a%b.c")),
+            root.join("target/debug/obj/app/src/%E6%97%A5%E6%9C%AC%E8%AA%9E/a%25b.c.obj")
+        );
+        assert_eq!(
+            dev.check_stamp("app", &root.join("src/é.c")),
+            root.join("target/debug/obj/app/src/%C3%A9.c.check")
+        );
+        assert_eq!(
+            dev.object("app", &root.join("src/plain-name_1.cpp")),
+            root.join("target/debug/obj/app/src/plain-name_1.cpp.obj")
+        );
+        let test = dev.for_tests();
+        assert_eq!(
+            test.test_exe("app", "日本"),
+            test.test_dir().join("app/bin/%E6%97%A5%E6%9C%AC.exe")
+        );
+    }
+
+    /// Names that are not Unicode stay apart: each unpaired surrogate is
+    /// written as itself, never as one replacement character.
+    ///
+    /// Mutation: read such a name lossily; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn names_that_are_not_unicode_stay_apart() {
+        use std::os::windows::ffi::OsStringExt;
+        let name = |unit| OsString::from_wide(&[unit, u16::from(b'.'), u16::from(b'c')]);
+        let (a, b) = (name(0xD800), name(0xD801));
+        assert_eq!(ascii_name(&a), "%uD800.c");
+        assert_ne!(ascii_name(&a), ascii_name(&b));
     }
 
     /// A source spelled with another case than the root, or with `..`, gets

@@ -185,6 +185,7 @@ dependencies = [
  "cuno-core",
  "serde_json",
  "tempfile",
+ "windows-sys",
  "winreg",
 ]
 

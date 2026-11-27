@@ -91,6 +91,30 @@ pub enum BuildError {
         /// Whether the first failure was a link.
         link: bool,
     },
+    /// A path a compiler's tools would be given that is not ASCII, which
+    /// they cannot open (`toolchain.md`, "MinGW (GCC)").
+    NotAscii {
+        /// Which path.
+        what: NotAscii,
+        /// The path.
+        path: PathBuf,
+    },
+}
+
+/// Which path a compiler's tools could not open, for
+/// [`BuildError::NotAscii`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotAscii {
+    /// The target directory, written from the project root when inside
+    /// it.
+    Target,
+    /// A `lib-dirs` directory.
+    LibDir,
+    /// An executable named after its entry file, the path given.
+    Bin,
+    /// The temporary directory, which GCC's linker writes to, when it has
+    /// no ASCII short name.
+    Temp,
 }
 
 impl fmt::Display for BuildError {
@@ -140,6 +164,27 @@ impl fmt::Display for BuildError {
                 let what = if *link { "link" } else { "compile" };
                 write!(f, "could not {what} `{package}`")
             }
+            BuildError::NotAscii { what, path } => {
+                let path = path.display();
+                match what {
+                    NotAscii::Target => write!(
+                        f,
+                        "the target directory {path} is not ASCII, which MinGW's assembler and linker cannot open"
+                    ),
+                    NotAscii::LibDir => write!(
+                        f,
+                        "`lib-dirs` names {path}, which is not ASCII, which MinGW's linker cannot open"
+                    ),
+                    NotAscii::Bin => write!(
+                        f,
+                        "{path} names an executable that is not ASCII, which MinGW's linker cannot write"
+                    ),
+                    NotAscii::Temp => write!(
+                        f,
+                        "the temporary directory {path} is not ASCII and has no short name, which GCC's linker cannot use"
+                    ),
+                }
+            }
         }
     }
 }
@@ -159,7 +204,8 @@ impl CunoError for BuildError {
             | BuildError::CodeDirIsPackage { .. }
             | BuildError::DuplicateName { .. }
             | BuildError::DuplicateTestName { .. }
-            | BuildError::Unreadable { .. } => ExitClass::Setup,
+            | BuildError::Unreadable { .. }
+            | BuildError::NotAscii { .. } => ExitClass::Setup,
         }
     }
 
@@ -193,6 +239,15 @@ impl CunoError for BuildError {
             BuildError::SeveralBins { available } | BuildError::NoSuchBin { available, .. } => {
                 Some(format!("available: {available}"))
             }
+            BuildError::NotAscii { what, .. } => Some(
+                match what {
+                    NotAscii::Target => "build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)",
+                    NotAscii::LibDir => "move the libraries to a directory whose path is ASCII",
+                    NotAscii::Bin => "rename the file to an ASCII name, or list it in [[bin]] with an ASCII name",
+                    NotAscii::Temp => "set TMP and TEMP to a directory whose path is ASCII",
+                }
+                .to_owned(),
+            ),
             BuildError::Unreadable { .. } | BuildError::Failed { .. } => None,
         }
     }

@@ -235,7 +235,15 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             Dependencies::SourceDependencies => Headers::Json(output.with_extension("json")),
             Dependencies::DepFile => Headers::DepFile(output.with_extension("d")),
         };
-        let args = compile_args(&settings.input(), &source.path, Some(&output));
+        // MinGW's assembler cannot open a path that is not ASCII, and the
+        // project's own may not be: the object is named from the root,
+        // where the step runs (toolchain.md, "MinGW (GCC)").
+        let named = if p.kind.needs_ascii_paths() {
+            layout.from_root(&output)
+        } else {
+            output.clone()
+        };
+        let args = compile_args(&settings.input(), &source.path, Some(&named));
         let dependency = dependency_args(p.kind, headers.file());
         steps.push(Step {
             kind,
@@ -373,12 +381,26 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         }
     }
 
+    // MinGW's linker cannot open a path that is not ASCII: what it opens
+    // inside the project is named from the root, where the step runs.
+    let ascii = p.kind.needs_ascii_paths();
+    let from_root = |path: &Path| {
+        if ascii {
+            layout.from_root(path)
+        } else {
+            path.to_owned()
+        }
+    };
+    let link_build = BuildSettings {
+        lib_dirs: p.link.0.lib_dirs.iter().map(|d| from_root(d)).collect(),
+        ..p.link.0.clone()
+    };
     for (name, subsystem, exe, after) in links {
-        let objects: Vec<PathBuf> = after.iter().map(|&i| steps[i].output.clone()).collect();
+        let objects: Vec<PathBuf> = after.iter().map(|&i| from_root(&steps[i].output)).collect();
         let cxx = after.iter().any(|&i| cxx[i]);
         let input = LinkInput {
             kind: p.kind,
-            build: p.link.0,
+            build: &link_build,
             profile: p.link.1,
             subsystem,
             cxx,
@@ -386,7 +408,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         steps.push(Step {
             kind: StepKind::Link { bin: name },
             program: p.kind.link_driver(p.program, cxx),
-            args: link_args(&input, &objects, &exe),
+            args: link_args(&input, &objects, &from_root(&exe)),
             output: exe,
             after,
             echo: None,
@@ -726,6 +748,103 @@ mod tests {
             libraries(CompilerKind::Gcc, &build),
             [first.join("libfoo.a"), second.join("libbar.a")]
         );
+    }
+
+    /// GCC is given the objects, the executable and `lib-dirs` inside the
+    /// project written from its root, where the step runs, as its assembler
+    /// and linker cannot open a path that is not ASCII and the root's may
+    /// not be; what is outside stays as it is, other compilers get absolute
+    /// paths, and the records keep absolute paths.
+    ///
+    /// Mutation: give GCC an absolute object, executable or library
+    /// directory, give another compiler a relative one, or record a
+    /// relative output; this test fails.
+    #[test]
+    fn gcc_s_paths_are_named_from_the_root() {
+        let layout = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        );
+        for kind in CompilerKind::ALL {
+            let compile = |lang, purpose: Purpose| {
+                compile_settings(
+                    None,
+                    kind,
+                    Profile::Dev,
+                    lang,
+                    HostOs::Windows,
+                    Path::new(BUNDLED),
+                    purpose.test,
+                    purpose.mode,
+                )
+            };
+            let mut link = compile(Lang::Cxx, PROGRAM);
+            link.build.lib_dirs = vec!["C:/p/libs".into(), "D:/elsewhere".into()];
+            let sources = c_sources();
+            let g = plan(&Plan {
+                package: "app",
+                sources: &sources,
+                products: Products::Programs {
+                    mode: Mode::Compile,
+                },
+                layout: &layout,
+                kind,
+                program: Path::new("C:/m/bin/cc.exe"),
+                compile: &compile,
+                link: (&link.build, &link.profile),
+                color: false,
+            });
+            let args: Vec<String> = g
+                .steps
+                .iter()
+                .flat_map(|s| {
+                    s.args
+                        .iter()
+                        .map(|a| a.to_string_lossy().replace('\\', "/"))
+                })
+                .collect();
+            let relative = kind.needs_ascii_paths();
+            for (absolute, from_root) in [
+                (
+                    "C:/p/target/debug/obj/app/src/main.c.obj",
+                    "target/debug/obj/app/src/main.c.obj",
+                ),
+                ("C:/p/target/debug/tool.exe", "target/debug/tool.exe"),
+                ("C:/p/libs", "libs"),
+            ] {
+                let want = if relative { from_root } else { absolute };
+                assert!(
+                    args.iter()
+                        .any(|a| a.ends_with(want) && (relative || a.contains(absolute))),
+                    "{kind:?} {want} in {args:?}"
+                );
+                if relative {
+                    assert!(
+                        !args.iter().any(|a| a.contains(absolute)),
+                        "{kind:?} {absolute} in {args:?}"
+                    );
+                }
+            }
+            // Each compile names its own object as the link does.
+            for step in &g.steps {
+                if let StepKind::Compile { .. } = step.kind {
+                    let named: Vec<String> = step
+                        .args
+                        .iter()
+                        .map(|a| a.to_string_lossy().replace('\\', "/"))
+                        .collect();
+                    let output = step.output.to_string_lossy().replace('\\', "/");
+                    let absolute = named.iter().any(|a| a.ends_with(&output));
+                    assert_eq!(absolute, !relative, "{kind:?} {named:?}");
+                }
+            }
+            // Outside the root, a path stays as it is; the records keep the
+            // absolute paths either way.
+            assert!(args.iter().any(|a| a.contains("D:/elsewhere")), "{kind:?}");
+            assert!(g.steps.iter().all(|s| s.output.is_absolute()), "{kind:?}");
+        }
     }
 
     /// GCC links a program with C++ in it with `g++`, one of C only with

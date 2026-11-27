@@ -234,6 +234,19 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
   - 理由: 変更の判定は、これらを MSVC の `INCLUDE` と同じように使う（[build.md](build.md#変更の判定)）。知らないままでは、プロジェクトに置いた `sys/stat.h` が GCC の `sys/stat.h` の代わりに読まれるようになっても気づかず、古いコードのまま成功と報告する。
 - ビルド（コンパイルとリンク）でも、GCC は、そのディレクトリを `PATH` の先頭に加えた環境で起動する（理由は上と同じ）。作った実行ファイルを `cuno run` などで実行する環境には加えない。
   - 理由: 加えると、作った実行ファイルが GCC の DLL を必要としても cuno の中では動いてしまい、外で起動しないことに気づけない（[build.md](build.md#理由)）。
+- **ASCII でないパス。** MSYS2 の GCC は、`gcc` とコンパイラの本体（`cc1`）が UTF-8 で動き、アセンブラ（`as`）とリンカ（`ld`）は ANSI コードページ（日本語版の Windows では CP932）で動く。`gcc` が渡す UTF-8 のパスを `as` と `ld` は別の文字として読むため、ASCII でないパスのファイルを開けない（日本語の名前のディレクトリ、日本語のユーザー名の一時ディレクトリ）。cuno は、次のように扱う。
+  - コンパイルに `-pipe` を付ける。GCC は、付けないと、アセンブリを一時ディレクトリのファイルに書いて `as` に渡すため、一時ディレクトリが ASCII でないと（日本語のユーザー名で起きる）、どのコンパイルも失敗する。
+  - GCC に渡すパスのうち、`as` と `ld` が開くもの（オブジェクト、実行ファイル、`lib-dirs`）は、プロジェクトの中にあれば、プロジェクトのルートからの相対パスで書く（GCC はルートで実行する）。プロジェクトのディレクトリ名が ASCII でなくても、ビルドできるようにするため。
+  - 出力先の中のファイル名は、ASCII でない文字を書き換える（[build.md](build.md#出力先ディレクトリ)）。ソースやテストの名前が ASCII でなくても、ビルドできるようにするため。
+  - それでも `as` や `ld` に ASCII でないパスを渡すことになる場合は、コンパイルの前にエラー（終了コード 3）にし、そのパスを示す。
+    - 出力先のパスが、プロジェクトの中ならルートからの相対で書いても、外ならそのままで、ASCII でない: `error: the target directory <パス> is not ASCII, which MinGW's assembler and linker cannot open`、`help: build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)`。
+    - `lib-dirs` のディレクトリのパスが、プロジェクトのルートからの相対で書いても ASCII でない: `` error: `lib-dirs` names <パス>, which is not ASCII, which MinGW's linker cannot open ``、`help: move the libraries to a directory whose path is ASCII`。リンクするとき（`cuno check` 以外）だけ。
+    - `src/bin/` のファイル名から付く実行ファイルの名前が ASCII でない: `error: <パス> names an executable that is not ASCII, which MinGW's linker cannot write`、`help: rename the file to an ASCII name, or list it in [[bin]] with an ASCII name`。`<パス>` はそのファイル。プログラムをリンクするとき（`cuno build`、`cuno run`）だけ。実行ファイルの名前は利用者が使うものなので、書き換えはしない。
+    - リンクするとき、一時ディレクトリ（下記）が ASCII でなく、ASCII の短い名前もなく、LTO を使うか、そのパスを ANSI コードページで表せない: `error: the temporary directory <パス> is not ASCII and has no short name, which GCC's linker cannot use`、`help: set TMP and TEMP to a directory whose path is ASCII`。
+  - **一時ディレクトリ。** GCC が使う一時ディレクトリは、Windows が決めるとおり、`TMP`、なければ `TEMP`、なければ `USERPROFILE`。GCC のリンクは、そこにファイルを作り（`collect2` は ANSI コードページで動く）、LTO のリンクと長いリンクは、そのファイルを `ld` に渡す。そのため、一時ディレクトリのパスが ASCII でないとき、cuno は、その短い名前（8.3 形式。ASCII のもの）を `TMP` と `TEMP` にして GCC を起動する。短い名前は、ボリュームが作る設定のとき（システムのドライブでは通常そう）にある。
+    - 短い名前がないとき、ANSI コードページで表せるパス（日本語版の Windows の日本語の名前）なら、普通のリンクは通るのでそのまま起動する。ただし、リンクのコマンドラインがとても長い（3 万文字ほど）と、GCC は引数をその一時ディレクトリのファイルに書いて `ld` に渡すため、`ld` の、文字化けしたパスのエラーで失敗する。前もって確かめる確実な方法がないため、cuno は止めない。
+
+  - 理由: 黙って失敗させると、GCC のアセンブラの、文字化けしたパスのエラーだけが出る。ソースの名前が ASCII でない場合は、`as` が文字化けした名前でオブジェクトを書き、cuno が記録したオブジェクトがいつまでもないため、何も変えなくても毎回コンパイルとリンクをし直す。
 - GCC は MSVC のツールセットを使わないため、GCC を選んでも Visual Studio は要らない。MSVC の環境（`INCLUDE`、`LIB`、`LIBPATH`）も組み立てない。
 - `[toolchain.paths] gcc` に書いた場合は、LLVM と同じく、そのファイルだけを使い、条件を満たさなければエラー（終了コード 3）にする。
 
