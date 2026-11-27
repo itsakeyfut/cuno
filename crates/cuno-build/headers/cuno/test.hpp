@@ -24,7 +24,8 @@
 // compiles a suite's tests, which nothing calls, and their calls into the
 // runtime would not link. These do nothing and are never called.
 extern "C" {
-inline void cuno_test_register(const char *, const char *, int, void (*)(void *), void *) {}
+inline void cuno_test_register(const char *, const char *, int, void (*)(void *), void *,
+                               const void *) {}
 inline void cuno_test_register_macro(const char *, const char *, int, void (*)(void *)) {}
 inline void cuno_test_fail(const char *, int, const char *, int) {}
 inline void cuno_test_values_failed(const char *, int, const char *, const char *, const char *,
@@ -202,10 +203,6 @@ struct suite {
     template <class F>
     suite(F declare) {
 #ifdef CUNO_TEST
-        // Numbered apart from every other suite, so that the same name from
-        // one place twice in it is told from a header's copy in another
-        // translation unit (docs/en/specs/testing.md, "Common rules").
-        cuno_test_suite_begin();
         declare();
 #else
         (void)declare;
@@ -213,13 +210,26 @@ struct suite {
     }
 };
 
+namespace detail {
+namespace {
+// One per translation unit: its address, taken where `test` is called, tells
+// cuno which unit registered a test, so that a header's copies in two units
+// are one test and one unit registering a place twice is refused
+// (docs/en/specs/testing.md, "Common rules").
+[[maybe_unused]] char unit;
+} // namespace
+} // namespace detail
+
 /// Declares one test. The copy of `body` is never freed: the registry holds
-/// it until the process, which runs one test, ends.
+/// it until the process, which runs one test, ends. `unit` is not given: its
+/// default is evaluated where `test` is called, in the caller's unit.
 template <class F>
 void test(const char *name, F body,
-          std::source_location at = std::source_location::current()) {
+          std::source_location at = std::source_location::current(),
+          const void *unit = &detail::unit) {
     cuno_test_register(name, at.file_name(), static_cast<int>(at.line()),
-                       [](void *context) { (*static_cast<F *>(context))(); }, new F(body));
+                       [](void *context) { (*static_cast<F *>(context))(); }, new F(body),
+                       unit);
 }
 
 template <class A, class B>

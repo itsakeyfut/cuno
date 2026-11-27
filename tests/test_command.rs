@@ -194,84 +194,88 @@ fn an_unlisted_executable_exits_1() {
     }
 }
 
-/// One suite registering one name from one place twice (a loop) is
+/// One translation unit registering one name from one place twice is
 /// refused, naming the place, rather than merged into one test that would
-/// leave the failing copy unrun; a header's test that two sources include
-/// still runs once (`testing.md`, "Common rules").
+/// leave the failing copy unrun: a loop in a suite, a helper two suites of
+/// one file call, and a loop outside any suite. A header's test that two
+/// sources include, from a suite or outside one, still runs once
+/// (`testing.md`, "Common rules").
 ///
-/// Mutation: stop numbering suites (drop `cuno_test_suite_begin` from
-/// `suite`), so the loop merges again and reports success; this test fails.
+/// Mutation: give every registration one unit (pass the same address from
+/// `test`), or every one its own; this test fails.
 #[test]
-fn a_test_registered_twice_by_one_suite_is_refused() {
+fn a_test_registered_twice_by_one_translation_unit_is_refused() {
+    let looped = r#"#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+static cuno::test::suite s = [] {
+    for (int i = 0; i < 2; i++) cuno::test::test("same", [i] { cuno::test::expect(cuno::test::eq(i, 0)); });
+};
+#endif
+"#;
+    let helper = r#"#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+static void declare(int v) { cuno::test::test("same", [v] { cuno::test::expect(cuno::test::eq(v, 0)); }); }
+static cuno::test::suite a = [] { declare(0); };
+static cuno::test::suite b = [] { declare(1); };
+#endif
+"#;
+    let outside = r#"#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+static int declare() {
+    for (int i = 0; i < 2; i++) cuno::test::test("same", [i] { cuno::test::expect(cuno::test::eq(i, 0)); });
+    return 0;
+}
+static int declared = declare();
+#endif
+"#;
+    let header = r#"#pragma once
+#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+static cuno::test::suite in_suite = [] { cuno::test::test("in suite", [] {}); };
+static int outside = (cuno::test::test("outside", [] {}), 0);
+#endif
+"#;
     for (name, compiler) in COMPILERS {
         if !here(compiler) {
             continue;
         }
-        let looped = project("").file(
-            "src/loop.cpp",
-            "#ifdef CUNO_TEST
-#include <cuno/test.hpp>
-             static cuno::test::suite s = [] {
-             for (int i = 0; i < 2; i++) cuno::test::test(\"same\", [i] { cuno::test::expect(cuno::test::eq(i, 0)); });
-             };
-#endif
-",
-        );
-        let run = looped.cuno(&["test", "--compiler", name]);
-        assert_eq!(
-            run.code,
-            Some(1),
-            "{name}:
-{}",
-            run.stderr
-        );
-        assert!(
-            run.stderr
-                .contains("error: test `same` is registered more than once from src/loop.cpp:4"),
-            "{name}:
-{}",
-            run.stderr
-        );
-        assert!(
-            !run.stderr.contains("test same ... ok"),
-            "{name}:
-{}",
-            run.stderr
-        );
+        for (case, source, line) in [
+            ("loop", looped, 4),
+            ("helper", helper, 3),
+            ("outside", outside, 4),
+        ] {
+            let p = project("").file("src/twice.cpp", source);
+            let run = p.cuno(&["test", "--compiler", name]);
+            assert_eq!(run.code, Some(1), "{name} {case}:\n{}", run.stderr);
+            assert!(
+                run.stderr.contains(&format!(
+                    "error: test `same` is registered more than once from src/twice.cpp:{line}\n\
+                     help: give each registration its own name, such as with the loop's index\n"
+                )),
+                "{name} {case}:\n{}",
+                run.stderr
+            );
+            assert!(
+                !run.stderr.contains("test same ... ok"),
+                "{name} {case}:\n{}",
+                run.stderr
+            );
+        }
 
-        let header = "#pragma once
-#ifdef CUNO_TEST
-#include <cuno/test.hpp>
-                      static cuno::test::suite shared = [] { cuno::test::test(\"shared\", [] {}); };
-                      #endif
-";
         let shared = project("")
             .file("src/shared.hpp", header)
-            .file(
-                "src/one.cpp",
-                "#include \"shared.hpp\"
-",
-            )
-            .file(
-                "src/two.cpp",
-                "#include \"shared.hpp\"
-",
-            );
+            .file("src/one.cpp", "#include \"shared.hpp\"\n")
+            .file("src/two.cpp", "#include \"shared.hpp\"\n");
         let run = shared.cuno(&["test", "--compiler", name]);
-        assert_eq!(
-            run.code,
-            Some(0),
-            "{name}:
-{}",
-            run.stderr
-        );
-        assert_eq!(
-            run.stderr.matches("test shared ... ok").count(),
-            1,
-            "{name}:
-{}",
-            run.stderr
-        );
+        assert_eq!(run.code, Some(0), "{name}:\n{}", run.stderr);
+        for test in ["in suite", "outside"] {
+            assert_eq!(
+                run.stderr.matches(&format!("test {test} ... ok")).count(),
+                1,
+                "{name}:\n{}",
+                run.stderr
+            );
+        }
     }
 }
 

@@ -273,7 +273,7 @@ fn names(p: &Project, exe: &Path) -> String {
     list(p, exe)
         .lines()
         .map(|record| {
-            // `test <name> <file> <line> <api> <suite>`, where only the
+            // `test <name> <file> <line> <api> <unit>`, where only the
             // name may hold spaces.
             let fields: Vec<&str> = record.rsplitn(5, ' ').collect();
             format!("{}\n", fields[4].strip_prefix("test ").unwrap())
@@ -509,7 +509,7 @@ static cuno::test::suite shared_tests = [] {
 ///
 /// Mutation: list each name once, drop a field from the `test` record,
 /// mark a `test.hpp` registration `macro`, or number a header's two copies
-/// as one suite; this test fails.
+/// as one translation unit; this test fails.
 #[test]
 fn every_registration_is_listed_with_its_place() {
     let same = "#include <cuno/test.hpp>\n\
@@ -530,7 +530,7 @@ fn every_registration_is_listed_with_its_place() {
         };
         let who = compiler.name();
         let text = list(&p, &exe);
-        // Each record ends with the suite that registered it.
+        // Each record ends with the translation unit that registered it.
         let mut listed: Vec<(&str, &str)> = text
             .lines()
             .map(|record| record.rsplit_once(' ').unwrap())
@@ -547,13 +547,10 @@ fn every_registration_is_listed_with_its_place() {
             ],
             "{who}"
         );
-        // The header's two copies come from the two files' own suites, which
+        // The header's two copies come from the two files' own units, which
         // is what makes them one test rather than one registered twice.
         assert_ne!(listed[2].1, listed[3].1, "{who}: {text}");
-        assert!(
-            listed.iter().all(|(_, suite)| *suite != "0"),
-            "{who}: {text}"
-        );
+        assert!(listed.iter().all(|(_, unit)| *unit != "0"), "{who}: {text}");
         assert_eq!(
             exact(&p, &exe, "twice doubles"),
             (Some(0), "done".to_owned()),

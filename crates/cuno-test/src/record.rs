@@ -17,9 +17,9 @@ pub struct Registration {
     pub line: u32,
     /// Whether it came through the macro API (`cuno/test.h`).
     pub macro_api: bool,
-    /// The `cuno::test::suite` it was registered in, numbered from 1; 0
-    /// for the macro API, which has none.
-    pub suite: u32,
+    /// The translation unit it was registered from, numbered from 1; 0 for
+    /// the macro API, which does not say.
+    pub unit: u32,
 }
 
 /// A failed check.
@@ -100,9 +100,9 @@ pub fn registrations(text: &str) -> Result<Vec<Registration>, BadRecord> {
         .map(|line| {
             let f = fields(line);
             match f.as_slice() {
-                [kind, name, file, number, api, suite] if kind == "test" => {
+                [kind, name, file, number, api, unit] if kind == "test" => {
                     let line_number = number.parse().map_err(|_| BadRecord(line.to_owned()))?;
-                    let suite = suite.parse().map_err(|_| BadRecord(line.to_owned()))?;
+                    let unit = unit.parse().map_err(|_| BadRecord(line.to_owned()))?;
                     let macro_api = match api.as_str() {
                         "macro" => true,
                         "modern" => false,
@@ -113,7 +113,7 @@ pub fn registrations(text: &str) -> Result<Vec<Registration>, BadRecord> {
                         file: file.clone(),
                         line: line_number,
                         macro_api,
-                        suite,
+                        unit,
                     })
                 }
                 _ => Err(BadRecord(line.to_owned())),
@@ -168,14 +168,14 @@ mod tests {
                     file: "C:\\p\\src\\a.cpp".into(),
                     line: 3,
                     macro_api: false,
-                    suite: 2,
+                    unit: 2,
                 },
                 Registration {
                     name: "tab\there".into(),
                     file: "b.c".into(),
                     line: 12,
                     macro_api: true,
-                    suite: 0,
+                    unit: 0,
                 },
             ]
         );
@@ -185,7 +185,7 @@ mod tests {
     /// skipped.
     ///
     /// Mutation: skip unknown records, accept a line number that is not
-    /// one, or accept a registration without its suite; this test fails.
+    /// one, or accept a registration without its unit; this test fails.
     #[test]
     fn an_unknown_record_is_refused() {
         assert_eq!(
@@ -193,7 +193,7 @@ mod tests {
             Err(BadRecord("test\ta\tb.c\tx\tmodern\t1".into()))
         );
         assert!(registrations("test\ta\tb.c\t1\tother\t1\n").is_err());
-        // The suite is part of a registration: without it, or not a number.
+        // The unit is part of a registration: without it, or not a number.
         assert!(registrations("test\ta\tb.c\t1\tmodern\n").is_err());
         assert!(registrations("test\ta\tb.c\t1\tmodern\tx\n").is_err());
         assert!(report(Some("pass\n")).is_err());

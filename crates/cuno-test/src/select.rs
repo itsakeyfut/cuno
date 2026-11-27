@@ -23,7 +23,8 @@ pub enum ListError {
         places: [String; 2],
     },
     /// A `test.hpp` test registered more than once from one place by one
-    /// suite: a loop, or a function that declares it called twice.
+    /// translation unit: a loop, or a function that declares it called
+    /// twice.
     RegisteredTwice {
         /// The name.
         name: String,
@@ -114,14 +115,10 @@ pub fn tests_to_run(
             });
         }
         // One place twice is one test for `test.hpp` when the copies come
-        // from different suites, which is how a test in a header is meant
-        // to be written; twice from one suite, the later one would never
-        // run (`testing.md`, "Common rules").
-        if r.suite != 0
-            && earlier
-                .iter()
-                .any(|e| e.name == r.name && e.suite == r.suite)
-        {
+        // from different translation units, which is how a test in a
+        // header is meant to be written; twice from one unit, the later one
+        // would never run (`testing.md`, "Common rules").
+        if r.unit != 0 && earlier.iter().any(|e| e.name == r.name && e.unit == r.unit) {
             return Err(ListError::RegisteredTwice {
                 name: r.name.clone(),
                 place: at(r),
@@ -152,41 +149,41 @@ pub fn tests_to_run(
 mod tests {
     use super::*;
 
-    /// A registration; a `test.hpp` one comes from a suite of its own, as a
-    /// header's copies do, and a macro one from none.
+    /// A registration; a `test.hpp` one comes from a translation unit of its
+    /// own, as a header's copies do, and a macro one says none.
     fn registration(name: &str, file: &str, line: u32, macro_api: bool) -> Registration {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-        let suite = if macro_api {
+        let unit = if macro_api {
             0
         } else {
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
-        in_suite(name, file, line, macro_api, suite)
+        in_unit(name, file, line, macro_api, unit)
     }
 
-    fn in_suite(name: &str, file: &str, line: u32, macro_api: bool, suite: u32) -> Registration {
+    fn in_unit(name: &str, file: &str, line: u32, macro_api: bool, unit: u32) -> Registration {
         Registration {
             name: name.into(),
             file: file.into(),
             line,
             macro_api,
-            suite,
+            unit,
         }
     }
 
-    /// One suite registering one name from one place twice is a test
-    /// registered again, refused with the place; the same two from
-    /// different suites are a header's copies, one test, even after a
-    /// third copy repeats in its own suite.
+    /// One translation unit registering one name from one place twice is a
+    /// test registered again, refused with the place; the same two from
+    /// different units are a header's copies, one test, even after a third
+    /// copy repeats in its own unit.
     ///
-    /// Mutation: compare without the suite, compare only with the first
+    /// Mutation: compare without the unit, compare only with the first
     /// registration of the name, or merge as before; this test fails.
     #[test]
-    fn one_suite_registering_one_place_twice_is_an_error() {
+    fn one_unit_registering_one_place_twice_is_an_error() {
         let root = Path::new(ROOT);
         let twice = [
-            in_suite("same", "C:/p/src/loop.cpp", 3, false, 1),
-            in_suite("same", "C:/p/src/loop.cpp", 3, false, 1),
+            in_unit("same", "C:/p/src/loop.cpp", 3, false, 1),
+            in_unit("same", "C:/p/src/loop.cpp", 3, false, 1),
         ];
         let err = tests_to_run(&twice, false, None, root, CASE).unwrap_err();
         assert_eq!(
@@ -199,17 +196,17 @@ mod tests {
         );
 
         let copies = [
-            in_suite("shared", "C:/p/src/h.hpp", 3, false, 1),
-            in_suite("shared", "C:/p/src/h.hpp", 3, false, 2),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 1),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
         ];
         assert_eq!(
             tests_to_run(&copies, false, None, root, CASE).unwrap(),
             ["shared"]
         );
         let again_in_the_second = [
-            in_suite("shared", "C:/p/src/h.hpp", 3, false, 1),
-            in_suite("shared", "C:/p/src/h.hpp", 3, false, 2),
-            in_suite("shared", "C:/p/src/h.hpp", 3, false, 2),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 1),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
         ];
         assert!(matches!(
             tests_to_run(&again_in_the_second, false, None, root, CASE),

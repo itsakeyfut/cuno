@@ -17,20 +17,21 @@
  * separated by a tab, with backslash, tab, CR and LF in a field written as
  * \\, \t, \r and \n:
  *
- *   test <name> <file> <line> <api> <suite>
+ *   test <name> <file> <line> <api> <unit>
  *                                  a registration (--list); <api> is
  *                                  `modern` (cuno/test.hpp) or `macro`
  *                                  (cuno/test.h). One test compiled into
  *                                  several translation units has a record
  *                                  for each; cuno decides which are the same
  *                                  place, by the file system rather than by
- *                                  how <file> is spelled. <suite> numbers
- *                                  the cuno::test::suite whose start it was
- *                                  registered in, from 1 (0 for the macro
- *                                  API): a header's copies come from
- *                                  different suites, and the same name from
- *                                  one place twice in one suite is a test
- *                                  registered again, which cuno refuses.
+ *                                  how <file> is spelled. <unit> numbers
+ *                                  the translation unit that called
+ *                                  cuno::test::test, from 1 in the order
+ *                                  first seen (0 for the macro API): a
+ *                                  header's copies come from different
+ *                                  units, and the same name from one place
+ *                                  twice in one unit is a test registered
+ *                                  again, which cuno refuses.
  *   fail <file> <line> <message>   a check failed (the test goes on unless
  *                                  it was a require)
  *   info <text>                    supplementary information
@@ -86,8 +87,9 @@ typedef struct cuno_test_entry {
     void *context;
     /* Registered by cuno_test (test.h) rather than by test.hpp. */
     int from_macro;
-    /* The suite being started when it was registered; 0 for none. */
-    int suite;
+    /* The translation unit it was registered from, numbered from 1; 0 for
+     * the macro API. */
+    int unit;
     struct cuno_test_entry *next;
 } cuno_test_entry;
 
@@ -97,8 +99,30 @@ static cuno_test_entry *cuno_test_head;
 static cuno_test_entry *cuno_test_tail;
 static FILE *cuno_test_out;
 static int cuno_test_failed;
-/* The suite being started, numbered from 1; 0 before the first. */
-static int cuno_test_suite;
+/* The translation units seen, by the address test.hpp gives each: a unit's
+ * number is its index here plus one. */
+static const void **cuno_test_units;
+static int cuno_test_unit_count;
+
+/* The number of the translation unit `unit` stands for, from 1. */
+static int cuno_test_unit_number(const void *unit) {
+    int i;
+    const void **grown;
+    for (i = 0; i < cuno_test_unit_count; i++) {
+        if (cuno_test_units[i] == unit) {
+            return i + 1;
+        }
+    }
+    grown = (const void **)realloc((void *)cuno_test_units,
+                                   (size_t)(cuno_test_unit_count + 1) * sizeof *grown);
+    if (grown == NULL) {
+        fputs("error: out of memory registering tests\n", stderr);
+        exit(1);
+    }
+    cuno_test_units = grown;
+    cuno_test_units[cuno_test_unit_count] = unit;
+    return ++cuno_test_unit_count;
+}
 
 /* Whether `a` goes after `b`: a later file, a later line, or the same
  * place, which keeps the order they were registered in. */
@@ -108,7 +132,7 @@ static int cuno_test_after(const cuno_test_entry *a, const cuno_test_entry *b) {
 }
 
 static void cuno_test_add(const char *name, const char *file, int line, void (*run)(void *),
-                          void *context, int from_macro) {
+                          void *context, int from_macro, const void *unit) {
 
     cuno_test_entry *entry = (cuno_test_entry *)calloc(1, sizeof *entry);
     if (entry == NULL) {
@@ -121,7 +145,7 @@ static void cuno_test_add(const char *name, const char *file, int line, void (*r
     entry->run = run;
     entry->context = context;
     entry->from_macro = from_macro;
-    entry->suite = from_macro ? 0 : cuno_test_suite;
+    entry->unit = unit == NULL ? 0 : cuno_test_unit_number(unit);
     /* Kept in order of file, then line, after any registered at the same
      * place: compilers run a file's initialisers in different orders (GCC
      * runs its constructors last first), and the list is the same on all.
@@ -147,18 +171,14 @@ static void cuno_test_add(const char *name, const char *file, int line, void (*r
 }
 
 
-void cuno_test_suite_begin(void) {
-    cuno_test_suite++;
-}
-
 void cuno_test_register(const char *name, const char *file, int line, void (*run)(void *),
-                        void *context) {
-    cuno_test_add(name, file, line, run, context, 0);
+                        void *context, const void *unit) {
+    cuno_test_add(name, file, line, run, context, 0, unit);
 }
 
 void cuno_test_register_macro(const char *name, const char *file, int line,
                               void (*run)(void *)) {
-    cuno_test_add(name, file, line, run, NULL, 1);
+    cuno_test_add(name, file, line, run, NULL, 1, NULL);
 }
 
 static void cuno_test_field(const char *text) {
@@ -394,7 +414,7 @@ static int cuno_test_main(int argc, char **argv) {
             cuno_test_field(entry->file);
             cuno_test_number(entry->line);
             cuno_test_field(entry->from_macro ? "macro" : "modern");
-            cuno_test_number(entry->suite);
+            cuno_test_number(entry->unit);
             cuno_test_end_record();
         }
         return 0;
