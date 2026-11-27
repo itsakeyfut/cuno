@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob 1055343d77fb6c5c83cdf2608212085886d6fe54 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob af6fa2274ece0c729100c7ec983d72141caa1041 -->
 
 # Configuration Files
 
@@ -97,7 +97,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 
 **Error** (exit code 3. Ignoring them would silently build something different from what the user intended):
 
-- `compiler = "gcc"` / `"safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml). It is an error only when it is the compiler selected; if a higher layer overrides it with another compiler, it is not an error (just as `[toolchain.version]` checks only the constraint of the compiler used).
+- `compiler = "safec"` (including when specified via `--compiler`, `CUNO_COMPILER`, or config.toml). It is an error only when it is the compiler selected; if a higher layer overrides it with another compiler, it is not an error (just as `[toolchain.version]` checks only the constraint of the compiler used).
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - Custom profiles (`inherits`, and `--profile` other than `dev` / `release`)
 - `[lib]`
@@ -105,7 +105,7 @@ Items and values outside MVP fall into two categories by their behavior when spe
 - `[target.<target>]` in `.cuno/config.toml`, `--target`
 - `[dependencies]`
 
-Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `clang-cl` keys of `[toolchain.version]`) is implemented in MVP. The `gcc` / `safec` keys of `[toolchain.version]` / `[build.<compiler>]` are harmless unless that compiler is used, so they do not cause an error if present.
+Everything else (including `[platform.<OS>.build]` and the `msvc` / `clang` / `clang-cl` / `gcc` keys of `[toolchain.version]`) is implemented. The `safec` keys of `[toolchain.version]` / `[build.<compiler>]` are harmless unless that compiler is used, so they do not cause an error if present.
 
 ### Unknown keys
 
@@ -181,7 +181,7 @@ Values of `compiler`:
 - `msvc`: Microsoft Visual C++ (cl.exe). Default for automatic selection on Windows.
 - `clang`: Clang (`clang` / `clang++`, using GCC-style flags).
 - `clang-cl`: Clang in MSVC-compatible mode (using MSVC-style flags).
-- `gcc`: GCC. Supported right after MVP.
+- `gcc`: GCC. On Windows, MinGW-w64 GCC ([toolchain.md](toolchain.md#mingw-gcc)).
 - `safec`: An experimental compiler developed separately by the cuno developer ([toolchain.md](toolchain.md)). Supported after cuno is established on the major compilers.
 
 ### `[build]`

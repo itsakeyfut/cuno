@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 538b0ccdb1648e8c0e0d3c1867595335dd519d64 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 0ab816ca611fc4dd413d4b0753f95a6c2a2cd695 -->
 
 # Toolchain
 
@@ -41,7 +41,7 @@ All three major families are supported.
 | C++ | C++17 | C++20 |
 | C | C11 | C17 |
 
-- If the compiler in use does not accept the standard specified in `edition` (e.g. `c++23` below cl 19.52, `c23` below cl 19.37), it is an error, and cuno indicates the required compiler version. cl only warns about a `/std` it does not know and ignores it, so whether it is accepted is decided from the compiler's version.
+- If the compiler in use does not accept the standard specified in `edition` (e.g. `c++23` below cl 19.52, `c23` below cl 19.37, `c++23` below GCC 11), it is an error, and cuno indicates the required compiler version. cl only warns about a `/std` it does not know and ignores it, so whether it is accepted is decided from the compiler's version.
 - The mapping from `edition` to each compiler's standard flag is in [build.md](build.md#settings-and-flags).
 
 ### Minimum compiler versions
@@ -203,6 +203,9 @@ A compiler must accept a C++20 specification.
   - Rationale: UCRT is the standard C runtime since Windows 10, and MSVC uses it too. An MSVCRT GCC and a UCRT GCC report the same target, so choosing the newest without telling them apart would make which runtime the executable is built against depend on whichever GCCs happen to be installed.
 - GCC is looked for only when GCC is used (when choosing GCC, and `cuno doctor`). Building with MSVC or Clang, `cuno fmt` and `cuno lint` do not start GCC.
 - `g++` is the one in the same directory as the `gcc` used. There is no separate setting for where `g++` is.
+- When building (compiling and linking), too, GCC is run in an environment with its directory added to the front of `PATH` (for the same reason as above). The environment in which `cuno run` and the like run the built executable does not get it.
+  - Rationale: with it added, the built executable would run inside cuno even if it needed GCC's DLLs, and that it does not start outside cuno would go unnoticed ([build.md](build.md#rationale)).
+- GCC does not use the MSVC toolset, so choosing GCC does not need Visual Studio. Nor is the MSVC environment (`INCLUDE`, `LIB`, `LIBPATH`) built.
 - When `[toolchain.paths] gcc` is written, only that file is used, as for LLVM, and if it does not meet the conditions it is an error (exit code 3).
 
 ## Selection
@@ -219,7 +222,7 @@ Precedence (higher wins):
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
 - Outside a project (for example when `cuno doctor` runs outside one), there are no project layers (`.cuno/config.toml` and `[toolchain]` in `cuno.toml`), so the compiler is chosen in the order `--compiler` → `CUNO_COMPILER` → user-level config → automatic selection.
   - Rationale: to match the compiler a `cuno build` in a new project would use. Looking only at automatic selection could diagnose MSVC for a user whose user-level config selects clang, answer "no problem", and leave the following build to fail.
-- If a compiler not supported in MVP (`gcc` / `safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
+- If a compiler not supported yet (`safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
 
 Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macOS.
 

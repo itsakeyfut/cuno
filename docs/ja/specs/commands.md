@@ -68,7 +68,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 | オプション | 説明 |
 |---|---|
-| `--compiler <名前>` | 使用するコンパイラ（msvc / clang / clang-cl / gcc / safec）。値の説明は [manifest.md](manifest.md) の `compiler`。MVP で `gcc` / `safec` を指定するとエラー（終了コード 3） |
+| `--compiler <名前>` | 使用するコンパイラ（msvc / clang / clang-cl / gcc / safec）。値の説明は [manifest.md](manifest.md) の `compiler`。`safec` を指定するとエラー（終了コード 3。まだ対応していないため） |
 | `--target <ビルド対象環境>` | クロスコンパイル。MVP では予約のみで、指定するとエラー（終了コード 3）（[toolchain.md](toolchain.md)） |
 | `--target-dir <パス>` | 出力先（[build.md](build.md)）。相対パスはカレントディレクトリ基準（環境変数 `CUNO_TARGET_DIR` も同じ） |
 | `-j, --jobs <数>` | 並列数。既定は CPU コア数 |
@@ -291,7 +291,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `--compiler <名前>` | 診断するコンパイラ。ビルド系コマンドの `--compiler` と同じ。指定しなければ、ビルド系コマンドと同じ選択の優先順位で選ばれるコンパイラを診断する（[toolchain.md](toolchain.md#選択)） |
 
 - プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合はプロジェクトの層がない優先順位で選ぶ（[toolchain.md](toolchain.md#選択)）。
-- 設定ファイル（`cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、MVP で未対応のコンパイラ（`gcc` / `safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
+- 設定ファイル（`cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、まだ対応していないコンパイラ（`safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
   - 設定ファイルを読めないときは、`--compiler`、`CUNO_COMPILER` と自動選択だけでコンパイラを選ぶ。自動選択になった場合は、設定で選んだコンパイラと取り違えないよう、`Selected` の理由に `automatic selection; the configuration could not be read` と書く。
   - 理由: `doctor` は環境や設定がおかしいときに実行するものなので、設定の誤りで止まると役に立たない。
 
@@ -363,8 +363,8 @@ cargo に倣う。
     - 理由: エラーでも警告でもない行で、MSVC のときだけソースの数だけ並び、ほかのコンパイラと表示が揃わないため。
   - 翻訳はしない（日本語版 Visual Studio の cl.exe なら日本語のまま）。cuno 自身のメッセージだけを英語に統一する。
   - Clang のように色付きで出力できるコンパイラは色付きで表示する。MSVC は色を出さないため、そのまま色なしで表示する。
-    - cuno の表示に色を付けるとき（上の「全コマンドで使えるもの」の順位）だけ、clang と clang-cl に `-fcolor-diagnostics -fansi-escape-codes` を渡す。cuno はコンパイラの出力をパイプで受け取るため、指定しないと Clang は色を付けない。Windows では色をエスケープシーケンスで出すよう `-fansi-escape-codes` も要る。この 2 つは引数の先頭に置く。`[build.clang] flags` などに利用者が書いた `-fno-color-diagnostics` は後ろにあるため、そちらが優先される。リンクには渡さない（リンカの出力に色はない）。`-v` で表示するコマンドには、この 2 つも含める（実行したコマンドを表示するため）。
-    - この 2 つは、変更の判定に使うコマンドライン（[build.md](build.md#変更の判定)）にも `compile_commands.json` にも含めない。理由: 色の指定を変えただけで全体を再コンパイルしないため。生成されるコードは変わらない。ただし Clang はデバッグ情報にコマンドラインを記録するため、デバッグ情報を付けたビルドでは、この 2 つの有無でオブジェクトファイルや PDB の中身が変わる（再コンパイルしないので、前のビルドのものが残る）。
+    - cuno の表示に色を付けるとき（上の「全コマンドで使えるもの」の順位）だけ、clang と clang-cl に `-fcolor-diagnostics -fansi-escape-codes`、GCC に `-fdiagnostics-color=always` を渡す。GCC も、パイプへの出力には指定しないと色を付けない。cuno はコンパイラの出力をパイプで受け取るため、指定しないと Clang は色を付けない。Windows では色をエスケープシーケンスで出すよう `-fansi-escape-codes` も要る。これらのフラグは引数の先頭に置く。`[build.clang] flags` などに利用者が書いた `-fno-color-diagnostics` は後ろにあるため、そちらが優先される。リンクには渡さない（リンカの出力に色はない）。`-v` で表示するコマンドには、これらのフラグも含める（実行したコマンドを表示するため）。
+    - これらのフラグは、変更の判定に使うコマンドライン（[build.md](build.md#変更の判定)）にも `compile_commands.json` にも含めない。理由: 色の指定を変えただけで全体を再コンパイルしないため。生成されるコードは変わらない。ただし Clang と GCC はデバッグ情報にコマンドラインを記録するため、デバッグ情報を付けたビルドでは、これらのフラグの有無でオブジェクトファイルや PDB の中身が変わる（再コンパイルしないので、前のビルドのものが残る）。
 
 ## 終了コード
 
