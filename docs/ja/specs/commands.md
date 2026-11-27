@@ -115,7 +115,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - **パッケージ名の規則**: 英数字・`-`・`_` のみ。先頭は英字。違反すればエラー（終了コード 2）。`--name` を省略してディレクトリ名が規則に合わない場合もエラーにし、`--name` での指定を案内する。
   - Windows の予約名（`con`、`prn`、`aux`、`nul`、`com1`〜`com9`、`lpt1`〜`lpt9`。大文字・小文字を問わない）も、どの OS でもエラーにする。
     - 理由: パッケージ名はディレクトリ名と実行ファイル名になる。Windows ではこれらの名前のファイルやディレクトリを作れないか、作れても消しにくい。
-- **作成先のディレクトリが既にある場合**はエラー（終了コード 2）。既存ディレクトリのプロジェクト化は `cuno init`（MVP 直後）で扱う。
+- **作成先のディレクトリが既にある場合**はエラー（終了コード 2）。既存ディレクトリのプロジェクト化は [`cuno init`](#cuno-init-パス) で扱う。
 - `--edition` と `--lang` が合わない場合（例: `--lang c++ --edition c17`）はエラー。`--edition` だけを指定した場合は、その規格から言語を決める（`c11` / `c17` / `c23` なら C）。
 - `--lib`（ライブラリとして作成）は、ライブラリプロジェクトの対応と合わせて「後」に追加する（[project-layout.md](project-layout.md)）。
 
@@ -150,6 +150,41 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `--edition` が `--lang` と合わない | `` error: `<規格>` is not a standard of <言語> `` と `help: use --lang <規格の言語>, or an edition of <言語>: <その言語の規格の一覧>` |
 
 - git が見つからない場合は `warning: git was not found; the package is not under version control` を出す。`git init` が失敗した場合も、`warning: git init failed: <git の出力>` の警告にとどめる（ファイルは作り終えているため、作ったものは消さない）。
+
+### `cuno init [パス]`
+
+既存のディレクトリ（既定はカレントディレクトリ）をパッケージにする。オプションは `cuno new` と同じ（`--lang`、`--edition`、`--name`、`--vcs`）。パッケージ名の規則と、`--lang` と `--edition` の扱いも `cuno new` と同じ。
+
+ディレクトリの中身で、書くものを決める。
+
+| ディレクトリの中 | 書くもの |
+|---|---|
+| `src/` にエントリファイル（`src/main.*` か `src/bin/` 直下のソース。[project-layout.md](project-layout.md#エントリファイルとパッケージ本体)）がある | `cuno.toml` だけ |
+| ソース（`.c` / `.cpp` / `.cc` / `.cxx`）が 1 つもない | `cuno.toml` と、`cuno new` と同じ `src/main.*`・`src/calc.*` |
+| ソースはあるが、上のどちらでもない（`src/` の外にだけある、`src/` にエントリファイルがない） | 何も書かずにエラー（終了コード 2） |
+
+- 言語は、`--lang` / `--edition` がなければ、`src/` のソースから決める。C++ のソースが 1 つでもあれば C++、`.c` だけなら C、ソースがなければ C++（`cuno new` と同じ）。
+- `cuno.toml` の中身は `cuno new` と同じ（`[package]` の `name` / `version` / `lang` / `edition` のみ）。
+- **既存のファイルは上書きしない。** 書くファイルのどれかがすでにあれば、何も書かずにエラーにする。ただし `.gitignore` は例外で、下のとおり足りない行を足す。
+- `--vcs git`（既定）では、`cuno new` の `.gitignore` の行（`target/` など）のうち、すでにある `.gitignore` に書かれていないものを末尾に足す（既存の行、改行の形、BOM はそのまま残す）。`.gitignore` がなければ作る。
+  - 理由: 既存のプロジェクトをパッケージにすると、cuno の生成物（`target/` など）が新たにできる。足さないと誤ってコミットしやすい。
+- Git の扱いは `cuno new` と同じ（既存のリポジトリの中なら `git init` しない。git がない、`git init` が失敗した場合は警告にとどめる）。
+- 書き終えたら ``     Created `<名前>` package`` を表示する（`-q` では出さない）。
+
+| 場合 | メッセージ |
+|---|---|
+| ディレクトリがない | `` error: `<パス>` does not exist `` と `help: use cuno new to create a package in a new directory` |
+| パスがディレクトリでない | `` error: `<パス>` is not a directory `` |
+| `cuno.toml` がすでにある | `` error: `<パス>` already has a cuno.toml `` |
+| ソースが `src/` の外にだけある | `` error: sources found outside src/: <見つけたソース> `` と `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
+| `src/` にソースはあるが、実行ファイルになるもの（エントリファイル）がない | `` error: src/ has no executable to build `` と `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
+| 書くファイル、またはその上のディレクトリの場所に、別のものがすでにある（`src/main.cpp` を書くのに `src` がファイル、など） | `` error: <ファイル> already exists `` と `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| `--vcs git` で、すでにある `.gitignore` に足せない（ファイルでない、リンク、UTF-8 として読めない） | `` error: cannot add to .gitignore: <理由> `` と `help: make it a text file in UTF-8, or use --vcs none` |
+
+- 見つけたソースは、多ければ最初の 5 つと残りの数を示す（`and 2 more`）。
+- ソースは、`target/`、名前が `.` で始まるディレクトリ、自前の `cuno.toml` を持つディレクトリ（別のパッケージ）、リンクの中は探さない。`src/` かどうかは、ビルドと同じくファイルシステムの規則で決める（Windows では `Src/` も `src/`）。
+- エラーはすべて、何かを書く前に判断する。エラーで止まったときに、書きかけのものは残らない。
+- 理由（`src/` の外のソースを `[[bin]]` に書かない）: cuno はパッケージ本体を `src/` からしか集めないので、入口だけを書いても、ほかのソースはビルドされずにリンクで失敗する。
 
 ### `cuno run`
 

@@ -27,6 +27,7 @@ use Row::{DoesNotApply, Runs};
 /// the settings' own warnings onwards.
 const COLOR: &[(&str, Row)] = &[
     ("new", Runs(&["new", "app", "--vcs", "none"])),
+    ("init", Runs(&["init", "--vcs", "none"])),
     ("build", Runs(&["build"])),
     ("check", Runs(&["check"])),
     ("run", Runs(&["run"])),
@@ -44,6 +45,10 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
     (
         "new",
         DoesNotApply("it creates a package, and needs none around it"),
+    ),
+    (
+        "init",
+        DoesNotApply("it makes a package of the directory, and needs none around it"),
     ),
     ("build", Runs(&["build"])),
     ("check", Runs(&["check"])),
@@ -66,6 +71,7 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
 /// that names the project root in another case is the project root.
 const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
     ("new", DoesNotApply("it has no output directory")),
+    ("init", DoesNotApply("it has no output directory")),
     ("build", Runs(&["build"])),
     ("check", Runs(&["check"])),
     ("run", Runs(&["run"])),
@@ -81,6 +87,7 @@ const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
 /// another compiler is selected.
 const CONFIGURED_COPY: &[(&str, Row)] = &[
     ("new", DoesNotApply("it runs no tool")),
+    ("init", DoesNotApply("it runs no tool")),
     ("build", Runs(&["build", "--compiler", "msvc"])),
     ("check", Runs(&["check", "--compiler", "msvc"])),
     ("run", Runs(&["run", "--compiler", "msvc"])),
