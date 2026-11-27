@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob fcfe0848cc729ca1de5a9a735e39e80d98728812 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob f83704b09130d68bcc7c1e92dbadc17b0e531b06 -->
 
 # Configuration Files
 
@@ -17,7 +17,8 @@ Users write only these two configuration files (see the anti-goals in [overview.
 
 The project's configuration file is named `Cuno.toml` (capital C).
 
-- On a case-sensitive file system, a directory holding a lowercase `cuno.toml` and no `Cuno.toml` stops the search for the project, with an error (exit code 3): `error: found cuno.toml in <directory>; the manifest is named Cuno.toml` and `help: rename it to Cuno.toml`. Telling another package's boundary while gathering sources uses the same judgement.
+- On a case-sensitive file system, a directory holding no `Cuno.toml` but a file whose name differs from it only in case (`cuno.toml`, `CUNO.TOML` and the like) stops the search for the project, with an error (exit code 3): `error: found <file> in <directory>; the manifest is named Cuno.toml` and `help: rename it to Cuno.toml`. `cuno init` gives the same error in such a directory. Telling another package's boundary while gathering sources uses the same judgement, and its messages name the file as it is.
+  - When the directory cannot be listed, whether `Cuno.toml` can be opened decides.
   - Rationale: skipping it would silently use another project further up and build the wrong package.
   - On Windows the file system opens `cuno.toml` as `Cuno.toml`, so a lowercase one is read as it is.
 
