@@ -54,7 +54,9 @@ pub fn lint(
     // of the dev profile, the one compile_commands.json describes.
     let runner = SystemRunner::new();
     let toolchain::Ready {
-        selected, prepared, ..
+        selected,
+        prepared,
+        llvm,
     } = toolchain::ready(
         toolchain::ReadyFor::Lint,
         &settings,
@@ -85,9 +87,6 @@ pub fn lint(
 
     // clang-tidy, and its pairing with the standard library, before any
     // source is analysed (toolchain.md, "Minimum compiler versions").
-    let llvm = toolchain::detect(Some(&settings), env, host, &runner)
-        .llvm
-        .map_err(boxed)?;
     let clang_tidy = select::select_tool(Tool::ClangTidy, &llvm, host).map_err(boxed)?;
     if let Some(tidy_compile) = toolchain::tidy_compile(
         &selected,
