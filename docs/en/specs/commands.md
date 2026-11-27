@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 66d019c5835764abfcd12ba795bb6a6edff654d9 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob ddd0d0b23d67e333899c79ccca14155b12db8cd8 -->
 
 # Commands
 
@@ -181,12 +181,16 @@ What it writes depends on what the directory holds.
 | Case | Message |
 |---|---|
 | The directory does not exist | `` error: `<path>` does not exist `` and `help: use cuno new to create a package in a new directory` |
+| The path is not a directory | `` error: `<path>` is not a directory `` |
 | A `cuno.toml` is already there | `` error: `<path>` already has a cuno.toml `` |
-| Sources only outside `src/` | `` error: the sources are not where cuno looks for them: <sources found> `` and `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
-| Sources in `src/` but no entry file | `` error: src/ has no entry file `` and `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
-| A file it would write is already there | `` error: <file> already exists `` and `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| Sources only outside `src/` | `` error: sources found outside src/: <sources found> `` and `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
+| Sources in `src/` but nothing that becomes an executable (no entry file) | `` error: src/ has no executable to build `` and `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
+| Something else is already where a file it would write, or a directory above it, goes (`src` is a file when `src/main.cpp` is to be written, for example) | `` error: <file> already exists `` and `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| With `--vcs git`, an existing `.gitignore` cannot be added to (not a file, a link, or not readable as UTF-8) | `` error: cannot add to .gitignore: <reason> `` and `help: make it a text file in UTF-8, or use --vcs none` |
 
-- When many sources are found, the first few are named, with the number of the rest.
+- When many sources are found, the first 5 are named, with the number of the rest (`and 2 more`).
+- Sources are not looked for in `target/`, in a directory whose name starts with `.`, in a directory with its own `cuno.toml` (another package), or through a link. Whether a directory is `src/` is decided by the file system's rules, as the build decides it (on Windows, `Src/` is `src/` too).
+- Every error is decided before anything is written. When it stops on an error, nothing half-written is left behind.
 - Rationale for not writing a source outside `src/` into `[[bin]]`: cuno gathers the package body only from `src/`. Writing only the entry point would leave the other sources unbuilt, and the link would fail.
 
 ### `cuno run`

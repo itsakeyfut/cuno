@@ -174,12 +174,16 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | 場合 | メッセージ |
 |---|---|
 | ディレクトリがない | `` error: `<パス>` does not exist `` と `help: use cuno new to create a package in a new directory` |
+| パスがディレクトリでない | `` error: `<パス>` is not a directory `` |
 | `cuno.toml` がすでにある | `` error: `<パス>` already has a cuno.toml `` |
-| ソースが `src/` の外にだけある | `` error: the sources are not where cuno looks for them: <見つけたソース> `` と `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
-| `src/` にソースはあるがエントリファイルがない | `` error: src/ has no entry file `` と `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
-| 書くファイルがすでにある | `` error: <ファイル> already exists `` と `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| ソースが `src/` の外にだけある | `` error: sources found outside src/: <見つけたソース> `` と `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
+| `src/` にソースはあるが、実行ファイルになるもの（エントリファイル）がない | `` error: src/ has no executable to build `` と `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
+| 書くファイル、またはその上のディレクトリの場所に、別のものがすでにある（`src/main.cpp` を書くのに `src` がファイル、など） | `` error: <ファイル> already exists `` と `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| `--vcs git` で、すでにある `.gitignore` に足せない（ファイルでない、リンク、UTF-8 として読めない） | `` error: cannot add to .gitignore: <理由> `` と `help: make it a text file in UTF-8, or use --vcs none` |
 
-- 見つけたソースは、多ければ最初の数個と残りの数を示す。
+- 見つけたソースは、多ければ最初の 5 つと残りの数を示す（`and 2 more`）。
+- ソースは、`target/`、名前が `.` で始まるディレクトリ、自前の `cuno.toml` を持つディレクトリ（別のパッケージ）、リンクの中は探さない。`src/` かどうかは、ビルドと同じくファイルシステムの規則で決める（Windows では `Src/` も `src/`）。
+- エラーはすべて、何かを書く前に判断する。エラーで止まったときに、書きかけのものは残らない。
 - 理由（`src/` の外のソースを `[[bin]]` に書かない）: cuno はパッケージ本体を `src/` からしか集めないので、入口だけを書いても、ほかのソースはビルドされずにリンクで失敗する。
 
 ### `cuno run`
