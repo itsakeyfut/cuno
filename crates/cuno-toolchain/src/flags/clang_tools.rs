@@ -13,6 +13,7 @@ use super::Edition;
 use super::compile::{TARGET_SWITCH, standard};
 use crate::Version;
 use crate::compiler::{CompilerKind, Family, Syntax};
+use crate::select::Selected;
 
 /// What a Clang-based tool is told about the compiler a build ran with,
 /// besides its arguments.
@@ -28,6 +29,25 @@ pub struct ToolContext<'a> {
     /// GCC's version, whose `__GNUC__` the build sees, for GCC; `None`
     /// otherwise.
     pub gnuc: Option<&'a Version>,
+}
+
+impl<'a> ToolContext<'a> {
+    /// What a tool is told about `selected`, whose environment gives
+    /// `include` (`Prepared::include_dirs`). Which versions the build sees,
+    /// and through which macro, are read from `selected` here, once for
+    /// every caller: a tool told the wrong one analyses other code than the
+    /// build compiles.
+    pub fn of(selected: &'a Selected, include: &'a [PathBuf]) -> ToolContext<'a> {
+        ToolContext {
+            kind: selected.kind,
+            include,
+            msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
+            gnuc: match selected.kind.family() {
+                Family::Gnu => Some(&selected.version),
+                Family::Msvc | Family::Llvm => None,
+            },
+        }
+    }
 }
 
 /// One compile as a Clang-based tool reads it. Only [`for_clang_tools`]
@@ -160,6 +180,48 @@ pub(crate) fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each compiler's tools are told the version macros its builds see,
+    /// read from the selection: GCC's version as `__GNUC__`, and the cl
+    /// version of the toolset a compiler builds with as `_MSC_VER`. Every
+    /// kind is asked, with and without a toolset.
+    ///
+    /// Mutation: give GCC no version, or give a compiler other than GCC
+    /// one, or drop or misread the toolset's version; this test fails.
+    #[test]
+    fn each_compiler_s_tools_are_told_the_versions_its_builds_see() {
+        use crate::msvc::MsvcToolset;
+        use crate::select::Source;
+        let version = Version::find_in("16.2.0").unwrap();
+        let cl = Version::find_in("19.44.35207").unwrap();
+        for kind in CompilerKind::ALL {
+            for with_toolset in [false, true] {
+                let selected = Selected {
+                    kind,
+                    executable: PathBuf::from("C:/bin/cc.exe"),
+                    version,
+                    msvc: with_toolset.then(|| MsvcToolset {
+                        dir: PathBuf::from("C:/VS/VC/Tools/MSVC/14.44.35207"),
+                        cl_version: cl,
+                    }),
+                    source: Source::CommandLine,
+                };
+                let context = ToolContext::of(&selected, &[]);
+                let what = format!("{} with_toolset={with_toolset}", kind.name());
+                assert_eq!(context.kind, kind, "{what}");
+                assert_eq!(
+                    context.gnuc.map(ToString::to_string),
+                    (kind == CompilerKind::Gcc).then(|| "16.2.0".to_owned()),
+                    "{what}"
+                );
+                assert_eq!(
+                    context.msvc.map(ToString::to_string),
+                    with_toolset.then(|| "19.44.35207".to_owned()),
+                    "{what}"
+                );
+            }
+        }
+    }
 
     fn strings(args: &[OsString]) -> Vec<String> {
         args.iter()
