@@ -150,11 +150,7 @@ impl Prepared {
 /// it runs open it in the ANSI code page (`docs/en/specs/toolchain.md`,
 /// "MinGW (GCC)"). As it is otherwise; the build refuses what is left.
 fn ascii_temp(env: Env) -> Env {
-    let Some(temp) = ["TMP", "TEMP", "USERPROFILE"]
-        .iter()
-        .find_map(|name| env.get(name))
-        .map(PathBuf::from)
-    else {
+    let Some(temp) = crate::short_path::temp_dir(&env) else {
         return env;
     };
     if temp.to_str().is_some_and(str::is_ascii) {

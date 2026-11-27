@@ -4,6 +4,20 @@
 
 use std::path::{Path, PathBuf};
 
+use cuno_core::Env;
+
+/// The temporary directory programs started in `env` write in, as Windows
+/// finds it: `TMP`, else `TEMP`, else `USERPROFILE`. GCC is given its short
+/// name (`prepare`) and the build refuses what is left (`cuno-build`'s
+/// `ascii`), and the two must look at the same directory: were they to
+/// differ, the check would pass and the linker would fail on the path.
+pub fn temp_dir(env: &Env) -> Option<PathBuf> {
+    ["TMP", "TEMP", "USERPROFILE"]
+        .iter()
+        .find_map(|name| env.get(name))
+        .map(PathBuf::from)
+}
+
 /// `path`'s short name, when the volume keeps one and it is ASCII; `None`
 /// otherwise, and off Windows.
 #[cfg(windows)]
@@ -81,6 +95,32 @@ pub fn ascii_short_path(_path: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuno_core::NameCase;
+
+    /// `TMP` first, then `TEMP`, then `USERPROFILE`; none of them, none.
+    ///
+    /// Mutation: drop `TEMP` or `USERPROFILE`, or change the order; this
+    /// test fails.
+    #[test]
+    fn the_temporary_directory_is_tmp_then_temp_then_userprofile() {
+        let env = |pairs: &[(&str, &str)]| {
+            Env::from_pairs(
+                pairs.iter().map(|(n, v)| (n.into(), v.into())),
+                NameCase::Insensitive,
+            )
+        };
+        let all = env(&[
+            ("USERPROFILE", "C:/u"),
+            ("TEMP", "C:/temp"),
+            ("TMP", "C:/tmp"),
+        ]);
+        assert_eq!(temp_dir(&all), Some(PathBuf::from("C:/tmp")));
+        let no_tmp = env(&[("USERPROFILE", "C:/u"), ("TEMP", "C:/temp")]);
+        assert_eq!(temp_dir(&no_tmp), Some(PathBuf::from("C:/temp")));
+        let profile = env(&[("USERPROFILE", "C:/u")]);
+        assert_eq!(temp_dir(&profile), Some(PathBuf::from("C:/u")));
+        assert_eq!(temp_dir(&env(&[])), None);
+    }
 
     /// ASCII always fits the ANSI code page; a character no Windows code
     /// page holds (U+20B9F, outside Shift_JIS's set) does not.
