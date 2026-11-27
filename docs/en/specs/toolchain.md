@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 43b5e1ef0d1cc6aa2a045f3694b9fdc37f5905b7 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 682a9e3ca7db683d79561097cbfce13a9d20f942 -->
 
 # Toolchain
 
@@ -190,7 +190,9 @@ A compiler must accept a C++20 specification.
   - Version: what `-dumpfullversion` prints (`14.2.0`).
   - Whether it is a pre-release: whether the first line of `--version` contains `experimental` or `prerelease`.
   - Target: what `-dumpmachine` prints (`x86_64-w64-mingw32`).
-  - Whether the C runtime is UCRT: whether `_UCRT` is among the predefined macros (what is printed by preprocessing an empty input with `-dM -E`).
+  - Whether the C runtime is UCRT: whether `_UCRT` is among the macros after MinGW-w64's header `_mingw.h` is read (what is printed by preprocessing an empty input with `-dM -E -include _mingw.h`). `_UCRT` is defined by `_mingw.h`, not by the compiler.
+  - GCC is run in an environment with that GCC's directory added to the front of `PATH`. Only the environment of the GCC that cuno starts changes; the user's and the system's `PATH` do not.
+    - Rationale: GCC's compiler proper (`cc1`) uses DLLs in the same directory. When that directory is not on `PATH`, preprocessing and compiling fail without printing anything (MSYS2 does not change `PATH` by default).
   - Rationale: the first number on the first line of `--version` can be a number in the name the distributor gave (`2023.02.1` in `gcc (Buildroot 2023.02.1) 12.3.0`). The `gcc version` line of `-v` is translated according to the language setting.
 - Which one is used when several are found is decided by "Selection", as for LLVM: among those that run, are not pre-releases, target `x86_64-w64-mingw32` and use the UCRT C runtime, the newest that satisfies the version conditions.
 - A GCC whose C runtime is MSVCRT (MSYS2's mingw64, older distributions, etc.) is not used. If only such GCCs are found, it is an error (exit code 3) with guidance on installing a UCRT GCC (MSYS2's ucrt64).

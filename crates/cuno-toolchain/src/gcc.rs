@@ -67,7 +67,7 @@ pub enum Probe {
         prerelease: bool,
         /// What `-dumpmachine` printed (`x86_64-w64-mingw32`), if anything.
         target: Option<String>,
-        /// Whether its C runtime is UCRT: it predefines `_UCRT`.
+        /// Whether its C runtime is UCRT: its `_mingw.h` defines `_UCRT`.
         ucrt: bool,
     },
     /// It ran but gave no version that could be read.
@@ -160,9 +160,27 @@ fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// `env` with the directory holding `gcc` first on `PATH`: its compiler
+/// proper loads DLLs from there, and fails silently when it is not on
+/// `PATH` (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
+fn env_for(gcc: &Path, env: &Env) -> Env {
+    let Some(dir) = gcc.parent() else {
+        return env.clone();
+    };
+    let rest = env
+        .get("PATH")
+        .map(|p| std::env::split_paths(p).collect::<Vec<_>>())
+        .unwrap_or_default();
+    match std::env::join_paths(std::iter::once(dir.to_owned()).chain(rest)) {
+        Ok(path) => env.with("PATH", path),
+        Err(_) => env.clone(),
+    }
+}
+
 /// Runs `gcc` for its version, whether it is a snapshot, its target and
-/// its C runtime.
+/// its C runtime, with its own directory first on `PATH`.
 fn probe(path: &Path, host: HostOs, run: &dyn Runner, env: &Env) -> Probe {
+    let env = &env_for(path, env);
     let Some(full) = ask(path, &["-dumpfullversion"], run, env) else {
         return Probe::Failed;
     };
@@ -179,8 +197,13 @@ fn probe(path: &Path, host: HostOs, run: &dyn Runner, env: &Env) -> Probe {
         HostOs::Windows => "NUL",
         HostOs::Other => "/dev/null",
     };
-    let ucrt = ask(path, &["-dM", "-E", "-x", "c", empty_input], run, env)
-        .is_some_and(|macros| macros.lines().any(|l| l.starts_with("#define _UCRT ")));
+    let args = ["-dM", "-E", "-x", "c", "-include", "_mingw.h", empty_input];
+    let ucrt = ask(path, &args, run, env).is_some_and(|macros| {
+        macros.lines().any(|l| {
+            let mut words = l.split_whitespace();
+            words.next() == Some("#define") && words.next() == Some("_UCRT")
+        })
+    });
     Probe::Ran {
         version,
         prerelease,
@@ -197,13 +220,15 @@ mod tests {
 
     /// Answers as the GCC in each directory would, by the directory's name:
     /// `v<major>` is `<major>.2.0`, UCRT, MinGW; `msvcrt` lacks `_UCRT`;
+    /// as a real one, any of them gives `_UCRT` only from `-include
+    /// _mingw.h`, run with its own directory first on `PATH`;
     /// `exp` and `pre` are snapshots; `linux` targets Linux; `nover` gives
     /// no version; `nomachine` fails `-dumpmachine`; `blank` prints an empty
     /// target; `broken` fails everything.
     struct ByDir;
 
     impl Runner for ByDir {
-        fn run(&self, program: &Path, args: &[&OsStr], _env: &Env) -> std::io::Result<Output> {
+        fn run(&self, program: &Path, args: &[&OsStr], env: &Env) -> std::io::Result<Output> {
             let dir = program
                 .parent()
                 .unwrap()
@@ -245,10 +270,24 @@ mod tests {
                     "blank" => ok("\n"),
                     _ => ok("x86_64-w64-mingw32\n"),
                 },
-                "-dM" => match dir.as_str() {
-                    "msvcrt" | "linux" => ok("#define __MINGW64__ 1\n#define _UCRTX 1\n"),
-                    _ => ok("#define __MINGW64__ 1\n#define _UCRT 1\n"),
-                },
+                "-dM" => {
+                    let first_on_path = env
+                        .get("PATH")
+                        .and_then(|p| std::env::split_paths(p).next());
+                    let header = args.windows(2).any(|w| w == ["-include", "_mingw.h"]);
+                    if first_on_path.as_deref() != program.parent() {
+                        // Its compiler proper finds no DLLs: exit 1, silent.
+                        Output {
+                            success: false,
+                            stdout: Vec::new(),
+                            stderr: Vec::new(),
+                        }
+                    } else if !header || matches!(dir.as_str(), "msvcrt" | "linux") {
+                        ok("#define __MINGW64__ 1\n#define _UCRTX 1\n")
+                    } else {
+                        ok("#define __MINGW64__ 1\n#define _UCRT \n")
+                    }
+                }
                 _ => failed,
             })
         }
@@ -272,10 +311,13 @@ mod tests {
 
     /// The configured path comes first, then `PATH` in order; a file
     /// reached twice, even by another spelling, is listed once; the version
-    /// is `-dumpfullversion`'s, never a number in the banner.
+    /// is `-dumpfullversion`'s, never a number in the banner; a UCRT GCC
+    /// whose directory is not first on `PATH` is still found to be UCRT.
     ///
     /// Mutation: search `PATH` before the configured path, compare paths as
-    /// written, or read the version from the banner; this test fails.
+    /// written, read the version from the banner, check `_UCRT` without
+    /// `-include _mingw.h`, or run GCC with the caller's `PATH`; this test
+    /// fails.
     #[test]
     fn copies_are_found_in_order_once_each() {
         let root = tempfile::tempdir().unwrap();
