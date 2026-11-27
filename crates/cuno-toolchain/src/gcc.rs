@@ -584,21 +584,28 @@ mod tests {
 
     /// A `CPATH` holding another `_mingw.h` would make the UCRT check read
     /// it; detection runs GCC without the variables the build leaves out,
-    /// so it judges the GCC the build runs. The runner answers `_UCRT` only
-    /// when none of them reaches GCC.
+    /// so it judges the GCC the build runs. The runner records every
+    /// question GCC was asked while one of them reached it.
     ///
-    /// Mutation: keep the variables in `env_for`; this test fails.
+    /// Mutation: keep the variables in `env_for`, or ask any one question
+    /// (`--version`, `-dumpmachine`, ...) in the environment detection was
+    /// given; this test fails.
     #[test]
     fn detection_runs_gcc_without_the_variables_the_build_leaves_out() {
-        struct UcrtUnlessTold;
+        struct Recording {
+            told: std::cell::RefCell<Vec<String>>,
+        }
 
-        impl Runner for UcrtUnlessTold {
+        impl Runner for Recording {
             fn run(&self, _: &Path, args: &[&OsStr], env: &Env) -> std::io::Result<Output> {
-                let told = TOOL_OPTION_VARIABLES.iter().any(|v| env.get(v).is_some());
-                let text = match args[0].to_str().unwrap() {
+                let asked = args[0].to_string_lossy().into_owned();
+                if TOOL_OPTION_VARIABLES.iter().any(|v| env.get(v).is_some()) {
+                    self.told.borrow_mut().push(asked.clone());
+                }
+                let text = match asked.as_str() {
                     "-dumpfullversion" => "15.2.0",
                     "-dumpmachine" => "x86_64-w64-mingw32",
-                    "-dM" if !told => "#define _UCRT 1",
+                    "-dM" => "#define _UCRT 1",
                     _ => "",
                 };
                 Ok(Output {
@@ -614,11 +621,15 @@ mod tests {
         std::fs::write(&gcc, "").unwrap();
         for name in TOOL_OPTION_VARIABLES {
             let env = env_with_path(&[]).with(name, "C:/elsewhere".into());
-            let found = find_in(&env, HostOs::Windows, Some(&gcc), &[], &UcrtUnlessTold).unwrap();
+            let runner = Recording {
+                told: Default::default(),
+            };
+            let found = find_in(&env, HostOs::Windows, Some(&gcc), &[], &runner).unwrap();
+            assert!(matches!(found[0].probe, Probe::Ran { ucrt: true, .. }));
             assert!(
-                matches!(found[0].probe, Probe::Ran { ucrt: true, .. }),
-                "{name}: {:?}",
-                found[0].probe
+                runner.told.borrow().is_empty(),
+                "{name} reached GCC when asked {:?}",
+                runner.told.borrow()
             );
         }
     }
