@@ -338,10 +338,10 @@ cuno が検出したコンパイラと、clang-format / clang-tidy を一覧に�
 
 - プロジェクトの外でも実行できる。どのコンパイラが選ばれるかは、ビルド系コマンドと同じ選択の優先順位で決める（[toolchain.md](toolchain.md#選択)）。
 - 種類ごとに 1 行（`msvc`、`clang`、`clang-cl`、`gcc`、`clang-format`、`clang-tidy` の順）。その種類を選んだときに使われるもの（`[toolchain.paths]` に書いたものがあればそれ、なければ使える中で最新のもの）のバージョンと場所を出す。
-  - 選ばれるコンパイラの行は、選択と同じ判定（cuno の最低バージョンと `[toolchain.version]`）で選んだものを出し、末尾に `(selected: <理由>)` を付ける。理由は `cuno doctor` の `Selected` の行と同じ（`--compiler`、`CUNO_COMPILER`、設定ファイルのどれか、または `automatic selection`）。
+  - 選ばれるコンパイラの行は、選択と同じ判定（cuno の最低バージョンと `[toolchain.version]`）で選んだものを出し、末尾に `(selected: <理由>)` を付ける。理由は `cuno doctor` の `Selected` の行と同じ（`CUNO_COMPILER`、設定ファイルのどれか、または `automatic selection`。このコマンドに `--compiler` はない）。
   - ほかの行の判定は `cuno doctor` の `Info` の行と同じで、`[toolchain.version]` は当てない（実際に使うコンパイラにだけ当てるため）。
   - 見つからなければ `not found`、見つかったが使えなければ `not usable: <理由>`。`[toolchain.paths]` に書いたものが使えない場合も `not usable: <理由>` とする（問題として報告するのは `cuno doctor`）。
-  - 選ばれるはずのコンパイラが選べない場合（見つからない、バージョンが条件に合わない）は、その行に理由を出し、末尾に `(asked for: <理由>)` を付ける。
+  - 選ばれるはずのコンパイラが選べない場合（見つからない、バージョンが条件に合わない）は、その行に理由を出し、末尾に `(would be selected: <理由>)` を付ける。
 - 一覧は標準出力に出す（このコマンドの結果のため。`-q` でも消えない）。設定ファイルの警告などは、ほかのコマンドと同じく標準エラーに出す。
   - 理由: `cuno toolchain list > toolchains.txt` や、ほかのコマンドへのパイプで扱えるように。プログラムが読む形式が要るときは、別のオプション（`--format json` など）として足す。
 - 終了コードは、一覧を出せれば `0`（何が見つからなくても）。設定ファイルを読めないときは、ほかのコマンドと同じくエラー（終了コード 3）。
@@ -359,7 +359,7 @@ clang-tidy    22.1.8       C:\Program Files\LLVM\bin\clang-tidy.exe
 
 ### `cuno toolchain default <コンパイラ>`
 
-既定のコンパイラを、ユーザー単位の `<管理ディレクトリ>/config.toml` の `[toolchain] compiler` に書く（[manifest.md](manifest.md#cunoconfigtoml)）。そのマシンの、ほかの層がコンパイラを選んでいないすべてのビルドに効く。
+既定のコンパイラを、ユーザー単位の `<管理ディレクトリ>/config.toml` の `[toolchain] compiler` に書く（[manifest.md](manifest.md#cunoconfigtoml)）。そのユーザーの、ほかの層がコンパイラを選んでいないすべてのビルドに効く。
 
 - 書き換えるのは `[toolchain] compiler` だけ。ファイルのほかのキー、コメント、並びはそのまま残す。ファイルや管理ディレクトリがなければ作る。
 - `<コンパイラ>` は `--compiler` と同じ名前。知らない名前と、まだ対応していないもの（`safec`）は、`--compiler` に指定したときと同じエラー（終了コード 3）で、何も書かない。
@@ -373,7 +373,7 @@ clang-tidy    22.1.8       C:\Program Files\LLVM\bin\clang-tidy.exe
 - 次の場合は、書いたうえで警告する（終了コード `0`）。
   - 実行した場所では、より優先される層（`--compiler`、`CUNO_COMPILER`、プロジェクトの `.cuno/config.toml`・`cuno.toml`）が別のコンパイラを選んでいる: `warning: gcc is the default, but here [toolchain] compiler in cuno.toml selects clang`。
   - そのコンパイラが、このマシンで見つからない、または使えない: `warning:` に、ビルドしたときと同じ理由を書き、`help:` に入れ方を書く。
-  - 理由: 既定はマシン全体の設定で、これから入れるコンパイラを先に選んでおく使い方もあるため、書くこと自体は止めない。ただ、次のビルドが選ぶものと違うことには、書いた時点で気づけるようにする。
+  - 理由: 既定はそのユーザーのすべてのビルドに効く設定で、これから入れるコンパイラを先に選んでおく使い方もあるため、書くこと自体は止めない。ただ、次のビルドが選ぶものと違うことには、書いた時点で気づけるようにする。
 
 ## 出力
 

@@ -192,7 +192,7 @@ enum Command {
 enum ToolchainCommand {
     /// List the compilers and tools cuno finds, and which one builds use
     List,
-    /// Make a compiler the default for this machine's builds
+    /// Make a compiler this user's default
     Default {
         /// The compiler (msvc / clang / clang-cl / gcc)
         #[arg(value_name = "COMPILER")]

@@ -74,14 +74,14 @@ fn list_names_every_kind_and_marks_the_selected() {
     );
 }
 
-/// `default` writes the user's default, which the selection then follows
-/// where no other layer chooses: the list marks it as chosen by the
-/// user-level config.toml.
+/// `default` writes the user's default, which selection then follows where
+/// no other layer chooses: the list, which marks what selection picks,
+/// marks it as chosen by the user-level config.toml.
 ///
 /// Mutation: write the project's config, or another key, or under another
 /// table; this test fails.
 #[test]
-fn default_changes_what_a_build_selects() {
+fn default_is_what_selection_picks_afterwards() {
     let project = Project::new();
     let run = toolchain(&project, &["toolchain", "default", "clang-cl"], &[]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
@@ -148,7 +148,7 @@ fn default_warns_when_a_project_selects_another() {
 /// gives the reason a build would give: here, a configured clang that does
 /// not run.
 ///
-/// Mutation: drop the warning; this test fails.
+/// Mutation: drop the warning, or its `help:`; this test fails.
 #[test]
 fn default_warns_when_the_compiler_cannot_be_used_here() {
     let project = Project::new().file("fake/clang.cmd", "@echo off\r\nexit /b 1\r\n");
@@ -166,7 +166,78 @@ fn default_warns_when_the_compiler_cannot_be_used_here() {
         "{}",
         run.stderr
     );
+    assert!(
+        run.stderr.contains(
+            "
+help: correct [toolchain.paths] clang"
+        ),
+        "{}",
+        run.stderr
+    );
     let config = std::fs::read_to_string(project.home().join("config.toml")).unwrap();
     assert!(config.contains("compiler = \"clang\""), "{config}");
     assert!(config.contains("[toolchain.paths]"), "{config}");
+}
+
+/// A default this machine can build with, chosen by nothing above it, is
+/// written without a warning. GCC is run to be found only when it is the
+/// default, and then it is.
+///
+/// Mutation: warn even when the user's layer is what selects, or leave
+/// GCC unsearched for its own default or for the list; this test fails.
+#[test]
+fn a_default_that_selects_and_works_here_is_written_quietly() {
+    if require(Compiler::Gcc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new();
+    let run = toolchain(&project, &["toolchain", "default", "gcc"], &[]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(!run.stderr.contains("warning:"), "{}", run.stderr);
+    // The list searches for GCC too, and finds the one selection picks.
+    let list = toolchain(&project, &["toolchain", "list"], &[]);
+    assert!(
+        line(&list, "gcc").ends_with("(selected: compiler in the user-level config.toml)"),
+        "{}",
+        list.stdout
+    );
+}
+
+/// A name no layer can select is warned about, and the list is printed
+/// all the same.
+///
+/// Mutation: drop the warning, or stop before printing; this test fails.
+#[test]
+fn list_warns_about_a_name_it_cannot_select_and_still_lists() {
+    let project = Project::new();
+    let run = toolchain(&project, &["toolchain", "list"], &[("CUNO_COMPILER", "cc")]);
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("warning: CUNO_COMPILER names `cc`"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(run.stdout.lines().count(), 6, "{}", run.stdout);
+}
+
+/// A layer above the default that names no compiler cuno knows is what
+/// selection meets here, and the warning says so.
+///
+/// Mutation: stay silent when that layer cannot be read as a compiler;
+/// this test fails.
+#[test]
+fn default_warns_when_a_layer_above_names_no_compiler() {
+    let project = Project::new();
+    let run = toolchain(
+        &project,
+        &["toolchain", "default", "msvc"],
+        &[("CUNO_COMPILER", "cc")],
+    );
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("warning: msvc is the default, but here CUNO_COMPILER names `cc`"),
+        "{}",
+        run.stderr
+    );
 }
