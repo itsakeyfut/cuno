@@ -266,7 +266,7 @@ fn diagnose(
             ),
         );
     }
-    let prepared = match prepare::prepare(&selected, env, &SystemRegistry) {
+    let prepared = match prepare::prepare(&selected, env, host, &SystemRegistry, runner) {
         Ok(prepared) => prepared,
         Err(error) => {
             problems.report(&error);

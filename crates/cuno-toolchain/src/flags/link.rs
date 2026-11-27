@@ -28,7 +28,8 @@ pub struct LinkInput<'a> {
 /// with `kind`, in the order it tries them in each directory: `<lib>.lib`
 /// for the compilers that build for the MSVC ABI (the MSVC and clang-cl
 /// link commands name it, clang's `-l<lib>` is found as it by lld), and
-/// the names MinGW's `ld` tries for `-l<lib>` (checked against it). The
+/// the seven names MinGW's `ld` tries for `-l<lib>` (as `-Wl,--verbose`
+/// lists its attempts). The
 /// build looks for them in `lib-dirs` to relink when one changes
 /// (`docs/en/specs/build.md`, "Deciding what changed"), so a compiler
 /// naming libraries otherwise answers here.
@@ -42,6 +43,7 @@ pub fn library_files(kind: CompilerKind, lib: &str) -> Vec<String> {
             format!("{lib}.dll.a"),
             format!("lib{lib}.a"),
             format!("{lib}.lib"),
+            format!("lib{lib}.lib"),
             format!("lib{lib}.dll"),
             format!("{lib}.dll"),
         ],
@@ -115,9 +117,10 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
                 push(&mut args, &["-g"]);
             }
             // At link time GCC optimises at the level the objects were
-            // compiled at, so no level is given.
+            // compiled at, so no level is given; `auto` runs it in
+            // parallel, where plain `-flto` warns that it runs serially.
             if profile.lto {
-                push(&mut args, &["-flto"]);
+                push(&mut args, &["-flto=auto"]);
             }
         }
     }
@@ -211,8 +214,8 @@ mod tests {
     use super::*;
 
     /// The compilers for the MSVC ABI name a library `<lib>.lib`; GCC's
-    /// `ld` tries six names in each directory, in the order found by
-    /// linking against each one removed in turn.
+    /// `ld` tries seven names in each directory, in the order
+    /// `-Wl,--verbose` lists its attempts.
     ///
     /// Mutation: name it otherwise for one compiler, or reorder GCC's
     /// names; this test fails.
@@ -228,6 +231,7 @@ mod tests {
                     "foo.dll.a",
                     "libfoo.a",
                     "foo.lib",
+                    "libfoo.lib",
                     "libfoo.dll",
                     "foo.dll",
                 ],
@@ -468,7 +472,7 @@ mod tests {
             args(CompilerKind::Gcc, &full_build, &full_profile, w),
             [
                 "-g",
-                "-flto",
+                "-flto=auto",
                 "a.obj",
                 "b.obj",
                 "-o",

@@ -1512,6 +1512,23 @@ mod tests {
             pick(&asking("gcc"), with_gcc(&[]), &Constraints::default()),
             Err(ToolchainError::CompilerNotFound { compiler: "gcc" })
         ));
+        // A GCC older than 10 alone is not enough.
+        let err = pick(
+            &asking("gcc"),
+            with_gcc(&copies[..1]),
+            &Constraints::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ToolchainError::NoMatchingVersion {
+                    compiler: "gcc",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     /// The GCC written in `[toolchain.paths] gcc` is the only one used: a

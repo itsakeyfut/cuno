@@ -94,6 +94,16 @@ pub enum ToolchainError {
         /// The library's message.
         message: String,
     },
+    /// The GCC selected did not say where its headers or libraries are
+    /// (`toolchain.md`, "MinGW (GCC)"), which the build needs to know.
+    GccUnreadable {
+        /// The `gcc`.
+        path: PathBuf,
+        /// What it was asked.
+        asked: &'static str,
+        /// What it printed, or why it could not run.
+        output: String,
+    },
     /// The standard library probe failed for another reason, so no verdict.
     ProbeFailed {
         /// The compiler.
@@ -202,6 +212,11 @@ impl fmt::Display for ToolchainError {
                 f,
                 "could not tell whether {compiler} works with the MSVC standard library:\n{output}"
             ),
+            ToolchainError::GccUnreadable {
+                path,
+                asked,
+                output,
+            } => write!(f, "{} did not say {asked}:\n{output}", path.display()),
             ToolchainError::EditionNotSupported {
                 compiler,
                 version,
@@ -282,6 +297,10 @@ impl CunoError for ToolchainError {
             ToolchainError::ProbeFailed { .. } => Some(
                 "check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations".to_owned(),
             ),
+            ToolchainError::GccUnreadable { .. } => Some(format!(
+                "reinstall MSYS2's UCRT64 GCC ({MSYS2_GCC}), or write where a working gcc is in [toolchain.paths] gcc"
+            )),
+
             ToolchainError::EditionNotSupported {
                 compiler, needed, ..
             } => Some(format!(

@@ -17,8 +17,8 @@
 ### 変更の判定
 
 - 各手順（ソース 1 つのコンパイル、実行ファイル 1 つのリンク）について、前回成功したときの次の内容を記録する。
-  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang と GCC に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
-  - 入力ごとの更新時刻・サイズ・内容のハッシュ。入力は、コンパイルならソースとそれが読んだすべてのヘッダ（上のヘッダ依存）、リンクならオブジェクトファイルと、`links` のうち `lib-dirs` で見つかるライブラリ（`lib-dirs` を順に探し、最初に見つかったライブラリのファイル。MSVC と Clang では `<lib>.lib`。GCC では、ディレクトリごとに、その `ld` が探す順 `lib<lib>.dll.a`、`<lib>.dll.a`、`lib<lib>.a`、`<lib>.lib`、`lib<lib>.dll`、`<lib>.dll` で探したもの）。見つからないもの（`kernel32` などシステムのライブラリ）は、上の `LIB` で識別する（GCC では、GCC に付属するライブラリなので、コンパイラのバージョンで識別する）
+  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`。GCC では、すべてのプログラムにリンクするランタイムのファイル（`crt2.o`、`libmingw32.a`、`libmingwex.a`、`libgcc.a`、`libgcc_eh.a`、`libstdc++.a`、`libwinpthread.a`、`libucrt.a` のうち、GCC のライブラリのディレクトリで見つかるもの）それぞれの場所・サイズ・更新時刻も含める。MSYS2 は、これらを GCC のバージョンを変えずに更新するため）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang と GCC に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
+  - 入力ごとの更新時刻・サイズ・内容のハッシュ。入力は、コンパイルならソースとそれが読んだすべてのヘッダ（上のヘッダ依存）、リンクならオブジェクトファイルと、`links` のうち `lib-dirs` で見つかるライブラリ（`lib-dirs` を順に探し、最初に見つかったライブラリのファイル。MSVC と Clang では `<lib>.lib`。GCC では、ディレクトリごとに、その `ld` が探す順 `lib<lib>.dll.a`、`<lib>.dll.a`、`lib<lib>.a`、`<lib>.lib`、`lib<lib>.lib`、`lib<lib>.dll`、`<lib>.dll` で探したもの。この順は `-Wl,--verbose` が示す）。見つからないもの（`kernel32` などシステムのライブラリ）は、上の `LIB` で識別する（GCC では、GCC に付属するライブラリなので、コンパイラのバージョンと、上のランタイムのファイルで識別する）
 - 次のビルドでは、次のどれかに当てはまる手順だけを実行する。
   - 記録がない、または出力がない
   - コマンドラインが記録と違う（設定、コンパイラ、プロファイルを変えた場合）
@@ -26,7 +26,7 @@
   - 読んだヘッダやライブラリと同じ名前のファイルが、検索される別の場所に新しく現れた（下記）
 - 同じ名前のファイルの出現: 検索の順で先に見つかる場所に同じ名前のファイルができると、次のコンパイルはそちらを読む。読んだファイルだけを記録していると、これを見逃して古いコードのまま成功と報告する。そこで、手順ごとに次を調べる。
   - 調べる場所: コンパイルなら `include-dirs`、既定のインクルードパス（下記）、ソースと読んだヘッダのあるディレクトリ（`#include "..."` はインクルードした側のディレクトリから探すため）。ただし、コンパイラ自身のディレクトリ（`INCLUDE` と、コンパイラのインストール先）は含めない。リンクなら `lib-dirs`。
-  - 調べる名前: 読んだファイルそれぞれの、それを含む `include-dirs`、既定のインクルードパス、`INCLUDE` のディレクトリからの相対パス（`#include "sub/cfg.h"` なら `sub/cfg.h`）。コンパイラのインストール先にあってこれらの外にあるもの（Clang に付属するヘッダなど）は、ファイル名。インクルードした側のディレクトリにしかないヘッダは調べない。`#include "..."` はそこを最初に探すため、先に見つかる場所がない。リンクなら、`links` のすべての名前の、上のライブラリのファイル名（`lib-dirs` で見つからず、システムから読んだものも含む）。
+  - 調べる名前: 読んだファイルそれぞれの、それを含む `include-dirs`、既定のインクルードパス、`INCLUDE` のディレクトリからの相対パス（`#include "sub/cfg.h"` なら `sub/cfg.h`）。GCC では、`INCLUDE` の代わりに GCC 自身のインクルードのディレクトリ（[toolchain.md](toolchain.md#mingwgcc)）を使う。コンパイラのインストール先にあってこれらの外にあるもの（Clang に付属するヘッダなど）は、ファイル名。インクルードした側のディレクトリにしかないヘッダは調べない。`#include "..."` はそこを最初に探すため、先に見つかる場所がない。リンクなら、`links` のすべての名前の、上のライブラリのファイル名（`lib-dirs` で見つからず、システムから読んだものも含む）。
   - 調べる場所と名前の組み合わせのうち、記録した時点でなかったものが現れていれば、その手順を実行する。記録した時点ですでにあったもの（検索の順で後ろにあり、読まれなかったもの）は変更とみなさない。ただし、手順を始める 2 秒前以降に更新されたものがあれば、入力と同じく手順を記録しない（コンパイラが見たのが作られる前か後か分からないため）。
   - 理由: 検索の順はコンパイラごとに異なる。順を再現せずに、検索され得る場所をすべて調べ、記録した時点との違いだけを見れば、どのコンパイラでも見逃さず、関係のない同名ファイルで毎回実行し直すこともない。余分に実行するのは、読んだヘッダやライブラリと同じ名前のファイルが、検索の順で後ろの場所に新しく現れたときだけ。
 - 更新時刻かサイズだけが違い、ハッシュが同じ入力は、変更なしとして記録を更新する。
@@ -95,7 +95,7 @@
 | `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | MSVC と同じ | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
 | `debug-info = true` | `/Z7` | `/Z7` | `-g` | `-g` |
 | `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` | `-DNDEBUG` |
-| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto` |
+| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto -ffat-lto-objects` |
 | `[build.<compiler>] flags` | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま |
 
 ### リンク
@@ -113,7 +113,7 @@
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
 | `runtime` `dynamic` / `static` | なし（コンパイルで指定） | なし（コンパイルで指定） | なし（コンパイルで指定） | どちらも C では `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`、C++ では `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
 | `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
-| `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto` |
+| `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
 | `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | ひとつずつ `-Xlinker <flag>` として最後に | ひとつずつ `-Xlinker <flag>` として最後に |
 
 - `<n>` は `opt-level`（`0` / `1` / `2` / `3`、`"s"` は `2`）。
@@ -143,9 +143,12 @@
   - 理由: GCC のランタイムと `winpthread` の DLL（`libstdc++-6.dll`、`libwinpthread-1.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
   - `-static-libgcc -static-libstdc++` だけでは、`libstdc++` が `libwinpthread-1.dll` を読む。そのため `winpthread` も名前を挙げて静的にする。`-lstdc++` を先に挙げるのは、`winpthread` が、`libstdc++` の使う関数を解決するため。
   - `static` を `dynamic` と同じにする理由: MinGW では UCRT を静的にリンクできない（`-static` でも UCRT の DLL を読む）。そのうえ `-static` は、`links` の DLL のインポートライブラリ（`libfoo.dll.a`）をリンクできなくする。
+  - `links` に書いたライブラリは、静的にする対象に含めない。`ld` が上の順で見つけたものをリンクする。たとえば `links = ["pthread"]` は `libpthread.dll.a` を見つけ、作った実行ファイルは `libwinpthread-1.dll` を読む。
 - GCC の `subsystem = "windows"` は `-mwindows`。MinGW の起動コードは GUI のプログラムでも `main` を呼ぶため、入口の指定は要らない。
 - GCC では `_HAS_EXCEPTIONS=0` を定義しない。これは MSVC の標準ライブラリのマクロで、GCC の標準ライブラリ（`libstdc++`）は `-fno-exceptions` だけで例外を投げない実装を使う。
 - GCC の LTO は、リンク時にコンパイル時の最適化の段階を使うため、`<n>` を渡さない。
+  - コンパイルに `-ffat-lto-objects` を付ける理由: 付けないと、オブジェクトは中間表現だけを持ち、最適化の段階で出る診断（`-Warray-bounds` など）がコンパイルでもリンクでも出ない。`warnings-as-errors` を付けたのに、エラーになるはずのビルドが成功する。代償は、LTO のビルドでコンパイルが遅くなること。
+  - リンクの `-flto=auto` は、最適化を並列に行う。`-flto` だけでは、並列にしないことを毎回警告する。
 
 ## カスタムビルド処理（3 層構造）
 

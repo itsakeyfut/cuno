@@ -136,11 +136,7 @@ impl<'a> Toolchain<'a> {
             msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
             env: &prepared.env,
             include: prepared.include_dirs(),
-            identity: prepared
-                .identity(&version)
-                .into_iter()
-                .map(OsStr::to_owned)
-                .collect(),
+            identity: prepared.identity(&version),
         }
     }
 }

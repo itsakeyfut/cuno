@@ -147,7 +147,10 @@ pub fn tidy_compile(
     host: HostOs,
     bundled: &Path,
 ) -> Option<TidyCompile> {
-    if project.is_some_and(|(_, manifest)| manifest.package.lang == Lang::C) {
+    // The check asks the MSVC standard library, which GCC does not use.
+    if project.is_some_and(|(_, manifest)| manifest.package.lang == Lang::C)
+        || !selected.kind.uses_msvc_stl()
+    {
         return None;
     }
     Some(TidyCompile {
@@ -291,7 +294,7 @@ pub fn ready(
     let selected =
         select::select(&settings.compiler, found, &settings.constraints, host).map_err(boxed)?;
     check_edition(selected.kind, selected.version, project.1.package.edition).map_err(boxed)?;
-    let prepared = prepare::prepare(&selected, env, registry).map_err(boxed)?;
+    let prepared = prepare::prepare(&selected, env, host, registry, runner).map_err(boxed)?;
     // Left out of the build's environment, since they add flags no command
     // line shows (toolchain.md, "How it is resolved").
     for name in &prepared.ignored {
@@ -371,6 +374,7 @@ mod tests {
                 version: "10.0.28000.0".to_owned(),
             }),
             ignored: Vec::new(),
+            gcc: None,
         }
     }
 

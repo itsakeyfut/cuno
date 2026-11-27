@@ -24,7 +24,8 @@ fn hello(lang: &str, runtime: &str, file: &str, source: &str) -> Project {
         .file(file, source)
 }
 
-const C: &str = "#include <stdio.h>\nint main(void) { puts(\"hello from C\"); return 0; }\n";
+/// Starts a thread, which pulls in winpthread even in C.
+const C: &str = "#include <pthread.h>\n#include <stdio.h>\nstatic void *run(void *a) { return a; }\nint main(void) {\n    pthread_t t;\n    pthread_create(&t, 0, run, 0);\n    pthread_join(t, 0);\n    puts(\"hello from C\");\n    return 0;\n}\n";
 
 /// Uses `std::thread` and `<iostream>`, which pull in libstdc++ and, through
 /// it, winpthread: the DLLs a program must not need.
@@ -48,8 +49,10 @@ fn imports(exe: &Path) -> Vec<String> {
 /// system directory.
 ///
 /// Mutation: leave GCC's directory off its `PATH` (its compiler proper then
-/// fails silently), link C++ with `gcc`, or leave libstdc++ or winpthread
-/// dynamic; this test fails.
+/// fails silently), or leave libgcc or winpthread dynamic, for C or C++;
+/// this test fails. (Linking C++ with `gcc` would still link here, as
+/// libstdc++ is named; the unit tests hold that it is `g++`.)
+
 #[test]
 fn hello_builds_runs_and_starts_outside_cuno() {
     if require_driver(Compiler::Gcc, Language::C).is_none() {
@@ -125,5 +128,68 @@ fn gcc_builds_without_visual_studio() {
         doctor.stderr.contains("    Selected gcc "),
         "{}",
         doctor.stderr
+    );
+}
+
+/// A header a project puts in front of one of GCC's own, by its path
+/// inside GCC's include directories (`sys/stat.h`), recompiles what read
+/// GCC's (`docs/en/specs/build.md`, "Deciding what changed").
+///
+/// Mutation: give the build records no GCC include directories, so the
+/// header is looked for by its file name alone; this test fails.
+#[test]
+fn a_header_put_in_front_of_gcc_s_own_recompiles() {
+    if require_driver(Compiler::Gcc, Language::C).is_none() {
+        return;
+    }
+    let source = "#include <stdio.h>\n#include <sys/stat.h>\nint main(void) {\n#ifdef SHADOWED\n    puts(\"shadowed\");\n#else\n    puts(\"gcc's\");\n#endif\n    return 0;\n}\n";
+    let project = Project::new()
+        .file(
+            "cuno.toml",
+            "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nlang = \"c\"\n\n[build]\ninclude-dirs = [\"inc\"]\n",
+        )
+        .file("src/main.c", source);
+    let run = || project.cuno(&["-q", "run", "--compiler", "gcc"]);
+    assert_eq!(run().stdout.trim(), "gcc's");
+    std::fs::create_dir_all(project.path().join("inc/sys")).unwrap();
+    std::fs::write(
+        project.path().join("inc/sys/stat.h"),
+        "#define SHADOWED 1\n#include_next <sys/stat.h>\n",
+    )
+    .unwrap();
+    // Older than the build's start by the margin the records keep.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let after = run();
+    assert_eq!(after.stdout.trim(), "shadowed", "{}", after.stderr);
+}
+
+/// The GCC written in `[toolchain.paths] gcc` builds; one with no file there
+/// is an error naming the setting, exit 3.
+///
+/// Mutation: let the build ignore the setting, or take another GCC when
+/// the written one is missing; this test fails.
+#[test]
+fn the_configured_gcc_is_the_one_used() {
+    if require_driver(Compiler::Gcc, Language::C).is_none() {
+        return;
+    }
+    let gcc = support::compilers::gcc_dir().unwrap().join("gcc.exe");
+    let config = |path: &Path| format!("[toolchain.paths]\ngcc = '{}'\n", path.display());
+    let project = hello("c", "dynamic", "src/main.c", C).file(".cuno/config.toml", &config(&gcc));
+    let built = project.cuno(&["-v", "build", "--compiler", "gcc"]);
+    assert_eq!(built.code, Some(0), "{}", built.stderr);
+    assert!(
+        built.stderr.contains(&gcc.display().to_string()),
+        "{}",
+        built.stderr
+    );
+    let missing = project.path().join("nowhere").join("gcc.exe");
+    std::fs::write(project.path().join(".cuno/config.toml"), config(&missing)).unwrap();
+    let refused = project.cuno(&["build", "--compiler", "gcc"]);
+    assert_eq!(refused.code, Some(3), "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("[toolchain.paths] gcc"),
+        "{}",
+        refused.stderr
     );
 }

@@ -3,7 +3,7 @@
 //! environment it runs in. `cuno doctor` and the build commands both call
 //! these, so they diagnose and build with the same answers.
 
-use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use cuno_core::Env;
@@ -40,7 +40,7 @@ pub fn detect(env: &Env, host: HostOs, explicit: &ExplicitPaths, run: &dyn Runne
 /// Variables compilers and linkers read options or include paths from by
 /// themselves, which would add flags no command line shows
 /// (`toolchain.md`, "How it is resolved").
-pub const TOOL_OPTION_VARIABLES: [&str; 7] = [
+pub const TOOL_OPTION_VARIABLES: [&str; 12] = [
     "CL",
     "_CL_",
     "LINK",
@@ -48,6 +48,13 @@ pub const TOOL_OPTION_VARIABLES: [&str; 7] = [
     "CPATH",
     "C_INCLUDE_PATH",
     "CPLUS_INCLUDE_PATH",
+    // GCC's: where its linker finds libraries and it finds its own
+    // programs, and a second dependency file it would write.
+    "LIBRARY_PATH",
+    "GCC_EXEC_PREFIX",
+    "COMPILER_PATH",
+    "DEPENDENCIES_OUTPUT",
+    "SUNPRO_DEPENDENCIES",
 ];
 
 /// The environment the selected compiler runs in.
@@ -61,35 +68,42 @@ pub struct Prepared {
     /// The [`TOOL_OPTION_VARIABLES`] that were set and are left out of
     /// `env`, for the build to warn about.
     pub ignored: Vec<&'static str>,
+    /// What GCC builds with besides its command line, when GCC is used.
+    pub gcc: Option<crate::gcc::Install>,
 }
 
 impl Prepared {
     /// The include directories the compiler searches for the system and
     /// standard headers: the resolved `INCLUDE`, in order, when the
-    /// environment was prepared for an MSVC toolset, else none, whatever the
-    /// process's own `INCLUDE` says. The one place an MSVC environment's
-    /// include path is read, so a compiler with no toolset never takes it as
-    /// its include path (compile_commands.json, the build records,
-    /// clang-tidy).
+    /// environment was prepared for an MSVC toolset; GCC's own, as it told
+    /// them, for GCC; else none, whatever the process's own `INCLUDE` says.
+    /// The one place an MSVC environment's include path is read, so a
+    /// compiler with no toolset never takes it as its include path
+    /// (compile_commands.json, the build records, clang-tidy).
     pub fn include_dirs(&self) -> Vec<PathBuf> {
-        match self.sdk {
-            Some(_) => crate::flags::include_dirs(self.env.get("INCLUDE")),
-            None => Vec::new(),
+        match (&self.sdk, &self.gcc) {
+            (Some(_), _) => crate::flags::include_dirs(self.env.get("INCLUDE")),
+            (None, Some(gcc)) => gcc.include.clone(),
+            (None, None) => Vec::new(),
         }
     }
 
     /// What besides each compile's arguments identifies its command: the
-    /// compiler's `version`, and the variables of the environment that
-    /// decide which headers and libraries it reads (`build.md`, "Deciding
-    /// what changed").
-    pub fn identity<'a>(&'a self, version: &'a str) -> [&'a OsStr; 4] {
-        let var = |name| self.env.get(name).unwrap_or_default();
-        [
-            OsStr::new(version),
+    /// compiler's `version`, the variables of the environment that decide
+    /// which headers and libraries it reads, and for GCC the runtime files
+    /// it links into every program (`build.md`, "Deciding what changed").
+    pub fn identity(&self, version: &str) -> Vec<OsString> {
+        let var = |name| self.env.get(name).unwrap_or_default().to_owned();
+        let mut out = vec![
+            OsString::from(version),
             var("INCLUDE"),
             var("LIB"),
             var("LIBPATH"),
-        ]
+        ];
+        if let Some(gcc) = &self.gcc {
+            out.extend(gcc.runtime.iter().map(OsString::from));
+        }
+        out
     }
 }
 
@@ -101,7 +115,9 @@ impl Prepared {
 pub fn prepare(
     selected: &Selected,
     env: &Env,
+    host: HostOs,
     registry: &dyn Registry,
+    run: &dyn Runner,
 ) -> Result<Prepared, ToolchainError> {
     let ignored: Vec<&'static str> = TOOL_OPTION_VARIABLES
         .into_iter()
@@ -109,14 +125,19 @@ pub fn prepare(
         .collect();
     let clean = env.without(&TOOL_OPTION_VARIABLES);
     let Some(toolset) = &selected.msvc else {
-        let env = match selected.kind {
-            CompilerKind::Gcc => crate::gcc::env_for(&selected.executable, &clean),
-            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => clean,
+        let (env, gcc) = match selected.kind {
+            CompilerKind::Gcc => {
+                let env = crate::gcc::env_for(&selected.executable, &clean);
+                let install = crate::gcc::install(&selected.executable, host, &env, run)?;
+                (env, Some(install))
+            }
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => (clean, None),
         };
         return Ok(Prepared {
             env,
             sdk: None,
             ignored,
+            gcc,
         });
     };
     let sdk = msvc::find_windows_sdk(env, registry)?;
@@ -124,6 +145,7 @@ pub fn prepare(
         env: msvc::resolve(toolset, &sdk).apply(&clean),
         sdk: Some(sdk),
         ignored,
+        gcc: None,
     })
 }
 
@@ -157,6 +179,7 @@ mod tests {
                 version: "10.0.28000.0".to_owned(),
             }),
             ignored: Vec::new(),
+            gcc: None,
         };
         assert_eq!(
             with_toolset.include_dirs(),
@@ -169,6 +192,7 @@ mod tests {
             env,
             sdk: None,
             ignored: Vec::new(),
+            gcc: None,
         };
         assert!(without.include_dirs().is_empty());
     }
@@ -185,6 +209,7 @@ mod tests {
             env,
             sdk: None,
             ignored: Vec::new(),
+            gcc: None,
         };
         let env = Env::from_pairs(
             [
@@ -271,7 +296,9 @@ mod tests {
         let prepared = prepare(
             &selected(Some(toolset.clone())),
             &env(),
+            HostOs::Windows,
             &Kits(kits.clone()),
+            &Nothing,
         )
         .unwrap();
         assert_eq!(prepared.sdk.as_ref().unwrap().version, "10.0.28000.0");
@@ -288,23 +315,88 @@ mod tests {
         assert!(include.contains("10.0.28000.0"), "{include}");
         assert_eq!(prepared.env.get("KEEP").unwrap(), "1");
 
-        let bare = prepare(&selected(None), &env(), &Kits(kits)).unwrap();
+        let bare = prepare(
+            &selected(None),
+            &env(),
+            HostOs::Windows,
+            &Kits(kits),
+            &Nothing,
+        )
+        .unwrap();
         assert!(bare.sdk.is_none());
         assert_eq!(bare.env.get("INCLUDE"), None);
         assert_eq!(bare.env.get("KEEP").unwrap(), "1");
 
         let nowhere = root.path().join("none");
         assert!(matches!(
-            prepare(&selected(Some(toolset)), &env(), &Kits(nowhere)),
+            prepare(
+                &selected(Some(toolset)),
+                &env(),
+                HostOs::Windows,
+                &Kits(nowhere),
+                &Nothing
+            ),
             Err(ToolchainError::NoWindowsSdk { .. })
         ));
     }
 
+    /// Answers as a GCC whose libraries are in `libs` would, and only when
+    /// run in its own directory with its messages untranslated.
+    struct Answers {
+        libs: PathBuf,
+    }
+
+    impl Runner for Answers {
+        fn run(&self, _: &Path, _: &[&OsStr], _: &Env) -> std::io::Result<crate::Output> {
+            panic!("GCC is asked in its own directory")
+        }
+
+        fn run_in(
+            &self,
+            program: &Path,
+            args: &[&OsStr],
+            env: &Env,
+            cwd: &Path,
+        ) -> std::io::Result<crate::Output> {
+            assert_eq!(Some(cwd), program.parent());
+            assert_eq!(env.get("LC_ALL"), Some(OsStr::new("C")));
+            let ok = |stdout: String, stderr: &str| crate::Output {
+                success: true,
+                stdout: stdout.into_bytes(),
+                stderr: stderr.as_bytes().to_vec(),
+            };
+            Ok(match args[0].to_str().unwrap() {
+                "-E" => ok(
+                    String::new(),
+                    "ignoring nonexistent directory \"x\"\n\
+                     #include \"...\" search starts here:\n\
+                     #include <...> search starts here:\n \
+                     C:/m/lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../include/c++/16.2.0\n \
+                     C:/m/include\n\
+                     End of search list.\n",
+                ),
+                "-print-search-dirs" => ok(
+                    format!(
+                        "install: C:/m/\nlibraries: =C:/nowhere;{}\n",
+                        self.libs.display()
+                    ),
+                    "",
+                ),
+                other => panic!("asked {other}"),
+            })
+        }
+    }
+
     /// GCC runs with its own directory first on `PATH` and the rest kept,
     /// and with no MSVC environment; no other compiler's `PATH` changes.
+    /// Its include directories, as it lists them with `..` resolved, are its
+    /// system ones, and its runtime files found in its library directories
+    /// identify its commands.
     ///
-    /// Mutation: give GCC the environment unchanged, or put its directory
-    /// on another compiler's `PATH`; this test fails.
+    /// Mutation: give GCC the environment unchanged, put its directory on
+    /// another compiler's `PATH`, leave its include directories out, keep
+    /// the `..`, or leave a runtime file out of the identity; this test
+    /// fails.
     #[test]
     fn gcc_finds_its_own_dlls() {
         let path = |dirs: &[&str]| std::env::join_paths(dirs).unwrap();
@@ -317,7 +409,35 @@ mod tests {
             executable: "C:/msys64/ucrt64/bin/gcc.exe".into(),
             ..selected(None)
         };
-        let prepared = prepare(&gcc, &env, &Kits("C:/nowhere".into())).unwrap();
+        let libs = tempfile::tempdir().unwrap();
+        std::fs::write(libs.path().join("libstdc++.a"), "x").unwrap();
+        let answers = Answers {
+            libs: libs.path().to_owned(),
+        };
+        let prepared = prepare(
+            &gcc,
+            &env,
+            HostOs::Windows,
+            &Kits("C:/nowhere".into()),
+            &answers,
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.include_dirs(),
+            [
+                PathBuf::from("C:/m/include/c++/16.2.0"),
+                PathBuf::from("C:/m/include")
+            ]
+        );
+        let identity = prepared.identity("16.2.0");
+        let runtime: Vec<&OsString> = identity[4..].iter().collect();
+        assert_eq!(runtime.len(), 1, "{identity:?}");
+        let stamp = runtime[0].to_string_lossy();
+        assert!(
+            stamp.starts_with(&format!("{} 1 ", libs.path().join("libstdc++.a").display())),
+            "{stamp}"
+        );
+
         assert_eq!(
             prepared.env.get("PATH"),
             Some(path(&["C:/msys64/ucrt64/bin", "C:/Windows"]).as_os_str())
@@ -332,7 +452,14 @@ mod tests {
                 kind,
                 ..gcc.clone()
             };
-            let prepared = prepare(&other, &env, &Kits("C:/nowhere".into())).unwrap();
+            let prepared = prepare(
+                &other,
+                &env,
+                HostOs::Windows,
+                &Kits("C:/nowhere".into()),
+                &Nothing,
+            )
+            .unwrap();
             assert_eq!(prepared.env.get("PATH"), env.get("PATH"), "{kind:?}");
         }
     }
@@ -426,8 +553,8 @@ mod tests {
     /// the build's environment, with or without a toolset, and named so the
     /// build can warn; others are kept.
     ///
-    /// Mutation: keep any of them, or name one that was not set; this test
-    /// fails.
+    /// Mutation: keep any of them (GCC's `LIBRARY_PATH` among them), or
+    /// name one that was not set; this test fails.
     #[test]
     fn option_variables_are_left_out_and_named() {
         let env = Env::from_pairs(
@@ -435,12 +562,20 @@ mod tests {
                 ("cl".into(), "/DX".into()),
                 ("_LINK_".into(), "/STACK:1".into()),
                 ("CPATH".into(), "C:/x".into()),
+                ("LIBRARY_PATH".into(), "C:/lib".into()),
                 ("KEEP".into(), "1".into()),
             ],
             NameCase::Insensitive,
         );
-        let prepared = prepare(&selected(None), &env, &Kits(PathBuf::new())).unwrap();
-        assert_eq!(prepared.ignored, ["CL", "_LINK_", "CPATH"]);
+        let prepared = prepare(
+            &selected(None),
+            &env,
+            HostOs::Windows,
+            &Kits(PathBuf::new()),
+            &Nothing,
+        )
+        .unwrap();
+        assert_eq!(prepared.ignored, ["CL", "_LINK_", "CPATH", "LIBRARY_PATH"]);
         for name in TOOL_OPTION_VARIABLES {
             assert_eq!(prepared.env.get(name), None, "{name}");
         }

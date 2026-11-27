@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 3778a3b5cccebf379894077a00b349f3a242c9e6 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 56d3059917bf8b42a3c4908a1fb1ea02f66d7bf4 -->
 
 # Build
 
@@ -19,8 +19,8 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang and GCC color their output ([commands.md](commands.md#format)) are not part of it;
-  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first library file found, searching `lib-dirs` in order: `<lib>.lib` on MSVC and Clang; on GCC, the file found by searching each directory in the order its `ld` uses, `lib<lib>.dll.a`, `<lib>.dll.a`, `lib<lib>.a`, `<lib>.lib`, `lib<lib>.dll`, `<lib>.dll`). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above (on GCC, where they ship with GCC, by the compiler's version).
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds; on GCC, also the location, size and modification time of each runtime file linked into every program (those of `crt2.o`, `libmingw32.a`, `libmingwex.a`, `libgcc.a`, `libgcc_eh.a`, `libstdc++.a`, `libwinpthread.a` and `libucrt.a` found in GCC's library directories), because MSYS2 updates them without changing GCC's version). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang and GCC color their output ([commands.md](commands.md#format)) are not part of it;
+  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first library file found, searching `lib-dirs` in order: `<lib>.lib` on MSVC and Clang; on GCC, the file found by searching each directory in the order its `ld` uses, `lib<lib>.dll.a`, `<lib>.dll.a`, `lib<lib>.a`, `<lib>.lib`, `lib<lib>.lib`, `lib<lib>.dll`, `<lib>.dll`; `-Wl,--verbose` shows this order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above (on GCC, where they ship with GCC, by the compiler's version and the runtime files above).
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
   - the command line differs from the record (a setting, the compiler or the profile changed);
@@ -28,7 +28,7 @@
   - a file with the same name as a header or library it read has newly appeared in another place that is searched (below).
 - Same-named files appearing: when a file with the same name appears in a place the search reaches earlier, the next compile reads that one instead. Recording only the files read would miss this and report success with the old code. So for each step, cuno checks the following.
   - Where it looks: for a compile, `include-dirs`, the default include paths (below), and the directories holding the source and the headers it read (because `#include "..."` searches from the directory of the including file), but not the compiler's own directories (`INCLUDE` and where the compiler is installed). For a link, `lib-dirs`.
-  - Which names: for each file read, its path relative to the directory of `include-dirs` or of the default include paths that holds it (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. For a file outside all of these but where the compiler is installed (such as a header that ships with Clang), its file name. A header found only in the including file's directory is not checked: `#include "..."` searches there first, so no place is searched ahead of it. For a link, the library file names above for every name in `links`, including one not found in `lib-dirs` and read from the system.
+  - Which names: for each file read, its path relative to the directory of `include-dirs` or of the default include paths that holds it (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. On GCC, GCC's own include directories ([toolchain.md](toolchain.md#mingw-gcc)) are used in place of `INCLUDE`. For a file outside all of these but where the compiler is installed (such as a header that ships with Clang), its file name. A header found only in the including file's directory is not checked: `#include "..."` searches there first, so no place is searched ahead of it. For a link, the library file names above for every name in `links`, including one not found in `lib-dirs` and read from the system.
   - If any combination of these places and names that did not exist when the record was made now exists, the step runs. One that already existed then (one later in the search order, which was not read) does not count as a change. But if one of them was modified two seconds or less before the step started, or later, the step is not recorded, as with an input (whether the compiler saw it before or after it was made cannot be told).
   - Rationale: the search order differs between compilers. Checking every place that may be searched, without reproducing the order, and looking only at what differs from the time of the record misses nothing on any compiler, and does not rerun a step every time because of an unrelated file of the same name. The only extra runs come when a file with the same name as a header or library read newly appears in a place later in the search order.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
@@ -97,7 +97,7 @@ How the settings in `cuno.toml`, and the flags cuno always adds, become each com
 | `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | Same as MSVC | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
 | `debug-info = true` | `/Z7` | `/Z7` | `-g` | `-g` |
 | `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` | `-DNDEBUG` |
-| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto` |
+| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto -ffat-lto-objects` |
 | `[build.<compiler>] flags` | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given |
 
 ### Linking
@@ -115,7 +115,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 | `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
 | `runtime` `dynamic` / `static` | None (given when compiling) | None (given when compiling) | None (given when compiling) | Both: for C, `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`; for C++, `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
 | `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
-| `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto` |
+| `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
 | `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Xlinker <flag>` | Last, each as `-Xlinker <flag>` |
 
 - `<n>` is `opt-level` (`0` / `1` / `2` / `3`; `"s"` is `2`).
@@ -145,9 +145,12 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
   - Rationale: the DLLs of GCC's runtime and of `winpthread` (`libstdc++-6.dll`, `libwinpthread-1.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
   - With `-static-libgcc -static-libstdc++` alone, `libstdc++` loads `libwinpthread-1.dll`, so `winpthread` is also named and made static. `-lstdc++` comes first because `winpthread` resolves functions that `libstdc++` uses.
   - Why `static` is the same as `dynamic`: MinGW cannot link UCRT statically (even with `-static`, the UCRT DLL is loaded). On top of that, `-static` makes the import libraries of the DLLs in `links` (`libfoo.dll.a`) impossible to link.
+  - The libraries written in `links` are not among those made static. What `ld` finds in the order above is linked. For example, `links = ["pthread"]` finds `libpthread.dll.a`, and the built executable loads `libwinpthread-1.dll`.
 - GCC's `subsystem = "windows"` is `-mwindows`. MinGW's startup code calls `main` even for a GUI program, so no entry point needs to be given.
 - GCC does not get `_HAS_EXCEPTIONS=0`. It is a macro of MSVC's standard library; GCC's standard library (`libstdc++`) uses its non-throwing implementation with `-fno-exceptions` alone.
 - GCC's LTO uses the optimisation level of the compile at link time, so `<n>` is not passed.
+  - Why the compile gets `-ffat-lto-objects`: without it, the objects hold only the intermediate representation, and the diagnostics raised during optimisation (`-Warray-bounds` and the like) appear neither when compiling nor when linking. A build that should fail with `warnings-as-errors` would succeed. The cost is slower compiles in LTO builds.
+  - `-flto=auto` at link time runs the optimisation in parallel. With `-flto` alone, GCC warns every time that it is not running in parallel.
 
 ## Custom build steps (three layers)
 

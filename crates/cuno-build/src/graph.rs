@@ -695,8 +695,9 @@ mod tests {
     /// next directory, so a link reads the first directory's file whatever
     /// its name, and within a directory the name `ld` tries first.
     ///
-    /// Mutation: search by name across every directory first, or try GCC's
-    /// names in another order; this test fails.
+    /// Mutation: search by name across every directory first, or try
+    /// `<lib>.lib` before `lib<lib>.a`; this test fails. (The whole order is
+    /// held by `a_library_is_the_files_its_linker_tries` in cuno-toolchain.)
     #[test]
     fn gcc_reads_a_library_as_its_ld_searches() {
         let root = tempfile::tempdir().unwrap();
@@ -787,6 +788,7 @@ mod tests {
                     "z.dll.a",
                     "libz.a",
                     "z.lib",
+                    "libz.lib",
                     "libz.dll",
                     "z.dll"
                 ]

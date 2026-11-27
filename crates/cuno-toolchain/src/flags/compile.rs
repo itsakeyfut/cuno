@@ -136,10 +136,14 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
         out.push(&[if msvc_style { "/Z7" } else { "-g" }]);
     }
     if profile.lto {
-        out.push(&[match input.kind.family() {
-            Family::Msvc => "/GL",
-            Family::Llvm | Family::Gnu => "-flto",
-        }]);
+        out.push(match input.kind.family() {
+            Family::Msvc => &["/GL"][..],
+            Family::Llvm => &["-flto"],
+            // GCC's LTO objects otherwise hold no code, so the diagnostics
+            // its optimiser raises (`-Warray-bounds`) appear nowhere
+            // (build.md, "Settings and flags").
+            Family::Gnu => &["-flto", "-ffat-lto-objects"],
+        });
     }
 
     let define = if msvc_style { "/D" } else { "-D" };
@@ -703,7 +707,7 @@ mod tests {
                     (&[], &["/GL"]),
                     (&[], &["-flto"]),
                     (&[], &["-flto"]),
-                    (&[], &["-flto"]),
+                    (&[], &["-flto", "-ffat-lto-objects"]),
                 ],
             ),
             (
@@ -945,7 +949,7 @@ mod tests {
                     (&[], &["/GL"]),
                     (&[], &["-flto"]),
                     (&[], &["-flto"]),
-                    (&[], &["-flto"]),
+                    (&[], &["-flto", "-ffat-lto-objects"]),
                 ],
             ),
             (
