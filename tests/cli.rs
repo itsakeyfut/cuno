@@ -34,6 +34,7 @@ Usage: cuno [OPTIONS] [COMMAND]
 
 Commands:
   new        Create a new package
+  init       Make an existing directory into a package
   build      Compile the package
   check      Check the package for errors without building it
   run        Build the package and run one of its executables

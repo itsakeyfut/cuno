@@ -1,5 +1,6 @@
-//! `cuno new`: a new package, ready to build, test and run
-//! (`docs/en/specs/commands.md`, "`cuno new <path>`").
+//! `cuno new` and `cuno init`: a package ready to build, test and run, in
+//! a new directory or an existing one (`docs/en/specs/commands.md`, "`cuno
+//! new <path>`" and "`cuno init [path]`").
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -293,6 +294,323 @@ pub fn new(args: NewArgs, cwd: &Path, shell: &mut Shell) -> Result<(), NewError>
     }
     shell.status("Created", format!("`{name}` package"));
     Ok(())
+}
+
+/// The options of `cuno init`: those of `cuno new`, the path being an
+/// existing directory, the current one by default.
+#[derive(Debug)]
+pub struct InitArgs {
+    /// The directory, as given: relative to the current directory, or
+    /// absolute.
+    pub path: PathBuf,
+    /// `--lang`; from the sources in `src/` when neither it nor `--edition`
+    /// is given.
+    pub lang: Option<Lang>,
+    /// `--edition`; the language's default when not given.
+    pub edition: Option<Edition>,
+    /// `--name`; the directory's name when not given.
+    pub name: Option<String>,
+    /// `--vcs`; Git by default.
+    pub vcs: Vcs,
+}
+
+/// What stops `cuno init`, besides what stops `cuno new`. Every one is exit
+/// code 2: nothing has been written (`commands.md`, "`cuno init [path]`").
+#[derive(Debug)]
+pub enum InitError {
+    /// The directory is not there.
+    NoDirectory {
+        /// As the user gave it.
+        path: PathBuf,
+    },
+    /// The directory is a package already.
+    AlreadyPackage {
+        /// As the user gave it.
+        path: PathBuf,
+    },
+    /// Sources, none of them in `src/`.
+    SourcesElsewhere {
+        /// The first few, from the directory, with `/`.
+        found: Vec<String>,
+        /// How many more there are.
+        more: usize,
+    },
+    /// Sources in `src/` and no entry file.
+    NoEntry,
+    /// A file it would write is there.
+    FileExists {
+        /// From the directory, with `/`.
+        path: String,
+    },
+}
+
+impl fmt::Display for InitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InitError::NoDirectory { path } => write!(f, "`{}` does not exist", path.display()),
+            InitError::AlreadyPackage { path } => {
+                write!(f, "`{}` already has a cuno.toml", path.display())
+            }
+            InitError::SourcesElsewhere { found, more } => {
+                write!(
+                    f,
+                    "the sources are not where cuno looks for them: {}",
+                    found.join(", ")
+                )?;
+                if *more > 0 {
+                    write!(f, " and {more} more")?;
+                }
+                Ok(())
+            }
+            InitError::NoEntry => f.write_str("src/ has no entry file"),
+            InitError::FileExists { path } => write!(f, "{path} already exists"),
+        }
+    }
+}
+
+impl std::error::Error for InitError {}
+
+impl CunoError for InitError {
+    fn exit_class(&self) -> ExitClass {
+        ExitClass::Usage
+    }
+
+    fn help(&self) -> Option<String> {
+        Some(
+            match self {
+                InitError::NoDirectory { .. } => {
+                    "use cuno new to create a package in a new directory"
+                }
+                InitError::AlreadyPackage { .. } => return None,
+                InitError::SourcesElsewhere { .. } => {
+                    "move them under src/, with the program's main in src/main.cpp (or src/main.c)"
+                }
+                InitError::NoEntry => {
+                    "put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/"
+                }
+                InitError::FileExists { .. } => {
+                    "cuno init writes no file that is there; move it aside, or add cuno.toml by hand"
+                }
+            }
+            .to_owned(),
+        )
+    }
+}
+
+/// How many sources a message names before it counts the rest.
+const SHOWN_SOURCES: usize = 5;
+
+/// The sources in `dir`, by their path from it with `/`: those under `src/`
+/// and the rest. What cuno makes (`target/`, `.cuno/`), hidden directories,
+/// links and other packages (a directory with its own `cuno.toml`) are not
+/// looked in.
+fn sources_in(dir: &Path) -> (Vec<String>, Vec<String>) {
+    fn walk(dir: &Path, from: &str, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if from.is_empty() {
+                name.clone()
+            } else {
+                format!("{from}/{name}")
+            };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let skipped = name.starts_with('.')
+                    || (from.is_empty() && name == "target")
+                    || entry.path().join("cuno.toml").exists();
+                if !skipped {
+                    walk(&entry.path(), &relative, out);
+                }
+            } else if kind.is_file() && cuno_build::sources::language(&entry.path()).is_some() {
+                out.push(relative);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(dir, "", &mut all);
+    all.into_iter().partition(|s| s.starts_with("src/"))
+}
+
+/// Makes the existing directory `args` describe into a package, `args.path`
+/// taken from `cwd`: `cuno.toml`, the sample when there are no sources, and
+/// the `.gitignore` lines cuno needs. Every refusal comes before anything
+/// is written (`docs/en/specs/commands.md`, "`cuno init [path]`").
+pub fn init(
+    args: InitArgs,
+    cwd: &Path,
+    host: cuno_toolchain::HostOs,
+    shell: &mut Shell,
+) -> Result<(), Box<dyn CunoError>> {
+    let boxed = |e: InitError| Box::new(e) as Box<dyn CunoError>;
+    let dir = cuno_core::paths::lexical(&cwd.join(&args.path));
+    if !dir.is_dir() {
+        return Err(boxed(InitError::NoDirectory { path: args.path }));
+    }
+    if dir.join("cuno.toml").exists() {
+        return Err(boxed(InitError::AlreadyPackage { path: args.path }));
+    }
+    let (name, from_directory) = match &args.name {
+        Some(name) => (name.clone(), false),
+        None => (
+            dir.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            true,
+        ),
+    };
+    if !valid_package_name(&name) {
+        return Err(Box::new(NewError::InvalidName {
+            name,
+            from_directory,
+        }));
+    }
+    if reserved_name(&name) {
+        return Err(Box::new(NewError::ReservedName { name }));
+    }
+
+    let (in_src, elsewhere) = sources_in(&dir);
+    if in_src.is_empty() && !elsewhere.is_empty() {
+        return Err(boxed(InitError::SourcesElsewhere {
+            more: elsewhere.len().saturating_sub(SHOWN_SOURCES),
+            found: elsewhere.into_iter().take(SHOWN_SOURCES).collect(),
+        }));
+    }
+    // The language of the sources there are, when not given: C++ if any is
+    // C++, C if all are C, and C++ with none, as for `cuno new`.
+    let lang = args.lang.or_else(|| {
+        (args.edition.is_none() && !in_src.is_empty()).then(|| {
+            let cxx = in_src
+                .iter()
+                .any(|s| cuno_build::sources::language(Path::new(s)) == Some(Lang::Cxx));
+            if cxx { Lang::Cxx } else { Lang::C }
+        })
+    });
+    let (lang, edition) =
+        resolve(lang, args.edition).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
+    let mut written = files(&name, lang, edition);
+    if !in_src.is_empty() {
+        // Only the manifest: the sources are the user's. Whether they make
+        // an executable is the build's own rule, asked of the manifest to be.
+        written.truncate(1);
+        let manifest = cuno_manifest::parse_manifest(&written[0].1, &dir.join("cuno.toml"), &dir)
+            .map_err(|e| Box::new(e) as Box<dyn CunoError>)?
+            .value;
+        match cuno_build::sources::classify(&dir, &manifest, &dir.join("target"), host) {
+            Ok(_) => {}
+            Err(cuno_build::BuildError::NoExecutable { .. }) => {
+                return Err(boxed(InitError::NoEntry));
+            }
+            Err(error) => return Err(Box::new(error)),
+        }
+    }
+    for (relative, _) in &written {
+        if cuno_tools::write::absent(&dir.join(relative)).is_err() {
+            return Err(boxed(InitError::FileExists {
+                path: (*relative).to_owned(),
+            }));
+        }
+    }
+
+    let failed = |path: PathBuf, e: std::io::Error| {
+        Box::new(NewError::Write {
+            path,
+            reason: e.to_string(),
+        }) as Box<dyn CunoError>
+    };
+    let in_repository = inside_repository(&dir);
+    for (relative, content) in &written {
+        let path = dir.join(relative);
+        let made = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                use std::io::Write;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)?
+                    .write_all(content.as_bytes())
+            });
+        made.map_err(|e| failed(path, e))?;
+    }
+    if args.vcs == Vcs::Git {
+        let repository = in_repository || {
+            match std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&dir)
+                .output()
+            {
+                Ok(output) if output.status.success() => true,
+                Ok(output) => {
+                    let said = String::from_utf8_lossy(&output.stderr);
+                    shell.warning(format!("git init failed: {}", said.trim()));
+                    false
+                }
+                Err(_) => {
+                    shell.warning("git was not found; the package is not under version control");
+                    false
+                }
+            }
+        };
+        if repository {
+            let path = dir.join(".gitignore");
+            gitignore(&path).map_err(|e| failed(path, e))?;
+        }
+    }
+    shell.status("Created", format!("`{name}` package"));
+    Ok(())
+}
+
+/// `.gitignore` at `path` made, or, when there is one, given the lines of
+/// cuno's that it lacks, at its end, in its own line ending; its lines and
+/// a byte order mark are left as they are.
+fn gitignore(path: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    if cuno_tools::write::absent(path).is_ok() {
+        return std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?
+            .write_all(GITIGNORE.as_bytes());
+    }
+    if let Err(refusal) = cuno_tools::write::appendable(path) {
+        return Err(std::io::Error::other(format!(
+            "{} {}",
+            path.display(),
+            refusal.which()
+        )));
+    }
+    let held = std::fs::read_to_string(path)?;
+    let text = held.strip_prefix('\u{feff}').unwrap_or(&held);
+    let have: Vec<&str> = text.lines().map(str::trim).collect();
+    let missing: Vec<&str> = GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !have.contains(l))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut added = String::new();
+    if !text.is_empty() && !text.ends_with('\n') {
+        added += newline;
+    }
+    for line in missing {
+        added += line;
+        added += newline;
+    }
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)?
+        .write_all(added.as_bytes())
 }
 
 #[cfg(test)]

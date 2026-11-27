@@ -112,6 +112,24 @@ enum Command {
         #[arg(long, value_name = "VCS", value_parser = ["git", "none"], default_value = "git")]
         vcs: String,
     },
+    /// Make an existing directory into a package
+    Init {
+        /// The directory (default: the current one)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        /// The language (c / c++; default: the sources', else c++)
+        #[arg(long, value_name = "LANG", value_parser = ["c", "c++"])]
+        lang: Option<String>,
+        /// The language standard (c++17 / c++20 / c++23 / c11 / c17 / c23)
+        #[arg(long, value_name = "EDITION", value_parser = ["c++17", "c++20", "c++23", "c11", "c17", "c23"])]
+        edition: Option<String>,
+        /// The package's name (default: the directory's)
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// Version control (git / none)
+        #[arg(long, value_name = "VCS", value_parser = ["git", "none"], default_value = "git")]
+        vcs: String,
+    },
     /// Compile the package
     Build(BuildOpts),
     /// Check the package for errors without building it
@@ -546,6 +564,33 @@ fn dispatch(
                 },
             };
             new::new(args, &cwd, shell).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
+            return Ok(0);
+        }
+        Some(Command::Init {
+            path,
+            lang,
+            edition,
+            name,
+            vcs,
+        }) => {
+            let cwd = given.cwd()?;
+            resolve_user_settings(env, &cwd, shell).map_err(build::boxed)?;
+            // clap admits only these values.
+            let args = new::InitArgs {
+                path: path.unwrap_or_else(|| PathBuf::from(".")),
+                lang: lang
+                    .map(|l| cuno_toolchain::flags::Lang::parse(&l).expect("a lang clap admits")),
+                edition: edition.map(|e| {
+                    cuno_toolchain::flags::Edition::parse(&e).expect("an edition clap admits")
+                }),
+                name,
+                vcs: if vcs == "none" {
+                    new::Vcs::None
+                } else {
+                    new::Vcs::Git
+                },
+            };
+            new::init(args, &cwd, given.host, shell)?;
             return Ok(0);
         }
         Some(Command::Fmt { check }) => {
