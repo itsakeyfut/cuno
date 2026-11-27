@@ -315,11 +315,17 @@ pub struct InitArgs {
 }
 
 /// What stops `cuno init`, besides what stops `cuno new`. Every one is exit
-/// code 2: nothing has been written (`commands.md`, "`cuno init [path]`").
+/// code 2, and comes before anything is written (`commands.md`, "`cuno init
+/// [path]`").
 #[derive(Debug)]
 pub enum InitError {
-    /// The directory is not there.
+    /// Nothing is at the path.
     NoDirectory {
+        /// As the user gave it.
+        path: PathBuf,
+    },
+    /// Something other than a directory is at the path.
+    NotADirectory {
         /// As the user gave it.
         path: PathBuf,
     },
@@ -335,12 +341,18 @@ pub enum InitError {
         /// How many more there are.
         more: usize,
     },
-    /// Sources in `src/` and no entry file.
-    NoEntry,
-    /// A file it would write is there.
-    FileExists {
+    /// Sources in `src/`, and nothing that becomes an executable.
+    NoExecutable,
+    /// Something is where a file it would write, or a directory above one,
+    /// goes.
+    Exists {
         /// From the directory, with `/`.
         path: String,
+    },
+    /// The `.gitignore` there cannot be added to.
+    Gitignore {
+        /// Why.
+        reason: String,
     },
 }
 
@@ -348,22 +360,22 @@ impl fmt::Display for InitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InitError::NoDirectory { path } => write!(f, "`{}` does not exist", path.display()),
+            InitError::NotADirectory { path } => {
+                write!(f, "`{}` is not a directory", path.display())
+            }
             InitError::AlreadyPackage { path } => {
                 write!(f, "`{}` already has a cuno.toml", path.display())
             }
             InitError::SourcesElsewhere { found, more } => {
-                write!(
-                    f,
-                    "the sources are not where cuno looks for them: {}",
-                    found.join(", ")
-                )?;
+                write!(f, "sources found outside src/: {}", found.join(", "))?;
                 if *more > 0 {
                     write!(f, " and {more} more")?;
                 }
                 Ok(())
             }
-            InitError::NoEntry => f.write_str("src/ has no entry file"),
-            InitError::FileExists { path } => write!(f, "{path} already exists"),
+            InitError::NoExecutable => f.write_str("src/ has no executable to build"),
+            InitError::Exists { path } => write!(f, "{path} already exists"),
+            InitError::Gitignore { reason } => write!(f, "cannot add to .gitignore: {reason}"),
         }
     }
 }
@@ -376,35 +388,33 @@ impl CunoError for InitError {
     }
 
     fn help(&self) -> Option<String> {
-        Some(
-            match self {
-                InitError::NoDirectory { .. } => {
-                    "use cuno new to create a package in a new directory"
-                }
-                InitError::AlreadyPackage { .. } => return None,
-                InitError::SourcesElsewhere { .. } => {
-                    "move them under src/, with the program's main in src/main.cpp (or src/main.c)"
-                }
-                InitError::NoEntry => {
-                    "put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/"
-                }
-                InitError::FileExists { .. } => {
-                    "cuno init writes no file that is there; move it aside, or add cuno.toml by hand"
-                }
+        let help = match self {
+            InitError::NoDirectory { .. } => "use cuno new to create a package in a new directory",
+            InitError::NotADirectory { .. } | InitError::AlreadyPackage { .. } => return None,
+            InitError::SourcesElsewhere { .. } => {
+                "move them under src/, with the program's main in src/main.cpp (or src/main.c)"
             }
-            .to_owned(),
-        )
+            InitError::NoExecutable => {
+                "put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/"
+            }
+            InitError::Exists { .. } => {
+                "cuno init writes no file that is there; move it aside, or add cuno.toml by hand"
+            }
+            InitError::Gitignore { .. } => "make it a text file in UTF-8, or use --vcs none",
+        };
+        Some(help.to_owned())
     }
 }
 
 /// How many sources a message names before it counts the rest.
 const SHOWN_SOURCES: usize = 5;
 
-/// The sources in `dir`, by their path from it with `/`: those under `src/`
-/// and the rest. What cuno makes (`target/`, `.cuno/`), hidden directories,
-/// links and other packages (a directory with its own `cuno.toml`) are not
-/// looked in.
-fn sources_in(dir: &Path) -> (Vec<String>, Vec<String>) {
+/// The sources in `dir`, by their path from it with `/`: those under `src/`,
+/// told as the file system tells names apart (`case`), and the rest. What
+/// cuno makes (`target/`), hidden directories (`.git/`, `.cuno/`), links
+/// and other packages (a directory with its own `cuno.toml`) are not looked
+/// in.
+fn sources_in(dir: &Path, case: cuno_core::NameCase) -> (Vec<String>, Vec<String>) {
     fn walk(dir: &Path, from: &str, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -435,7 +445,76 @@ fn sources_in(dir: &Path) -> (Vec<String>, Vec<String>) {
     }
     let mut all = Vec::new();
     walk(dir, "", &mut all);
-    all.into_iter().partition(|s| s.starts_with("src/"))
+    all.into_iter().partition(|s| {
+        s.split_once('/')
+            .is_some_and(|(top, _)| case.same(top, "src"))
+    })
+}
+
+/// What becomes of the `.gitignore` at `path`, decided before anything is
+/// written.
+enum Gitignore {
+    /// None there: cuno's is made.
+    Make,
+    /// These lines go at its end.
+    Add(String),
+    /// It has every line already.
+    Keep,
+}
+
+/// What `.gitignore` at `path` needs: made when there is none, or given the
+/// lines of cuno's it lacks, in its own line ending, after its last line;
+/// its lines and a byte order mark stay as they are. Why it cannot be added
+/// to, otherwise.
+fn plan_gitignore(path: &Path) -> Result<Gitignore, String> {
+    if cuno_tools::write::absent(path).is_ok() {
+        return Ok(Gitignore::Make);
+    }
+    cuno_tools::write::appendable(path).map_err(|refusal| refusal.to_string())?;
+    let held = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let text = held.strip_prefix('\u{feff}').unwrap_or(&held);
+    let have: Vec<&str> = text.lines().map(str::trim).collect();
+    let missing: Vec<&str> = GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !have.contains(l))
+        .collect();
+    if missing.is_empty() {
+        return Ok(Gitignore::Keep);
+    }
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut added = String::new();
+    if !text.is_empty() && !text.ends_with('\n') {
+        added += newline;
+    }
+    for line in missing {
+        added += line;
+        added += newline;
+    }
+    Ok(Gitignore::Add(added))
+}
+
+/// Where `relative`, a file `cuno init` writes in `dir`, is blocked: the
+/// first of the directories above it that is something other than a
+/// directory, or the file itself when anything is there.
+fn blocked(dir: &Path, relative: &str) -> Option<String> {
+    let parts: Vec<&str> = relative.split('/').collect();
+    for end in 1..=parts.len() {
+        let prefix = parts[..end].join("/");
+        let path = dir.join(&prefix);
+        let last = end == parts.len();
+        let in_the_way = if last {
+            cuno_tools::write::absent(&path).is_err()
+        } else {
+            // A directory above it may be there, as it is; a link or a file
+            // may not.
+            std::fs::symlink_metadata(&path).is_ok_and(|m| !m.file_type().is_dir())
+        };
+        if in_the_way {
+            return Some(prefix);
+        }
+    }
+    None
 }
 
 /// Makes the existing directory `args` describe into a package, `args.path`
@@ -450,8 +529,12 @@ pub fn init(
 ) -> Result<(), Box<dyn CunoError>> {
     let boxed = |e: InitError| Box::new(e) as Box<dyn CunoError>;
     let dir = cuno_core::paths::lexical(&cwd.join(&args.path));
-    if !dir.is_dir() {
-        return Err(boxed(InitError::NoDirectory { path: args.path }));
+    match std::fs::metadata(&dir) {
+        Err(_) => return Err(boxed(InitError::NoDirectory { path: args.path })),
+        Ok(meta) if !meta.is_dir() => {
+            return Err(boxed(InitError::NotADirectory { path: args.path }));
+        }
+        Ok(_) => {}
     }
     if dir.join("cuno.toml").exists() {
         return Err(boxed(InitError::AlreadyPackage { path: args.path }));
@@ -475,7 +558,7 @@ pub fn init(
         return Err(Box::new(NewError::ReservedName { name }));
     }
 
-    let (in_src, elsewhere) = sources_in(&dir);
+    let (in_src, elsewhere) = sources_in(&dir, host.name_case());
     if in_src.is_empty() && !elsewhere.is_empty() {
         return Err(boxed(InitError::SourcesElsewhere {
             more: elsewhere.len().saturating_sub(SHOWN_SOURCES),
@@ -505,18 +588,24 @@ pub fn init(
         match cuno_build::sources::classify(&dir, &manifest, &dir.join("target"), host) {
             Ok(_) => {}
             Err(cuno_build::BuildError::NoExecutable { .. }) => {
-                return Err(boxed(InitError::NoEntry));
+                return Err(boxed(InitError::NoExecutable));
             }
             Err(error) => return Err(Box::new(error)),
         }
     }
     for (relative, _) in &written {
-        if cuno_tools::write::absent(&dir.join(relative)).is_err() {
-            return Err(boxed(InitError::FileExists {
-                path: (*relative).to_owned(),
-            }));
+        if let Some(path) = blocked(&dir, relative) {
+            return Err(boxed(InitError::Exists { path }));
         }
     }
+    let gitignore_path = dir.join(".gitignore");
+    let gitignore = match args.vcs {
+        Vcs::Git => Some(
+            plan_gitignore(&gitignore_path)
+                .map_err(|reason| boxed(InitError::Gitignore { reason }))?,
+        ),
+        Vcs::None => None,
+    };
 
     let failed = |path: PathBuf, e: std::io::Error| {
         Box::new(NewError::Write {
@@ -524,23 +613,21 @@ pub fn init(
             reason: e.to_string(),
         }) as Box<dyn CunoError>
     };
+    let create = |path: &Path, content: &str| -> std::io::Result<()> {
+        use std::io::Write;
+        path.parent().map_or(Ok(()), std::fs::create_dir_all)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?
+            .write_all(content.as_bytes())
+    };
     let in_repository = inside_repository(&dir);
     for (relative, content) in &written {
         let path = dir.join(relative);
-        let made = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| {
-                use std::io::Write;
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?
-                    .write_all(content.as_bytes())
-            });
-        made.map_err(|e| failed(path, e))?;
+        create(&path, content).map_err(|e| failed(path, e))?;
     }
-    if args.vcs == Vcs::Git {
+    if let Some(gitignore) = gitignore {
         let repository = in_repository || {
             match std::process::Command::new("git")
                 .args(["init", "--quiet"])
@@ -560,57 +647,23 @@ pub fn init(
             }
         };
         if repository {
-            let path = dir.join(".gitignore");
-            gitignore(&path).map_err(|e| failed(path, e))?;
+            let path = gitignore_path;
+            let done = match gitignore {
+                Gitignore::Make => create(&path, GITIGNORE),
+                Gitignore::Add(added) => {
+                    use std::io::Write;
+                    std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(&path)
+                        .and_then(|mut f| f.write_all(added.as_bytes()))
+                }
+                Gitignore::Keep => Ok(()),
+            };
+            done.map_err(|e| failed(path, e))?;
         }
     }
     shell.status("Created", format!("`{name}` package"));
     Ok(())
-}
-
-/// `.gitignore` at `path` made, or, when there is one, given the lines of
-/// cuno's that it lacks, at its end, in its own line ending; its lines and
-/// a byte order mark are left as they are.
-fn gitignore(path: &Path) -> std::io::Result<()> {
-    use std::io::Write;
-    if cuno_tools::write::absent(path).is_ok() {
-        return std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?
-            .write_all(GITIGNORE.as_bytes());
-    }
-    if let Err(refusal) = cuno_tools::write::appendable(path) {
-        return Err(std::io::Error::other(format!(
-            "{} {}",
-            path.display(),
-            refusal.which()
-        )));
-    }
-    let held = std::fs::read_to_string(path)?;
-    let text = held.strip_prefix('\u{feff}').unwrap_or(&held);
-    let have: Vec<&str> = text.lines().map(str::trim).collect();
-    let missing: Vec<&str> = GITIGNORE
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#') && !have.contains(l))
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut added = String::new();
-    if !text.is_empty() && !text.ends_with('\n') {
-        added += newline;
-    }
-    for line in missing {
-        added += line;
-        added += newline;
-    }
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)?
-        .write_all(added.as_bytes())
 }
 
 #[cfg(test)]
