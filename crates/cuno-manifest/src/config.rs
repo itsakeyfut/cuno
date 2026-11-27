@@ -137,6 +137,55 @@ pub fn load_config(path: &Path, shown: &Path, base: &Path) -> Result<Loaded<Conf
     }
 }
 
+/// Sets `[toolchain] compiler = name` in the user-level `config.toml` at
+/// `path`, keeping its other keys, its comments and its order, and making
+/// the file (and its directory) when there is none. Nothing is written
+/// when the file cannot be read or `[toolchain]` is not a table; the new
+/// text goes to a file beside it that then replaces it, so a failed write
+/// never leaves half a configuration (`docs/en/specs/commands.md`, "`cuno
+/// toolchain default <compiler>`").
+pub fn write_user_compiler(path: &Path, name: &str) -> Result<(), ConfigError> {
+    let error = |message: String| ConfigError {
+        message,
+        location: None,
+        help: None,
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(error(format!("cannot read {}: {e}", path.display()))),
+    };
+    // The reader's own parse first, so a broken file is reported as every
+    // command reports it, with its line and column.
+    Doc::parse(&text, path)?;
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| error(format!("cannot read {}: {e}", path.display())))?;
+    let toolchain = doc
+        .entry("toolchain")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    let Some(table) = toolchain.as_table_like_mut() else {
+        return Err(error(format!(
+            "`[toolchain]` in {} is not a table",
+            path.display()
+        )));
+    };
+    table.insert("compiler", toml_edit::value(name));
+
+    let written = |e: std::io::Error| error(format!("cannot write {}: {e}", path.display()));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(written)?;
+    }
+    let mut beside = path.as_os_str().to_owned();
+    beside.push(".tmp");
+    let beside = PathBuf::from(beside);
+    std::fs::write(&beside, doc.to_string()).map_err(written)?;
+    std::fs::rename(&beside, path).map_err(|e| {
+        let _ = std::fs::remove_file(&beside);
+        written(e)
+    })
+}
+
 /// Reads `text` as a `config.toml`; `file` is how messages name it, and
 /// relative paths resolve against `base`.
 pub fn parse_config(text: &str, file: &Path, base: &Path) -> Result<Loaded<Config>, ConfigError> {
@@ -241,6 +290,57 @@ pub fn parse_config(text: &str, file: &Path, base: &Path) -> Result<Loaded<Confi
 mod tests {
     use super::*;
     use cuno_core::{CunoError, ExitClass};
+
+    /// Writing the default changes `[toolchain] compiler` and nothing else:
+    /// a comment, `[toolchain.paths]` and another table stay as they were,
+    /// and the file still reads as the same configuration with the new
+    /// compiler.
+    ///
+    /// Mutation: write the file from the new key alone, drop its comments,
+    /// or set the key at the top level; this test fails.
+    #[test]
+    fn writing_the_default_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let before = "# my machine\n[build]\njobs = 4  # half the cores\n\n[toolchain]\ncompiler = \"clang\"\n\n[toolchain.paths]\nclang = \"C:/LLVM/bin/clang.exe\"\n";
+        std::fs::write(&path, before).unwrap();
+        write_user_compiler(&path, "gcc").unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            after,
+            before.replace("compiler = \"clang\"", "compiler = \"gcc\"")
+        );
+        assert!(!dir.path().join("config.toml.tmp").exists());
+
+        // Made, with its directory, when there is none.
+        let fresh = dir.path().join("home").join("config.toml");
+        write_user_compiler(&fresh, "msvc").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&fresh).unwrap(),
+            "[toolchain]\ncompiler = \"msvc\"\n"
+        );
+    }
+
+    /// A `toolchain` that is not a table, and a file that is not TOML, are
+    /// errors that name the file, and the file is left as it was.
+    ///
+    /// Mutation: overwrite `toolchain` with a table, or write what parsed
+    /// in part; this test fails.
+    #[test]
+    fn a_file_the_default_cannot_go_in_is_refused_and_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for before in [
+            "toolchain = \"clang\"\n",
+            "[toolchain\ncompiler = \"clang\"\n",
+        ] {
+            std::fs::write(&path, before).unwrap();
+            let err = write_user_compiler(&path, "gcc").unwrap_err();
+            assert_eq!(err.exit_class(), ExitClass::Setup);
+            assert!(err.to_string().contains("config.toml"), "{err}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        }
+    }
 
     fn base() -> PathBuf {
         std::env::temp_dir().join("cuno-base")

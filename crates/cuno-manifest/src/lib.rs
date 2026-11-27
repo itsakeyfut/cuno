@@ -10,7 +10,7 @@ mod project;
 mod read;
 mod settings;
 
-pub use config::{Config, LocatedDir, Tool, load_config, parse_config};
+pub use config::{Config, LocatedDir, Tool, load_config, parse_config, write_user_compiler};
 pub use cuno_toolchain::flags::{
     BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Subsystem, Warnings,
 };

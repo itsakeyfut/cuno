@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 2d51c6f0327155977d455d09bc301dcd4d7d6ab8 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 083504fd3c8adf61197117ad25977a399f80b261 -->
 
 # Internal Structure of cuno Itself
 
@@ -65,6 +65,7 @@ The command modules are limited to those in the following table. `tests/architec
 | `fmt` | `fmt` |
 | `lint` | `lint` |
 | `new` | `new` |
+| `toolchain` | `toolchain list`, `toolchain default` |
 
 - `build` holds four commands because they share one build flow, as in [commands.md](commands.md#available-for-build-commands-build--run--check--test).
 - Rationale: when there is a place to put processing that several commands share, processing accumulates there without anyone asking which crate should answer, and rules get duplicated (the toolchain preparation shared by the build and doctor, and doctor holding a copy of the compiler selection order). Removing the shared place forces the decision of where something belongs at the time it is written. Also, because only `main.rs` reads the process, commands can be called with values alone.
@@ -143,6 +144,7 @@ cuno/
 |---|---|---|
 | clap | Command-line argument parsing | MVP |
 | serde + toml | Loading configuration files | MVP |
+| toml_edit | Rewriting configuration files (`cuno toolchain default`, keeping comments and other keys) | M5 |
 | mlua | Embedding Lua | Later |
 
 ## Testing cuno itself

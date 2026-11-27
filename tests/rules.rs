@@ -35,6 +35,7 @@ const COLOR: &[(&str, Row)] = &[
     ("lint", Runs(&["lint"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
+    ("toolchain", Runs(&["toolchain", "list"])),
 ];
 
 /// Outside a project the missing project is the error, whatever the
@@ -55,6 +56,10 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
         "doctor",
         DoesNotApply("it diagnoses the environment, in a project or not"),
     ),
+    (
+        "toolchain",
+        DoesNotApply("it lists the machine's compilers, in a project or not"),
+    ),
 ];
 
 /// The output directory is judged as the file system names it: a setting
@@ -69,6 +74,7 @@ const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
     ("lint", Runs(&["lint"])),
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
+    ("toolchain", Runs(&["toolchain", "list"])),
 ];
 
 /// A configured tool copy that cannot be used is reported, even when
@@ -83,6 +89,12 @@ const CONFIGURED_COPY: &[(&str, Row)] = &[
     ("lint", Runs(&["lint", "--compiler", "msvc"])),
     ("clean", DoesNotApply("it runs no tool")),
     ("doctor", Runs(&["doctor", "--compiler", "msvc"])),
+    (
+        "toolchain",
+        DoesNotApply(
+            "it lists the copy as not usable, with this reason, on stdout; reporting it as a problem is doctor's",
+        ),
+    ),
 ];
 
 /// Every rule's table, named.
