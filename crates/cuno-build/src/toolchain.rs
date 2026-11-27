@@ -136,6 +136,7 @@ pub struct TidyCompile {
     /// Where the build runs, as for [`ProbeCompile`].
     pub cwd: PathBuf,
     kind: CompilerKind,
+    version: Version,
     include: Vec<PathBuf>,
     msvc: Option<Version>,
 }
@@ -144,12 +145,7 @@ impl TidyCompile {
     /// What clang-tidy is told of the compiler, as compile_commands.json
     /// tells it.
     pub fn context(&self) -> ToolContext<'_> {
-        ToolContext {
-            kind: self.kind,
-            include: &self.include,
-            msvc: self.msvc.as_ref(),
-            gnuc: None,
-        }
+        ToolContext::new(self.kind, &self.version, self.msvc.as_ref(), &self.include)
     }
 }
 
@@ -176,6 +172,7 @@ pub fn tidy_compile(
         settings: editor_settings(project, selected.kind, Lang::Cxx, host, bundled),
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
         kind: selected.kind,
+        version: selected.version,
         include: prepared.include_dirs(),
         msvc: selected.msvc.as_ref().map(|toolset| toolset.cl_version),
     })

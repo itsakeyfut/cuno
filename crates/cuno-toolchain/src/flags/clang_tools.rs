@@ -30,6 +30,30 @@ pub struct ToolContext<'a> {
     pub gnuc: Option<&'a Version>,
 }
 
+impl<'a> ToolContext<'a> {
+    /// What a tool is told about `kind`, at `version`, whose environment
+    /// gives `include` and, for a compiler that builds with an MSVC
+    /// toolset, the toolset's cl version `msvc`. Which version macro the
+    /// build sees is decided here, once for every caller: a tool told the
+    /// wrong one analyses other code than the build compiles.
+    pub fn new(
+        kind: CompilerKind,
+        version: &'a Version,
+        msvc: Option<&'a Version>,
+        include: &'a [PathBuf],
+    ) -> ToolContext<'a> {
+        ToolContext {
+            kind,
+            include,
+            msvc,
+            gnuc: match kind.family() {
+                Family::Gnu => Some(version),
+                Family::Msvc | Family::Llvm => None,
+            },
+        }
+    }
+}
+
 /// One compile as a Clang-based tool reads it. Only [`for_clang_tools`]
 /// makes one, so compile_commands.json and doctor's check cannot come to
 /// build it differently.
@@ -160,6 +184,26 @@ pub(crate) fn include_dirs(include: Option<&OsStr>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each compiler's tools are told the version macro its builds see:
+    /// GCC's version as `__GNUC__`, and the toolset's cl version as
+    /// `_MSC_VER` for the compilers that have one. Every kind is asked.
+    ///
+    /// Mutation: give GCC no version, or give a compiler other than GCC
+    /// one, or drop the toolset's version; this test fails.
+    #[test]
+    fn each_compiler_s_tools_are_told_the_version_its_builds_see() {
+        let version = Version::find_in("16.2.0").unwrap();
+        let cl = Version::find_in("19.44.35207").unwrap();
+        for kind in CompilerKind::ALL {
+            let msvc = (kind.family() != Family::Gnu).then_some(&cl);
+            let context = ToolContext::new(kind, &version, msvc, &[]);
+            let gnuc = context.gnuc.map(ToString::to_string);
+            let expected = (kind == CompilerKind::Gcc).then(|| "16.2.0".to_owned());
+            assert_eq!(gnuc, expected, "{}", kind.name());
+            assert_eq!(context.msvc, msvc, "{}", kind.name());
+        }
+    }
 
     fn strings(args: &[OsString]) -> Vec<String> {
         args.iter()

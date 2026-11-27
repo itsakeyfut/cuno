@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 3e4721a789c95ec22baafbd3ab7980837006efb7 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 6cc709bb24bc2b9a58f95edd2b459f1030783520 -->
 
 # Toolchain
 
@@ -112,7 +112,7 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
    - Remove its name from the names `CompilerKind::parse` refuses as not supported yet.
 4. **Selection** (`select.rs`). Add the detection results to `Found`, and write the conditions for choosing a copy in `copy_of`. A copy written in `[toolchain.paths]` is the only one used, and one that cannot be used is an error naming the setting. The `help:` for none found and none usable says how to install it (`error.rs`). For a compiler that uses no MSVC toolset, check that a missing Visual Studio does not stop its build (`toolchain::ready`) and that `cuno doctor` does not report it as a problem.
 5. **Environment** (`prepare.rs`). Build the environment it runs in. Add the environment variables it reads for itself to `TOOL_OPTION_VARIABLES`, so they are left out. Give `Prepared` what identifies its commands for deciding what changed: its standard header directories (`Prepared::include_dirs`) and the runtime files it links into every program, so that a file of the same name appearing is not missed ([build.md](build.md#deciding-what-changed)).
-6. **Flags** (`flags/`). Every row in `compile.rs` and `link.rs`, plus `library_files` (the file names its linker tries for a library, in the order it tries them), the color flags, the header dependency file, and the versions that accept each standard (`check_edition`). The command given to clang-based tools (`clang_tools.rs`) names the target and the version macro the build sees (`-fgnuc-version` for GCC; the version comes through `ToolContext`, which `pipeline.rs` in `cuno-build` fills). For a compiler that does not use the MSVC standard library, clang-tidy's standard library check (`toolchain::tidy_compile`) is not made.
+6. **Flags** (`flags/`). Every row in `compile.rs` and `link.rs`, plus `library_files` (the file names its linker tries for a library, in the order it tries them), the color flags, the header dependency file, and the versions that accept each standard (`check_edition`). The command given to clang-based tools (`clang_tools.rs`) names the target and the version macro the build sees (`-fgnuc-version` for GCC; which version is told through which macro is answered in the per-family `match` of `ToolContext::new`). For a compiler that does not use the MSVC standard library, clang-tidy's standard library check (`toolchain::tidy_compile`) is not made.
 
 7. **The test runtime** (`headers/cuno/` in `cuno-build`). Check that tests register with it (the `constructor` attribute, or MSVC's `.CRT$XCU`), that a normal build links without the runtime, that values such as a `long double` are shown right, and any `#pragma` it does not know.
 8. **Tests.**
