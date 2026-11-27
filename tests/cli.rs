@@ -33,16 +33,17 @@ Everything C/C++ development needs, in one tool.
 Usage: cuno [OPTIONS] [COMMAND]
 
 Commands:
-  new     Create a new package
-  build   Compile the package
-  check   Check the package for errors without building it
-  run     Build the package and run one of its executables
-  test    Build the package's tests and run them
-  fmt     Format the package's code with clang-format
-  lint    Analyse the package's code with clang-tidy
-  clean   Remove the build's output
-  doctor  Diagnose the environment and show a fix for each problem
-  help    Print this message or the help of the given subcommand(s)
+  new        Create a new package
+  build      Compile the package
+  check      Check the package for errors without building it
+  run        Build the package and run one of its executables
+  test       Build the package's tests and run them
+  fmt        Format the package's code with clang-format
+  lint       Analyse the package's code with clang-tidy
+  clean      Remove the build's output
+  doctor     Diagnose the environment and show a fix for each problem
+  toolchain  List the compilers cuno finds, or choose the default one
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
       --color <WHEN>  Coloring [possible values: auto, always, never]

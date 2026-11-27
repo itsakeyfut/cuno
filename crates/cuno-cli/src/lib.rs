@@ -13,6 +13,7 @@ mod doctor;
 mod fmt;
 mod lint;
 mod new;
+mod toolchain;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -178,6 +179,24 @@ enum Command {
         /// The compiler to diagnose (msvc / clang / clang-cl / gcc / safec)
         #[arg(long, value_name = "NAME")]
         compiler: Option<String>,
+    },
+    /// List the compilers cuno finds, or choose the default one
+    Toolchain {
+        #[command(subcommand)]
+        command: ToolchainCommand,
+    },
+}
+
+/// `cuno toolchain`'s commands (docs/en/specs/commands.md).
+#[derive(Subcommand)]
+enum ToolchainCommand {
+    /// List the compilers and tools cuno finds, and which one builds use
+    List,
+    /// Make a compiler this user's default
+    Default {
+        /// The compiler (msvc / clang / clang-cl / gcc)
+        #[arg(value_name = "COMPILER")]
+        compiler: String,
     },
 }
 
@@ -577,6 +596,27 @@ fn dispatch(
             let problems =
                 doctor::doctor(compiler, resolved, env, &cwd, given.host, given.temp, shell);
             return Ok(if problems == 0 { 0 } else { 1 });
+        }
+        Some(Command::Toolchain { command }) => {
+            let cwd = given.cwd()?;
+            let settings = resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cores: given.cores,
+                    cli: &CliSettings::default(),
+                },
+                shell,
+            )
+            .map_err(build::boxed)?;
+            return match command {
+                ToolchainCommand::List => {
+                    toolchain::list(&settings, env, given.host, stdout.as_mut(), shell)
+                }
+                ToolchainCommand::Default { compiler } => {
+                    toolchain::default(&compiler, &settings, env, given.host, shell)
+                }
+            };
         }
         None => {
             // No command was given. Like Cargo, print the usage to stdout and

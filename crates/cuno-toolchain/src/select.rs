@@ -595,8 +595,13 @@ pub fn select_tool(
 /// Whether a compiler can be selected here, and if not, why.
 #[derive(Debug)]
 pub enum Availability {
-    /// Selecting it would use a copy of this version.
-    Selectable(Version),
+    /// Selecting it would use this copy, of this version.
+    Selectable {
+        /// The copy's executable.
+        path: PathBuf,
+        /// Its version.
+        version: Version,
+    },
     /// No copy was found: none installed, or no Visual Studio for cl.
     NotFound,
     /// Copies were found and none can be used, for this reason (too old, a
@@ -628,7 +633,7 @@ pub fn survey(
         .filter(|&kind| Some(kind) != except && detected.looked_for(kind))
         .filter_map(|kind| {
             let availability = match copy_of(kind, found, &Constraints::default(), host) {
-                Ok((_, version, _)) => Availability::Selectable(version),
+                Ok((path, version, _)) => Availability::Selectable { path, version },
                 Err(ToolchainError::VisualStudioNotAt { .. }) if vs_reported => return None,
                 // Both name a setting the user wrote.
                 Err(
@@ -1731,7 +1736,7 @@ mod tests {
         let lines: Vec<String> = others
             .iter()
             .map(|(k, o)| match o {
-                Availability::Selectable(v) => format!("{} {v}", k.name()),
+                Availability::Selectable { version, .. } => format!("{} {version}", k.name()),
                 Availability::NotFound => format!("{} not found", k.name()),
                 other => format!("{} {other:?}", k.name()),
             })

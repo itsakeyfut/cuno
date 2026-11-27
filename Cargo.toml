@@ -77,6 +77,9 @@ tempfile = "3.27"
 # Reading cuno.toml and config.toml (cuno-manifest): the TOML parser with
 # positions, serde derive, the keys nothing read, and package versions.
 toml = "1.2.2"
+# Rewriting the user config.toml (cuno-manifest, `cuno toolchain default`)
+# while keeping its comments, order and other keys.
+toml_edit = "0.25.21"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
 semver = "1.0.28"

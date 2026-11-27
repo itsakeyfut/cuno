@@ -119,7 +119,7 @@ pub fn doctor(
         host,
     ) {
         let line = match availability {
-            Availability::Selectable(version) => {
+            Availability::Selectable { version, .. } => {
                 format!("{} {version} (not selected)", kind.name())
             }
             Availability::NotFound => format!("{} not found", kind.name()),

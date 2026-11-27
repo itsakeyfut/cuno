@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob d4b0edc4dd3506657dc3ca60dbe7fc6c4289ab56 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 9763321e557232e6770129d4da51194cc397e3f4 -->
 
 # Commands
 
@@ -333,6 +333,49 @@ One line per item, in the same form as the status lines of the other commands ([
 - A problem is printed where it is found, as an `error:` and a `help:` line, and diagnosis continues. Warnings about configuration files come first, as `warning:`.
 - With `-q`, only the configuration file warnings and the problems (`error:` and `help:`) are printed. When there is no problem, nothing is printed (the exit code tells).
 - The last line is `Finished no problems found`, or `Finished <n> problems found` (`problem` for one).
+
+### `cuno toolchain list`
+
+Lists the compilers cuno detects, and clang-format and clang-tidy.
+
+- It can run outside a project. Which compiler is selected follows the same selection precedence as the build commands ([toolchain.md](toolchain.md#selection)).
+- One line per kind, in this order: `msvc`, `clang`, `clang-cl`, `gcc`, `clang-format`, `clang-tidy`. Each line gives the version and location of the copy that selecting that kind would use: the one in `[toolchain.paths]` if one is written there, otherwise the newest usable one.
+  - The line of the compiler that is selected shows the copy chosen by the same judgement selection makes (cuno's minimum and `[toolchain.version]`). It ends with `(selected: <reason>)`. The reason is the one on `cuno doctor`'s `Selected` line: `CUNO_COMPILER`, one of the configuration files, or `automatic selection` (this command takes no `--compiler`).
+  - The other lines are judged as `cuno doctor`'s `Info` lines are, without `[toolchain.version]` (which applies only to the compiler actually used).
+  - When nothing is found the line says `not found`. When copies are found and none can be used it says `not usable: <reason>`. A copy written in `[toolchain.paths]` that cannot be used is also `not usable: <reason>`; reporting it as a problem is `cuno doctor`'s job.
+  - When the compiler that should be selected cannot be (not found, or no version meets the requirements), its line gives the reason and ends with `(would be selected: <reason>)`.
+- The list goes to standard output, since it is this command's result, and `-q` does not remove it. Configuration warnings and the like go to standard error, as for every other command.
+  - Rationale: so the list can be redirected (`cuno toolchain list > toolchains.txt`) or piped into another command. A format for programs to read would be added as a separate option, such as `--format json`.
+- The exit code is `0` whenever the list can be printed, whatever is missing. A configuration that cannot be read is an error (exit code 3), as for every other command.
+
+```
+msvc          19.52.37029  C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.52.37025\bin\Hostx64\x64\cl.exe  (selected: automatic selection)
+clang         22.1.8       C:\Program Files\LLVM\bin\clang.exe
+clang-cl      22.1.8       C:\Program Files\LLVM\bin\clang-cl.exe
+gcc           not found
+clang-format  22.1.8       C:\Program Files\LLVM\bin\clang-format.exe
+clang-tidy    22.1.8       C:\Program Files\LLVM\bin\clang-tidy.exe
+```
+
+- Names and versions are padded with spaces to the longest of each.
+
+### `cuno toolchain default <compiler>`
+
+Writes the default compiler to `[toolchain] compiler` in the per-user `<cuno home>/config.toml` ([manifest.md](manifest.md#cunoconfigtoml)). It applies to every build by this user where no other layer chooses a compiler.
+
+- Only `[toolchain] compiler` is changed. The file's other keys, its comments and its order are kept. The file and the cuno home are created if they do not exist.
+- `<compiler>` takes the same names as `--compiler`. A name cuno does not know, or one not supported yet (`safec`), gives the same error as with `--compiler` (exit code 3), and nothing is written.
+- A configuration file that cannot be read, or a `[toolchain]` that is not a table, is an error (exit code 3), and nothing is written.
+- Once written, an `Updated` status line names the key written and the file (on standard error).
+
+```
+     Updated [toolchain] compiler = "gcc" in C:\Users\me\.cuno\config.toml
+```
+
+- In these cases the default is written and a warning follows (exit code `0`):
+  - Where the command runs, a layer with higher precedence (`--compiler`, `CUNO_COMPILER`, the project's `.cuno/config.toml` or `cuno.toml`) selects another compiler: `warning: gcc is the default, but here [toolchain] compiler in cuno.toml selects clang`.
+  - The compiler is not found on this machine, or cannot be used: the `warning:` gives the reason a build would give, and `help:` says how to install it.
+  - Rationale: the default is a setting for all of this user's builds, and choosing a compiler before installing it is a legitimate use, so the write itself is not stopped. A mismatch with what the next build will select should still be visible when the default is written.
 
 ## Output
 
