@@ -539,11 +539,14 @@ pub fn init(
         }
         Ok(_) => {}
     }
-    if !matches!(
-        cuno_manifest::manifest_in(&dir, host.name_case()),
-        cuno_manifest::ManifestIn::None
-    ) {
-        return Err(boxed(InitError::AlreadyPackage { path: args.path }));
+    match cuno_manifest::manifest_in(&dir, host.name_case()) {
+        cuno_manifest::ManifestIn::Found(_) => {
+            return Err(boxed(InitError::AlreadyPackage { path: args.path }));
+        }
+        cuno_manifest::ManifestIn::WrongCase(file) => {
+            return Err(Box::new(cuno_manifest::wrong_case(&file)));
+        }
+        cuno_manifest::ManifestIn::None => {}
     }
     let (name, from_directory) = match &args.name {
         Some(name) => (name.clone(), false),
@@ -808,5 +811,32 @@ mod tests {
         };
         assert_eq!(write.to_string(), "cannot write x: denied");
         assert_eq!(write.exit_class(), ExitClass::Setup);
+    }
+
+    /// Where names differ by case, `cuno init` in a directory holding the
+    /// manifest in another case gives the error finding the project gives,
+    /// and writes nothing.
+    ///
+    /// Mutation: take it as no manifest, or as `Cuno.toml`; this test fails.
+    #[test]
+    fn init_refuses_a_manifest_in_another_case() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cuno.toml"), "").unwrap();
+        let env = cuno_core::Env::from_pairs([], cuno_core::NameCase::host());
+        let mut shell = Shell::new(Box::new(std::io::sink()), None, &env, false);
+        let args = InitArgs {
+            path: PathBuf::from("."),
+            lang: None,
+            edition: None,
+            name: Some("app".to_owned()),
+            vcs: Vcs::None,
+        };
+        let err = init(args, dir.path(), cuno_toolchain::HostOs::Other, &mut shell).unwrap_err();
+        assert!(err.to_string().starts_with("found cuno.toml in "), "{err}");
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["cuno.toml"]);
     }
 }

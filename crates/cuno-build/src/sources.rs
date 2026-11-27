@@ -104,20 +104,20 @@ pub struct SourceWarning {
 }
 
 /// Why something under `src/` is not built.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NotBuilt {
     /// A `src/main.*` or `src/bin/` source a written `[[bin]]` does not list.
     NotListed,
     /// A link to a directory, which is not read.
     DirectoryLink,
-    /// A directory under `src/` or `tests/` with its own `Cuno.toml`,
-    /// another package, which is not read.
-    AnotherPackage,
+    /// A directory under `src/` or `tests/` with its own manifest (its
+    /// name as on disk), another package, which is not read.
+    AnotherPackage(String),
 }
 
 impl fmt::Display for SourceWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.why {
+        match &self.why {
             NotBuilt::NotListed => write!(
                 f,
                 "{} is not built: [[bin]] is written and does not list it",
@@ -126,9 +126,9 @@ impl fmt::Display for SourceWarning {
             NotBuilt::DirectoryLink => {
                 write!(f, "{} is not read: it is a link to a directory", self.path)
             }
-            NotBuilt::AnotherPackage => write!(
+            NotBuilt::AnotherPackage(manifest) => write!(
                 f,
-                "{} is not built: it has its own Cuno.toml (another package)",
+                "{} is not built: it has its own {manifest} (another package)",
                 self.path
             ),
         }
@@ -182,11 +182,12 @@ pub fn code_files(
                 path,
             });
         }
-        if let Some(package) = another_package(&root, &path, case) {
+        if let Some((package, manifest)) = another_package(&root, &path, case) {
             return Err(BuildError::InAnotherPackage {
                 name: bin.name.clone(),
                 path: shown(&root, &path),
                 package: shown(&root, &package),
+                manifest,
             });
         }
         if !code_places.iter().any(|dir| place.within(dir))
@@ -202,7 +203,8 @@ pub fn code_files(
     let places = dirs.iter().map(|d| (d, true));
     let places = places.chain(bin_dirs.iter().map(|d| (d, false)));
     for (dir, below) in places {
-        let another_package = holds_manifest(dir, case) && !Place::of(dir, case).same(&root_place);
+        let another_package =
+            manifest_name(dir, case).is_some() && !Place::of(dir, case).same(&root_place);
         if !dir.is_dir() || another_package {
             continue;
         }
@@ -357,11 +359,12 @@ pub fn classify(
                         path,
                     });
                 }
-                if let Some(package) = another_package(&root, &path, case) {
+                if let Some((package, manifest)) = another_package(&root, &path, case) {
                     return Err(BuildError::InAnotherPackage {
                         name: bin.name.clone(),
                         path: shown(&root, &path),
                         package: shown(&root, &package),
+                        manifest,
                     });
                 }
                 if !path.is_file() {
@@ -595,7 +598,7 @@ impl Walk<'_> {
                 // the others, its code would ship unformatted and unanalysed
                 // while both report success (`docs/en/specs/project-layout.md`,
                 // "Source collection and linking").
-                if holds_manifest(&path, self.case) {
+                if let Some(manifest) = manifest_name(&path, self.case) {
                     let place = Place::of(&path, self.case);
                     if [SRC_DIR, TESTS_DIR]
                         .iter()
@@ -603,7 +606,7 @@ impl Walk<'_> {
                     {
                         self.warnings.push(SourceWarning {
                             path: shown(self.root, &path),
-                            why: NotBuilt::AnotherPackage,
+                            why: NotBuilt::AnotherPackage(manifest),
                         });
                     }
                 } else {
@@ -617,25 +620,22 @@ impl Walk<'_> {
     }
 }
 
-/// Whether `dir` is a package's: it holds a manifest, a lowercase one on a
-/// file system that tells names apart included, as finding the project
-/// judges it (`docs/en/specs/manifest.md`, "File layout").
-fn holds_manifest(dir: &Path, case: NameCase) -> bool {
-    !matches!(
-        cuno_manifest::manifest_in(dir, case),
-        cuno_manifest::ManifestIn::None
-    )
+/// The name of the manifest `dir` holds, as on disk, when it is a
+/// package's: one named in another case on a file system that tells names
+/// apart included, as finding the project judges it
+/// (`docs/en/specs/manifest.md`, "File layout").
+fn manifest_name(dir: &Path, case: NameCase) -> Option<String> {
+    cuno_manifest::manifest_in(dir, case).file_name()
 }
 
 /// The directory below `root` holding its own `Cuno.toml` that `path` lies
 /// in (another package), the nearest first, if there is one
 /// (`docs/en/specs/project-layout.md`, "Entry files and package body").
-fn another_package(root: &Path, path: &Path, case: NameCase) -> Option<PathBuf> {
+fn another_package(root: &Path, path: &Path, case: NameCase) -> Option<(PathBuf, String)> {
     path.ancestors()
         .skip(1)
         .take_while(|dir| *dir != root && dir.starts_with(root))
-        .find(|dir| holds_manifest(dir, case))
-        .map(Path::to_owned)
+        .find_map(|dir| manifest_name(dir, case).map(|m| (dir.to_owned(), m)))
 }
 
 /// An error if `src/` or `tests/` holds its own `Cuno.toml`: the package's
@@ -645,10 +645,11 @@ fn another_package(root: &Path, path: &Path, case: NameCase) -> Option<PathBuf> 
 fn code_dir_is_package(root: &Path, case: NameCase) -> Result<(), BuildError> {
     match [SRC_DIR, TESTS_DIR]
         .into_iter()
-        .find(|d| holds_manifest(&root.join(d), case))
+        .find_map(|d| manifest_name(&root.join(d), case).map(|m| (d, m)))
     {
-        Some(dir) => Err(BuildError::CodeDirIsPackage {
+        Some((dir, manifest)) => Err(BuildError::CodeDirIsPackage {
             dir: dir.to_owned(),
+            manifest,
         }),
         None => Ok(()),
     }
@@ -1552,7 +1553,7 @@ path = \"src/main.cpp\"
         assert!(s.test_helpers.is_empty(), "{:?}", s.test_helpers);
         let warned = |path: &str| SourceWarning {
             path: path.to_owned(),
-            why: NotBuilt::AnotherPackage,
+            why: NotBuilt::AnotherPackage("Cuno.toml".to_owned()),
         };
         assert_eq!(s.warnings, [warned("src/sub"), warned("tests/pkg")]);
         assert_eq!(
@@ -1587,7 +1588,7 @@ path = \"src/main.cpp\"
             code.warnings,
             [SourceWarning {
                 path: "src/sub".to_owned(),
-                why: NotBuilt::AnotherPackage,
+                why: NotBuilt::AnotherPackage("Cuno.toml".to_owned()),
             }]
         );
     }
@@ -1652,5 +1653,24 @@ path = \"src/sub/deep/main.cpp\"
                 );
             }
         }
+    }
+
+    /// Where names differ by case, `src/` holding a manifest in another
+    /// case is refused as another package, and the message and its help
+    /// name the file as it is.
+    ///
+    /// Mutation: name it `Cuno.toml` whatever is on disk; this test fails.
+    #[test]
+    fn a_code_dir_package_is_named_by_its_file_as_it_is() {
+        let (_d, root, m) = project("c++", "", &["src/main.cpp", "src/cuno.toml"]);
+        let err = code_files(&root, &m, &root.join("target"), HostOs::Other).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "src/ has its own cuno.toml, which would make it another package"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).as_deref(),
+            Some("remove src/cuno.toml, or move that package out of src/")
+        );
     }
 }

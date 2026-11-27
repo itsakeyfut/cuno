@@ -102,6 +102,15 @@ fn every_generated_package_builds_tests_and_runs() {
             let made = p.cuno(&["new", "app", "--edition", edition, "--vcs", "none"]);
             assert_eq!(made.code, Some(0), "{edition}: {}", made.stderr);
             let app = p.path().join("app");
+            // Listed, not opened: the file system here opens either case.
+            let names: Vec<String> = std::fs::read_dir(&app)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(
+                names.contains(&"Cuno.toml".to_owned()),
+                "{edition}: {names:?}"
+            );
             let manifest = std::fs::read_to_string(app.join("Cuno.toml")).unwrap();
             assert!(
                 manifest.contains(&format!("edition = \"{edition}\"\n")),

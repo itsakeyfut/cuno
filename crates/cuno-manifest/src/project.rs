@@ -11,54 +11,86 @@ use crate::ConfigError;
 /// layout"): every reader and writer of it joins this.
 pub const MANIFEST: &str = "Cuno.toml";
 
-/// The manifest's name as it was before it took a capital, which a
-/// case-sensitive file system does not open as [`MANIFEST`].
-const LOWERCASE: &str = "cuno.toml";
-
 /// What a directory holds as a manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ManifestIn {
     /// Its manifest.
     Found(PathBuf),
-    /// A lowercase `cuno.toml` and no `Cuno.toml`, on a file system that
-    /// tells them apart: an error, not a directory without a manifest.
-    Lowercase(PathBuf),
+    /// A file named as the manifest in another case (`cuno.toml`,
+    /// `CUNO.TOML`) and no `Cuno.toml`, on a file system that tells them
+    /// apart: an error, not a directory without a manifest.
+    WrongCase(PathBuf),
     /// No manifest.
     None,
 }
 
+impl ManifestIn {
+    /// The name of the file it found, as on disk: what a message about the
+    /// directory's own package names.
+    pub fn file_name(&self) -> Option<String> {
+        match self {
+            ManifestIn::Found(path) | ManifestIn::WrongCase(path) => {
+                path.file_name().map(|n| n.to_string_lossy().into_owned())
+            }
+            ManifestIn::None => None,
+        }
+    }
+}
+
 /// The manifest `dir` holds, its file system telling names apart as `case`
 /// says (`docs/en/specs/manifest.md`, "File layout"). Where names differ by
-/// case, the directory is listed and its names compared exactly, so the
-/// lowercase name is told apart from the manifest's even when the file
-/// system at hand would open either.
+/// case, the directory is listed and its names compared exactly, so a name
+/// in another case is told apart from the manifest's even when the file
+/// system at hand would open either; a directory that cannot be listed is
+/// asked for `Cuno.toml` itself, as it was before.
 pub fn manifest_in(dir: &Path, case: NameCase) -> ManifestIn {
-    let file = |name: &str| dir.join(name);
-    match case {
-        NameCase::Insensitive => {
-            if file(MANIFEST).is_file() {
-                ManifestIn::Found(file(MANIFEST))
-            } else {
-                ManifestIn::None
-            }
+    let exact = dir.join(MANIFEST);
+    let opened = || {
+        if exact.is_file() {
+            ManifestIn::Found(exact.clone())
+        } else {
+            ManifestIn::None
         }
-        NameCase::Sensitive => {
-            let Ok(entries) = std::fs::read_dir(dir) else {
-                return ManifestIn::None;
-            };
-            let names: Vec<String> = entries
-                .flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_file() || t.is_symlink()))
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
-            if names.iter().any(|n| n == MANIFEST) && file(MANIFEST).is_file() {
-                ManifestIn::Found(file(MANIFEST))
-            } else if names.iter().any(|n| n == LOWERCASE) {
-                ManifestIn::Lowercase(file(LOWERCASE))
-            } else {
-                ManifestIn::None
-            }
-        }
+    };
+    if case == NameCase::Insensitive {
+        return opened();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return opened();
+    };
+    let names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file() || t.is_symlink()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    if names.iter().any(|n| n == MANIFEST) && exact.is_file() {
+        ManifestIn::Found(exact)
+    } else if let Some(other) = names
+        .iter()
+        .find(|n| n.as_str() != MANIFEST && n.eq_ignore_ascii_case(MANIFEST))
+    {
+        ManifestIn::WrongCase(dir.join(other))
+    } else {
+        ManifestIn::None
+    }
+}
+
+/// The error for a manifest named in another case, `file` in `dir`: the
+/// search for the project stops there, rather than going on to one above
+/// it (`docs/en/specs/manifest.md`, "File layout").
+pub fn wrong_case(file: &Path) -> ConfigError {
+    let name = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dir = file.parent().unwrap_or(file);
+    ConfigError {
+        message: format!(
+            "found {name} in {}; the manifest is named {MANIFEST}",
+            dir.display()
+        ),
+        location: None,
+        help: Some(format!("rename it to {MANIFEST}")),
     }
 }
 
@@ -83,7 +115,7 @@ impl Project {
 
 /// The nearest of `cwd` and its ancestors that holds a `Cuno.toml` file, or
 /// `None` outside any project (not an error: `cuno doctor` and `cuno new`
-/// run there). A lowercase `cuno.toml` on the way stops the search with an
+/// run there). A manifest named in another case on the way stops the search with an
 /// error rather than letting a project above it be used (`case`: how the
 /// host's file system tells names apart). `cwd` is passed in by the binary,
 /// which alone reads the process.
@@ -95,16 +127,7 @@ pub fn find_project(cwd: &Path, case: NameCase) -> Result<Option<Project>, Confi
                     root: dir.to_owned(),
                 }));
             }
-            ManifestIn::Lowercase(_) => {
-                return Err(ConfigError {
-                    message: format!(
-                        "found {LOWERCASE} in {}; the manifest is named {MANIFEST}",
-                        dir.display()
-                    ),
-                    location: None,
-                    help: Some(format!("rename it to {MANIFEST}")),
-                });
-            }
+            ManifestIn::WrongCase(file) => return Err(wrong_case(&file)),
             ManifestIn::None => {}
         }
     }
@@ -268,5 +291,32 @@ mod tests {
             resolve_path(Path::new(r"D:\x"), base).unwrap(),
             Path::new(r"D:\x")
         );
+    }
+
+    /// Any other case of the name stops the search, naming the file as it
+    /// is; a directory named `Cuno.toml` is no manifest.
+    ///
+    /// Mutation: recognise only `cuno.toml`, name the file `cuno.toml`
+    /// whatever its case, or count a directory; this test fails.
+    #[test]
+    fn any_other_case_stops_the_search_and_a_directory_is_no_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let outer = root.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        touch(&outer.join(MANIFEST));
+        touch(&inner.join("CUNO.TOML"));
+        let err = find_project(&inner, NameCase::Sensitive).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "found CUNO.TOML in {}; the manifest is named Cuno.toml",
+                inner.display()
+            )
+        );
+
+        let dir = root.path().join("d");
+        std::fs::create_dir_all(dir.join(MANIFEST)).unwrap();
+        assert_eq!(manifest_in(&dir, NameCase::Sensitive), ManifestIn::None);
     }
 }
