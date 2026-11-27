@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob c6545e09628a9d6615eca8efe374fd4e9a2c8d37 -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob 05c36ffba3908370fdd1e0b2d7760e94eab0135b -->
 
 # Testing
 
@@ -9,7 +9,7 @@
 | **A. cuno's own tests** | A lightweight mechanism provided by cuno | Default for new projects |
 | **B. Existing frameworks** | Use GTest / Catch2 / doctest etc. as they are; cuno unifies discovery, execution, and output | Users with existing assets |
 
-- Selected with `[test] framework` in `cuno.toml` ([manifest.md](manifest.md)).
+- Selected with `[test] framework` in `Cuno.toml` ([manifest.md](manifest.md)).
 - The MVP covers A only.
 
 ## Background (research)

@@ -4,17 +4,17 @@
 
 - C/C++ のディレクトリ構成やコーディングルールは**開発者が自由に決める**。cuno は特定の構成を強制しない。
   - 例: `include/` に公開ヘッダを分ける人、`src/` にヘッダと実装を同居させる人、Unreal Engine 流に `Public/` / `Private/` で分ける人。いずれにも対応する。
-- 開発者は `cuno.toml` で、自分のプロジェクトに**制約を自由に設けられる**（公開ヘッダの場所、ソースの場所など）。
+- 開発者は `Cuno.toml` で、自分のプロジェクトに**制約を自由に設けられる**（公開ヘッダの場所、ソースの場所など）。
 
 ## 既定の構成 + 上書き可能
 
 「強制しない」と「設定なしで動く（cargo の体験）」を両立する。
 
-- `cuno.toml` に何も書かなければ、次の既定構成として**解釈する**（各場所が何として扱われるかの規則）。`cuno new` が実際に生成するファイルは [commands.md](commands.md) の「生成するもの」を参照（この図のすべてを生成するわけではない）。
+- `Cuno.toml` に何も書かなければ、次の既定構成として**解釈する**（各場所が何として扱われるかの規則）。`cuno new` が実際に生成するファイルは [commands.md](commands.md) の「生成するもの」を参照（この図のすべてを生成するわけではない）。
 
 ```
 mygame/
-├── cuno.toml
+├── Cuno.toml
 ├── include/mygame/   # 公開ヘッダ（ライブラリのみ）
 ├── src/
 │   ├── main.cpp      # 実行ファイル（既定）
@@ -25,7 +25,7 @@ mygame/
 └── benches/
 ```
 
-- すべての場所は `cuno.toml` で上書きできる（ライブラリの `sources` / `public-headers` による上書きは、ライブラリ対応と同じ「後」。MVP で上書きできるのは `[[bin]] path` と `include-dirs`）。例（Unreal Engine 流）:
+- すべての場所は `Cuno.toml` で上書きできる（ライブラリの `sources` / `public-headers` による上書きは、ライブラリ対応と同じ「後」。MVP で上書きできるのは `[[bin]] path` と `include-dirs`）。例（Unreal Engine 流）:
 
 ```toml
 [lib]
@@ -46,7 +46,7 @@ sources = ["Private"]
 
 ### 対象ファイル
 
-- `src/` 以下のソースをすべてコンパイルする。ただし、自前の `cuno.toml` を持つディレクトリ（別のパッケージ）は読まない（下記）。
+- `src/` 以下のソースをすべてコンパイルする。ただし、自前の `Cuno.toml` を持つディレクトリ（別のパッケージ）は読まない（下記）。
 - 拡張子で言語を判定する。
   - `.c`: C としてコンパイルする。
   - `.cpp` / `.cc` / `.cxx`: C++ としてコンパイルする。
@@ -68,9 +68,9 @@ sources = ["Private"]
   - 実行ファイルが 1 つもない（既定のエントリファイルがなく、`src/bin/` も空で、`[[bin]]` も書いていない）。
   - `[[bin]]` の `path` にファイルがない、または C/C++ のソース（`.c` / `.cpp` / `.cc` / `.cxx`）でない。
   - エントリファイルがプロジェクトの外にある。オブジェクトファイルの置き場は、プロジェクト内でのソースの位置から決めるため（[build.md](build.md#出力先ディレクトリ)）。
-  - `[[bin]]` の `path` が、自前の `cuno.toml` を持つディレクトリ（別のパッケージ）の中にある（``error: the entry file of `t` is in another package: src/sub/main.cpp (src/sub has its own cuno.toml)``）。`cuno fmt` と `cuno lint` も同じエラーにする。
+  - `[[bin]]` の `path` が、自前の `Cuno.toml` を持つディレクトリ（別のパッケージ）の中にある（``error: the entry file of `t` is in another package: src/sub/main.cpp (src/sub has its own Cuno.toml)``）。`cuno fmt` と `cuno lint` も同じエラーにする。
     - 理由: 別のパッケージの中は読まない（下記）ので、エントリファイルだけをビルドすると、ビルドはそのファイルを使い、`cuno fmt` / `cuno lint` は別のパッケージとして飛ばす。整形も解析もされないコードが実行ファイルに入ったまま、両者は成功と報告する。
-  - `src/` か `tests/` そのものが自前の `cuno.toml` を持つ（`error: src/ has its own cuno.toml, which would make it another package`）。`cuno fmt` と `cuno lint` も同じエラーにする。
+  - `src/` か `tests/` そのものが自前の `Cuno.toml` を持つ（`error: src/ has its own Cuno.toml, which would make it another package`）。`cuno fmt` と `cuno lint` も同じエラーにする。
     - 理由: パッケージのコードの置き場が別のパッケージであることは、ほぼ確実に書き間違いである。黙って読めば、上と同じく、ビルドだけがそのコードを使う。
   - 2 つの実行ファイルが同じ名前になる（`[[bin]]` の `name` の重複や、自動検出した `src/bin/app.cpp` と既定の実行ファイル `app` など）。出力先で同じファイルになるため。Windows では大文字と小文字を区別せずに比べる（`Tool` と `tool` も同じファイルになるため）。
 - Windows では、ファイルとディレクトリの名前を大文字と小文字を区別せずに扱う。`src/Main.cpp` も既定のエントリファイルであり、`[[bin]]` の `path` を `SRC/Main.cpp` と書いても `src/main.cpp` と同じファイルとして扱う。
@@ -85,7 +85,7 @@ sources = ["Private"]
   - オブジェクトファイルの置き場は、ソースのあるディレクトリをたどった先と、ソースファイルの名前が置かれた位置で決める。ソースファイル自体がプロジェクトの外を指すリンクでも、`src/` の中のソースとしてコンパイルする。一方、`[[bin]]` の `path` に外を指すファイルのリンクを書くと、エントリファイルがプロジェクトの外にあるのでエラーになる。
 - `src/` と `tests/` の中のディレクトリへのリンク（シンボリックリンク、ジャンクション）は、中を読まずに警告する。
   - 理由: 循環するリンクで探索が終わらなくなるのを防ぎ、プロジェクトの外のファイルを黙ってパッケージ本体に入れないため。
-- `src/` と `tests/` の中で自前の `cuno.toml` を持つディレクトリは、別のパッケージとして中を読まず、`warning: src/sub is not built: it has its own cuno.toml (another package)` を出す。ビルド、`cuno fmt`、`cuno lint` のどれも同じに扱う（[パッケージのコードの置き場](#パッケージのコードの置き場)）。
+- `src/` と `tests/` の中で自前の `Cuno.toml` を持つディレクトリは、別のパッケージとして中を読まず、`warning: src/sub is not built: it has its own Cuno.toml (another package)` を出す。ビルド、`cuno fmt`、`cuno lint` のどれも同じに扱う（[パッケージのコードの置き場](#パッケージのコードの置き場)）。
   - 理由: ビルドだけが中のソースをリンクし、`cuno fmt` / `cuno lint` が別のパッケージとして飛ばすと、整形も解析もされないコードが実行ファイルに入ったまま、両者は成功と報告する。
 
 ### パッケージのコードの置き場
@@ -99,7 +99,7 @@ sources = ["Private"]
 ただし、次は除く。
 
 - 出力先（`--target-dir` などで変えた場合も、実際に使う出力先の絶対パスで判定する。[build.md](build.md#出力先ディレクトリ)）
-- 自分の `cuno.toml` を持つディレクトリ（別のパッケージ）。上の置き場そのものが持つ場合も除く。プロジェクトのルートは除かない。`src/` か `tests/` そのものが持つ場合はエラーにする（[エントリファイルとパッケージ本体](#エントリファイルとパッケージ本体)）。
+- 自分の `Cuno.toml` を持つディレクトリ（別のパッケージ）。上の置き場そのものが持つ場合も除く。プロジェクトのルートは除かない。`src/` か `tests/` そのものが持つ場合はエラーにする（[エントリファイルとパッケージ本体](#エントリファイルとパッケージ本体)）。
 
 - `include-dirs` は置き場に含めない。
   - 理由: `include-dirs` は第三者のヘッダ（`third_party/include` など）を指すことが多く、整形すると利用者のものではないファイルを書き換えてしまう。また `include-dirs` は `[platform.<OS>.build]` / `[profile.<name>.build]` で追加でき、値を決めるにはコンパイラとプロファイルの選択が要るが、`cuno fmt` はコンパイラなしで動く必要がある。
@@ -122,10 +122,10 @@ sources = ["Private"]
 - **テストビルドのファイルはすべて `CUNO_TEST` を定義してコンパイルし、パッケージ本体は 1 回だけコンパイルして各テスト実行ファイルで共有する**。そのため `tests/` の実行ファイルにもソース内テストが登録されるが、cuno はそこでは実行しない（[testing.md](testing.md) の「実行」）。
   - 理由: `tests/` のファイルと本体を別の定義でコンパイルすると、`#ifdef CUNO_TEST` で形が変わる型やインライン関数がプログラムの中で 2 通りになり、正しいコードのテストが失敗したり、誤ったコードのテストが通ったりする。どのコンパイラもリンカもこれを検出しない。
   - `#ifdef CUNO_TEST` の中に書いた補助関数は、`tests/` のファイルからも使える。
-- ライブラリの種類（static / shared / header-only）は `cuno.toml` の `[lib] kind` で指定する。
+- ライブラリの種類（static / shared / header-only）は `Cuno.toml` の `[lib] kind` で指定する。
 
 ## 未決
 
-- 構成を指定する `cuno.toml` の全項目名
+- 構成を指定する `Cuno.toml` の全項目名
 - ワークスペースの記述方法
 - ホットリロード用 DLL の扱い（shared ライブラリ + 実行ファイル側の再読み込み支援として後で扱う）

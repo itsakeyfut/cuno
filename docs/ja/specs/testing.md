@@ -7,7 +7,7 @@
 | **A. cuno 独自テスト** | cuno が提供する軽量な仕組み | 新規プロジェクトの既定 |
 | **B. 既存フレームワーク** | GTest / Catch2 / doctest 等をそのまま使い、cuno が検出・実行・表示を統一 | 既存資産を持つ利用者 |
 
-- `cuno.toml` の `[test] framework` で選ぶ（[manifest.md](manifest.md)）。
+- `Cuno.toml` の `[test] framework` で選ぶ（[manifest.md](manifest.md)）。
 - MVP は A のみ。
 
 ## 背景（調査）

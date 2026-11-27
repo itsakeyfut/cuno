@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob a6a92160ad8c9737f7b5c197b9bf92d41be375e9 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob 75854b7614bd102a7054e30d7afbc6ad4b0ed7e0 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -54,7 +54,7 @@ Supported in the order Windows x64 → Linux x64 → macOS (arm64).
 - cuno itself uses semantic versioning.
 - Only versions of the form `x.y.z` are released. Pre-releases (such as `0.2.0-rc.1`) and versions with build metadata are not. `0.0.0` means "not released yet" and is never released.
   - Reason: tools that compare versions disagree on where a pre-release sorts (`0.2.0-rc.1` comes before `0.2.0`). Keeping to the one form that every tool orders alike means a release is never misjudged.
-- From 1.0 onward, backward compatibility of `cuno.toml` is guaranteed (an old `cuno.toml` works as is with a newer cuno).
+- From 1.0 onward, backward compatibility of `Cuno.toml` is guaranteed (an old `Cuno.toml` works as is with a newer cuno).
 - Whether to release 1.0 will be considered once production adoption is reported. Completing milestones alone does not make a 1.0 ([roadmap.md](../roadmap.md)).
 
 ## Accepting contributions

@@ -20,7 +20,7 @@ cuno の決定済み仕様をまとめたドキュメント群。設計・実装
 | [overview.md](overview.md) | 目的、利用者、ゴール / 非ゴール / アンチゴール、MVP の範囲 |
 | [commands.md](commands.md) | コマンド体系、オプション、出力、終了コード |
 | [project-layout.md](project-layout.md) | プロジェクトの種類と構成 |
-| [manifest.md](manifest.md) | 設定ファイル（`cuno.toml` / `.cuno/config.toml`） |
+| [manifest.md](manifest.md) | 設定ファイル（`Cuno.toml` / `.cuno/config.toml`） |
 | [toolchain.md](toolchain.md) | 対象コンパイラ、言語規格、コンパイラ抽象化 |
 | [build.md](build.md) | ビルドエンジン |
 | [dependencies.md](dependencies.md) | 依存ライブラリ管理 |

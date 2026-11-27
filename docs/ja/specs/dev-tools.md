@@ -9,11 +9,11 @@
 
 ## 設定
 
-- フォーマッタ / リンタの設定は `cuno.toml` の `[fmt]` / `[lint]` に書く。利用者は `.clang-format` / `.clang-tidy` を書かない。cuno が設定を各ツールに渡す。
-- **エディタ用の生成物**: cuno は `cuno.toml` の `[fmt]` / `[lint]` から `.clang-format` / `.clang-tidy` を生成し、プロジェクト直下に置く（`cuno new` が `.gitignore` に追加する）。
+- フォーマッタ / リンタの設定は `Cuno.toml` の `[fmt]` / `[lint]` に書く。利用者は `.clang-format` / `.clang-tidy` を書かない。cuno が設定を各ツールに渡す。
+- **エディタ用の生成物**: cuno は `Cuno.toml` の `[fmt]` / `[lint]` から `.clang-format` / `.clang-tidy` を生成し、プロジェクト直下に置く（`cuno new` が `.gitignore` に追加する）。
   - 理由: エディタが clangd 等で整形・解析すると、これらのファイルがない場合は LLVM の既定（インデント 2 等）で動き、`cuno fmt` / `cuno lint` と結果が食い違うため。
-  - 正は常に `cuno.toml`。生成物を利用者が編集しても、次の生成で上書きされる。生成物には、cuno が生成したことを示す 1 行目を付ける。
-  - 1 行目がその印でないファイル（利用者が書いた `.clang-format` など）や、ファイルではないもの（リンク、ディレクトリ）は書き換えない。そのまま残し、生成するたびに ``warning: kept the hand-written `.clang-format`; remove it to have cuno write it from cuno.toml`` を出す（リンクやディレクトリのときは「書き込めなかった」警告）。どちらもコマンドは続ける。
+  - 正は常に `Cuno.toml`。生成物を利用者が編集しても、次の生成で上書きされる。生成物には、cuno が生成したことを示す 1 行目を付ける。
+  - 1 行目がその印でないファイル（利用者が書いた `.clang-format` など）や、ファイルではないもの（リンク、ディレクトリ）は書き換えない。そのまま残し、生成するたびに ``warning: kept the hand-written `.clang-format`; remove it to have cuno write it from Cuno.toml`` を出す（リンクやディレクトリのときは「書き込めなかった」警告）。どちらもコマンドは続ける。
     - 理由: git で管理している既存のリポジトリでは、黙って上書きすると利用者のファイルが失われる。リンクをたどって書くと、プロジェクトの外のファイルを書き換えてしまう。
   - 中身が変わらないときは書き直さない（エディタが設定を読み直さずに済む）。
   - 利用者が書く設定ファイルではないため、「設定ファイルを増やさない」方針には触れない（compile_commands.json と同じ扱い。[build.md](build.md)）。
@@ -200,7 +200,7 @@ exclude = []           # 解析しないファイル
 
 ## ドキュメント生成（`cuno doc`、将来）
 
-- 当初は Doxygen を包む。設定は `cuno.toml` の `[doc]` に書き、Doxyfile は利用者に書かせない。
+- 当初は Doxygen を包む。設定は `Cuno.toml` の `[doc]` に書き、Doxyfile は利用者に書かせない。
 - 自作は C++ の構文解析が必要になるため、当面しない。
 
 ## IDE / エディタ連携
@@ -212,7 +212,7 @@ exclude = []           # 解析しないファイル
 | VS Code | `cuno ide vscode` で launch.json / tasks.json を生成 | 後 |
 | IDE プラグイン等 | `cuno metadata` の JSON でプロジェクト情報を提供 | 後 |
 
-- ビルド設定の正は常に `cuno.toml`。IDE 用ファイルは生成物にすぎない。
+- ビルド設定の正は常に `Cuno.toml`。IDE 用ファイルは生成物にすぎない。
 - IDE 用の生成物は `target/` 内に置き、リポジトリを汚さない。例外として compile_commands.json・`.clang-format`・`.clang-tidy` はプロジェクト直下に置く（clangd 等のエディタが自動で見つけられるようにするため。いずれも `.gitignore` に追加する）。
 
 ## 未決

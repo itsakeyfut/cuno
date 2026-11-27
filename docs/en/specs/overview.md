@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/overview.md @ blob 1af2d59636873b62d236596c14c9a98c6b129684 -->
+<!-- translated-from: docs/ja/specs/overview.md @ blob 272341ea3e12fe905e5912715c814fefadcc8d94 -->
 
 # Overview
 
@@ -54,7 +54,7 @@ cuno run          # build and run
 ## Anti-goals (considered failures even if they work)
 
 - Users have to write CMake or another build DSL
-- Configuration is scattered across many files beyond `cuno.toml` + `.cuno/config.toml` (the per-user `<cuno home>/config.toml` and the build script as an escape hatch are exceptions; see [manifest.md](manifest.md))
+- Configuration is scattered across many files beyond `Cuno.toml` + `.cuno/config.toml` (the per-user `<cuno home>/config.toml` and the build script as an escape hatch are exceptions; see [manifest.md](manifest.md))
 - An IDE is required to get started
 - Users have to look up dependency hash values by hand
 - Users have to memorize compiler-specific flags (`/WX`, `-Werror`, etc.)

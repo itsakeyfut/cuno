@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 18e0657b0f866d76d0196a4c5e7e7c856f320689 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 60e51b06b9aa5fd6394f80567157c27e6d448e3c -->
 
 # Build
 
@@ -51,7 +51,7 @@
 
 ## Default include paths
 
-Include paths that cuno always adds, separately from `include-dirs` in `cuno.toml`.
+Include paths that cuno always adds, separately from `include-dirs` in `Cuno.toml`.
 
 | Path | Reason |
 |---|---|
@@ -61,7 +61,7 @@ Include paths that cuno always adds, separately from `include-dirs` in `cuno.tom
 
 ## Settings and flags
 
-How the settings in `cuno.toml`, and the flags cuno always adds, become each compiler's arguments. The flags are written only here; other documents link to this section. `clang` is the GNU-style Clang (targeting `x86_64-pc-windows-msvc`). `GCC` is MinGW-w64 GCC (targeting `x86_64-w64-mingw32`; [toolchain.md](toolchain.md#mingw-gcc)). Every mapping was checked with the real cl, clang-cl, clang and GCC.
+How the settings in `Cuno.toml`, and the flags cuno always adds, become each compiler's arguments. The flags are written only here; other documents link to this section. `clang` is the GNU-style Clang (targeting `x86_64-pc-windows-msvc`). `GCC` is MinGW-w64 GCC (targeting `x86_64-w64-mingw32`; [toolchain.md](toolchain.md#mingw-gcc)). Every mapping was checked with the real cl, clang-cl, clang and GCC.
 
 ### Always-on flags
 
@@ -126,7 +126,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - `/Zc:__cplusplus`: without it, cl sets `__cplusplus` to `199711` even with `/std:c++20`.
 - `--target=x86_64-pc-windows-msvc`: builds with the same ABI as MSVC, so libraries built with MSVC can be linked in ([toolchain.md](toolchain.md)).
 - `/TC` / `/TP`, `-x c` / `-x c++`: each source is compiled as the language its extension gives ([project-layout.md](project-layout.md#target-files)), stated explicitly. A file in a language other than the package's gets that language's default standard, and none of the C++-only settings (exceptions, RTTI). Every other setting (`defines`, warnings, the `flags` of `[build]` and `[build.<compiler>]`, and so on) goes to every source whatever its language; a C++-only flag written in `flags` is ignored by the compiler on C sources, or makes it report a warning or an error.
-- `c++23` and `c23` name their standard on every compiler. "Latest" (`/std:c++latest`, or `/std:clatest` used for C++) is not used: on cl 19.52 and clang-cl 22, `/std:c++latest` is already the C++26 working draft (`__cplusplus` is `202400`), so the same `cuno.toml` would get a different standard than with clang, and different programs would build.
+- `c++23` and `c23` name their standard on every compiler. "Latest" (`/std:c++latest`, or `/std:clatest` used for C++) is not used: on cl 19.52 and clang-cl 22, `/std:c++latest` is already the C++26 working draft (`__cplusplus` is `202400`), so the same `Cuno.toml` would get a different standard than with clang, and different programs would build.
   - cl only warns about a `/std` it does not know and compiles with the old standard. So whether the standard is accepted is decided from cl's version, and it is an error when that is too old ([toolchain.md](toolchain.md)). `/std:c++23` needs cl 19.52 or later, the oldest version checked (no official document says which version accepts it; this is lowered if an older one is confirmed), and `/std:clatest` (the latest C, which includes C23) needs Visual Studio 2022 17.7 (cl 19.37) or later.
   - clang-cl ignores `/std:c++23` and `/std:c23`, so clang's switch is passed through `/clang:`. C23 is written `c2x`, which Clang 17 also accepts (`c23` is from Clang 18).
 - `-fms-runtime-lib`: without it, the GNU-style `clang` uses the static C runtime, which contradicts the `runtime = "dynamic"` default. It matters only when compiling (the objects record which C runtime they use, and the linker follows them), so it is not passed when linking.
@@ -156,8 +156,8 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 
 Processing other than C/C++ compilation (shader compilation, code generation, asset conversion, etc.) is handled in the following three layers. Anything that can be written in a higher layer is written there. MVP has only layer 1. Layer 2 (custom rules) and layer 3 (build script) are "Later".
 
-1. **`cuno.toml` (declarative settings)**: sources, defines, flags, etc. Most projects need only this.
-2. **Custom rules (`cuno.toml`)**: declaratively write "convert these files, with this command, into this output". Dependency tracking (depfile support), execution order, and change detection are handled by cuno's build engine.
+1. **`Cuno.toml` (declarative settings)**: sources, defines, flags, etc. Most projects need only this.
+2. **Custom rules (`Cuno.toml`)**: declaratively write "convert these files, with this command, into this output". Dependency tracking (depfile support), execution order, and change detection are handled by cuno's build engine.
    ```toml
    [[build.rule]]
    inputs  = "shaders/**/*.glsl"
@@ -166,7 +166,7 @@ Processing other than C/C++ compilation (shader compilation, code generation, as
    ```
 3. **Build script (escape hatch)**: only for processing that cannot be written in 1 or 2. Written in **Lua** (e.g. `build.lua`). Lua is embedded in cuno itself, and scripts hook into the build through APIs provided by cuno.
    - cuno can restrict the operations a script can perform (sandbox).
-   - Build scripts of dependency packages are run only if the user allows them in `cuno.toml`.
+   - Build scripts of dependency packages are run only if the user allows them in `Cuno.toml`.
 
 ### Rationale
 
@@ -237,13 +237,13 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
   1. Command-line argument `--target-dir`
   2. Environment variable `CUNO_TARGET_DIR`
   3. Project-level `.cuno/config.toml`
-  4. `[build] target-dir` in `cuno.toml`
+  4. `[build] target-dir` in `Cuno.toml`
   5. User-level `<cuno home>/config.toml`
   6. Default value `target/`
-- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it; the build commands and `cuno clean` report the missing project first outside a project, so it is `cuno doctor` that reports this, [commands.md](commands.md#cuno-build--cuno-check)), it is an error (exit code 3). This holds whichever layer sets it (an empty `CUNO_TARGET_DIR` environment variable counts as unset, [manifest.md](manifest.md#two-levels-of-settings)), and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `cuno.toml` is an error).
+- If the output directory is empty, or is the project root or a directory above it (outside a project, the current directory or a directory above it; the build commands and `cuno clean` report the missing project first outside a project, so it is `cuno doctor` that reports this, [commands.md](commands.md#cuno-build--cuno-check)), it is an error (exit code 3). This holds whichever layer sets it (an empty `CUNO_TARGET_DIR` environment variable counts as unset, [manifest.md](manifest.md#two-levels-of-settings)), and the value of a layer that loses on precedence is checked too (even with `--target-dir`, `target-dir = "."` in `Cuno.toml` is an error).
   - Rationale: if the result depended on how the path is written (`""`, `"."`, `"a/.."`) or on which layer wins, the error would first appear only when another layer's setting is removed.
   - Rationale: `cuno clean` deletes the whole output directory. Allowing something like `target-dir = "."` would delete the project's sources with it.
-- A `target-dir` in a layer kept in the project (`cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3), even in a layer that does not win. The error names the file and line where it was written, with ``error: `build.target-dir` in .cuno/config.toml points outside the project: <path>`` and `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project`. To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
+- A `target-dir` in a layer kept in the project (`Cuno.toml`, `.cuno/config.toml`) must point inside the project. Pointing outside it is an error (exit code 3), even in a layer that does not win. The error names the file and line where it was written, with ``error: `build.target-dir` in .cuno/config.toml points outside the project: <path>`` and `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project`. To put the output outside the project, set it in the user-level config, the `CUNO_TARGET_DIR` environment variable or `--target-dir`.
   - Rationale: these files can be distributed with a repository. `cuno clean` deletes the output directory without running anything, so a cloned project must not be able to make it delete a directory outside the project. On builds trusting a project's settings, see [manifest.md](manifest.md#a-projects-settings-and-trust).
 - `cuno new` adds the output directory to `.gitignore`.
 
@@ -261,7 +261,7 @@ Originally, following Rust (build.rs) and Zig (build.zig), the plan was to write
 
 ## Build settings
 
-- **Defines / include paths**: written in `cuno.toml`.
+- **Defines / include paths**: written in `Cuno.toml`.
   ```toml
   [build]
   defines = ["GAME_DEBUG"]

@@ -44,7 +44,7 @@ cuno 自体を開発するための土台を作ります。
 
 cuno がプロジェクトと環境を正しく理解できるようにします。
 
-- `cuno.toml` / `.cuno/config.toml` の読み込みと検証（未知のキーの警告、MVP 外の項目の警告 / エラー）
+- `Cuno.toml` / `.cuno/config.toml` の読み込みと検証（未知のキーの警告、MVP 外の項目の警告 / エラー）
 - プロジェクトの探し方（親ディレクトリをさかのぼる）とパスの解決
 - コンパイラの検出（Visual Studio / Build Tools、LLVM）と選択の優先順位
 - Windows での環境解決（Developer Command Prompt なしで MSVC / Clang を使える）
@@ -64,7 +64,7 @@ C/C++ のプロジェクトをビルドして実行できるようにします�
 - compile_commands.json の生成
 - `cuno build` / `cuno run` / `cuno check` / `cuno clean`
 
-**完了条件**: 手書きの `cuno.toml` を持つプロジェクトを MSVC / Clang の両方で `cuno run` でき、ヘッダだけを変更したときも正しく差分ビルドされる。
+**完了条件**: 手書きの `Cuno.toml` を持つプロジェクトを MSVC / Clang の両方で `cuno run` でき、ヘッダだけを変更したときも正しく差分ビルドされる。
 
 ## M3: テスト
 
@@ -104,7 +104,7 @@ cuno 形式のパッケージ同士を依存として使えるようにします
 
 - ライブラリプロジェクト（`[lib]`、`cuno new --lib`、static / shared / header-only）
 - `[dependencies]`（Git / URL 指定）、`cuno add` / `remove` / `update` / `tree` / `fetch`
-- `cuno.lock`（ハッシュ値の自動取得と記録）
+- `Cuno.lock`（ハッシュ値の自動取得と記録）
 - バージョン解決（1 ライブラリ 1 バージョン）
 
 **完了条件**: Git 上の cuno 形式ライブラリを `cuno add --git` で追加し、ハッシュ値を調べずにビルドできる。
@@ -160,6 +160,6 @@ cuno 形式のパッケージ同士を依存として使えるようにします
 
 ## v1.0 について
 
-1.0 以降は、`cuno.toml` の後方互換を保証します（[distribution.md](specs/distribution.md)）。
+1.0 以降は、`Cuno.toml` の後方互換を保証します（[distribution.md](specs/distribution.md)）。
 
 1.0 にするかどうかは、**実務での採用が報告された時点で検討します**。マイルストーンの完了だけでは 1.0 にしません。

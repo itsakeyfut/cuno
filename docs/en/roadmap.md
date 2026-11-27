@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/roadmap.md @ blob 5ab8373a6dfcc9b3116f62f86b40ee9ea322c8bf -->
+<!-- translated-from: docs/ja/roadmap.md @ blob add1528c64b1fb261af98619735c641c83e2339f -->
 
 # cuno Roadmap
 
@@ -46,7 +46,7 @@ Build the groundwork for developing cuno itself.
 
 Enable cuno to correctly understand the project and the environment.
 
-- Loading and validating `cuno.toml` / `.cuno/config.toml` (warnings for unknown keys, warnings / errors for items outside the MVP)
+- Loading and validating `Cuno.toml` / `.cuno/config.toml` (warnings for unknown keys, warnings / errors for items outside the MVP)
 - Project discovery (walking up parent directories) and path resolution
 - Compiler detection (Visual Studio / Build Tools, LLVM) and selection precedence
 - Environment resolution on Windows (MSVC / Clang usable without the Developer Command Prompt)
@@ -66,7 +66,7 @@ Enable building and running C/C++ projects.
 - Generation of compile_commands.json
 - `cuno build` / `cuno run` / `cuno check` / `cuno clean`
 
-**Completion criteria**: a project with a hand-written `cuno.toml` can be run with `cuno run` using both MSVC and Clang, and incremental builds are correct even when only a header is changed.
+**Completion criteria**: a project with a hand-written `Cuno.toml` can be run with `cuno run` using both MSVC and Clang, and incremental builds are correct even when only a header is changed.
 
 ## M3: Testing
 
@@ -106,7 +106,7 @@ Enable cuno-format packages to be used as dependencies of each other.
 
 - Library projects (`[lib]`, `cuno new --lib`, static / shared / header-only)
 - `[dependencies]` (Git / URL sources), `cuno add` / `remove` / `update` / `tree` / `fetch`
-- `cuno.lock` (automatic retrieval and recording of hashes)
+- `Cuno.lock` (automatic retrieval and recording of hashes)
 - Version resolution (one version per library)
 
 **Completion criteria**: a cuno-format library on Git can be added with `cuno add --git` and built without looking up its hash.
@@ -162,6 +162,6 @@ Make day-to-day development comfortable.
 
 ## About v1.0
 
-From 1.0 onward, backward compatibility of `cuno.toml` is guaranteed ([distribution.md](specs/distribution.md)).
+From 1.0 onward, backward compatibility of `Cuno.toml` is guaranteed ([distribution.md](specs/distribution.md)).
 
 Whether to release 1.0 **will be considered once production adoption is reported**. Completing milestones alone does not make a 1.0.

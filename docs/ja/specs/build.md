@@ -49,7 +49,7 @@
 
 ## 既定のインクルードパス
 
-`cuno.toml` の `include-dirs` とは別に、cuno が常に追加するインクルードパス。
+`Cuno.toml` の `include-dirs` とは別に、cuno が常に追加するインクルードパス。
 
 | パス | 理由 |
 |---|---|
@@ -59,7 +59,7 @@
 
 ## 設定とフラグの対応
 
-`cuno.toml` の設定と、cuno が常に付けるフラグを、各コンパイラの引数にどう変換するかの一覧。フラグの対応はここだけに書き、他の文書はここを参照する。`clang` は GNU 形式の Clang（対象は `x86_64-pc-windows-msvc`）。`GCC` は MinGW-w64 の GCC（対象は `x86_64-w64-mingw32`。[toolchain.md](toolchain.md#mingwgcc)）。どの対応も、実際の cl・clang-cl・clang・GCC で確かめたもの。
+`Cuno.toml` の設定と、cuno が常に付けるフラグを、各コンパイラの引数にどう変換するかの一覧。フラグの対応はここだけに書き、他の文書はここを参照する。`clang` は GNU 形式の Clang（対象は `x86_64-pc-windows-msvc`）。`GCC` は MinGW-w64 の GCC（対象は `x86_64-w64-mingw32`。[toolchain.md](toolchain.md#mingwgcc)）。どの対応も、実際の cl・clang-cl・clang・GCC で確かめたもの。
 
 ### 常に付けるフラグ
 
@@ -124,7 +124,7 @@
 - `/Zc:__cplusplus`: これがないと cl は `/std:c++20` でも `__cplusplus` を `199711` にする。
 - `--target=x86_64-pc-windows-msvc`: MSVC と同じ ABI でビルドし、MSVC でビルドしたライブラリと混ぜてリンクできるようにする（[toolchain.md](toolchain.md)）。
 - `/TC` / `/TP`、`-x c` / `-x c++`: 各ソースを、拡張子で決まる言語（[project-layout.md](project-layout.md#対象ファイル)）として明示してコンパイルする。パッケージの言語と違うファイルには、その言語の既定の規格を使い、C++ だけの設定（例外・RTTI）は付けない。それ以外の設定（`defines`、警告、`[build]` と `[build.<compiler>]` の `flags` など）は、言語に関係なくすべてのソースに渡す。C++ だけのフラグを `flags` に書くと、C のソースではコンパイラが無視するか、警告やエラーを出す。
-- `c++23` と `c23` は、どのコンパイラでも規格を名前で指定する。「最新」（`/std:c++latest`、`/std:clatest` を C++ に使うこと）は使わない。cl 19.52 と clang-cl 22 の `/std:c++latest` はすでに C++26 の作業草案（`__cplusplus` が `202400`）で、同じ `cuno.toml` でも clang とは違う規格になり、通るプログラムも変わるため。
+- `c++23` と `c23` は、どのコンパイラでも規格を名前で指定する。「最新」（`/std:c++latest`、`/std:clatest` を C++ に使うこと）は使わない。cl 19.52 と clang-cl 22 の `/std:c++latest` はすでに C++26 の作業草案（`__cplusplus` が `202400`）で、同じ `Cuno.toml` でも clang とは違う規格になり、通るプログラムも変わるため。
   - cl は知らない `/std` を警告だけ出して無視し、古い規格のままコンパイルする。そのため、規格を受け付けるかは cl のバージョンで判定し、足りなければエラーにする（[toolchain.md](toolchain.md)）。`/std:c++23` は確かめた最も古い cl 19.52 以上（受け付ける版が公式の文書にないため。より古い版で確かめられれば下げる）、`/std:clatest`（C の最新、C23 を含む）は Visual Studio 2022 17.7（cl 19.37）以上。
   - clang-cl は `/std:c++23` と `/std:c23` を無視するため、`/clang:` で clang の指定を渡す。C23 は Clang 17 でも通る `c2x` と書く（`c23` は Clang 18 から）。
 - `-fms-runtime-lib`: GNU 形式の `clang` は、指定しないと静的な C ランタイムを使い、`runtime = "dynamic"` の既定と食い違う。効くのはコンパイル時だけ（どの C ランタイムを使うかはオブジェクトに記録され、リンカはそれに従う）なので、リンクには付けない。
@@ -154,8 +154,8 @@
 
 C/C++ のコンパイル以外の処理（シェーダのコンパイル、コード生成、アセット変換など）は次の 3 層で扱う。上の層で書けるものは上の層で書く。MVP は 1 層目のみ。2 層目（カスタムルール）と 3 層目（ビルドスクリプト）は「後」。
 
-1. **`cuno.toml`（宣言的な設定）**: ソース、define、フラグ等。大半のプロジェクトはここだけで済む。
-2. **カスタムルール（`cuno.toml`）**: 「このファイル群を、このコマンドで、この出力に変換する」を宣言的に書く。依存追跡（depfile 対応）・実行順序・差分判定は cuno のビルドエンジンが担う。
+1. **`Cuno.toml`（宣言的な設定）**: ソース、define、フラグ等。大半のプロジェクトはここだけで済む。
+2. **カスタムルール（`Cuno.toml`）**: 「このファイル群を、このコマンドで、この出力に変換する」を宣言的に書く。依存追跡（depfile 対応）・実行順序・差分判定は cuno のビルドエンジンが担う。
    ```toml
    [[build.rule]]
    inputs  = "shaders/**/*.glsl"
@@ -164,7 +164,7 @@ C/C++ のコンパイル以外の処理（シェーダのコンパイル、コ�
    ```
 3. **ビルドスクリプト（逃げ道）**: 1・2 で書けない処理のみ。**Lua** で書く（例: `build.lua`）。cuno 本体に Lua を組み込み、cuno が提供する API を通じてビルドに介入する。
    - スクリプトから実行できる操作は cuno が制限できる（サンドボックス）。
-   - 依存パッケージのビルドスクリプトは、利用者が `cuno.toml` で許可したものだけ実行する。
+   - 依存パッケージのビルドスクリプトは、利用者が `Cuno.toml` で許可したものだけ実行する。
 
 ### 採用理由
 
@@ -235,13 +235,13 @@ C/C++ のコンパイル以外の処理（シェーダのコンパイル、コ�
   1. コマンド引数 `--target-dir`
   2. 環境変数 `CUNO_TARGET_DIR`
   3. プロジェクト単位の `.cuno/config.toml`
-  4. `cuno.toml` の `[build] target-dir`
+  4. `Cuno.toml` の `[build] target-dir`
   5. ユーザー単位の `<管理ディレクトリ>/config.toml`
   6. 既定値 `target/`
-- 出力先が空、またはプロジェクトのルートかその上のディレクトリ（プロジェクトの外では、カレントディレクトリかその上。ビルド系コマンドと `cuno clean` は、プロジェクトの外ではプロジェクトがないことを先に示すので、これを示すのは `cuno doctor`。[commands.md](commands.md#cuno-build--cuno-check)）を指す場合はエラー（終了コード 3）。どの層で指定しても同じで（環境変数 `CUNO_TARGET_DIR` は、値が空なら設定されていないものとして扱う。[manifest.md](manifest.md#2-階層の設定)）、優先順位で採用されない層の値も確かめる（`--target-dir` があっても、`cuno.toml` の `target-dir = "."` はエラー）。
+- 出力先が空、またはプロジェクトのルートかその上のディレクトリ（プロジェクトの外では、カレントディレクトリかその上。ビルド系コマンドと `cuno clean` は、プロジェクトの外ではプロジェクトがないことを先に示すので、これを示すのは `cuno doctor`。[commands.md](commands.md#cuno-build--cuno-check)）を指す場合はエラー（終了コード 3）。どの層で指定しても同じで（環境変数 `CUNO_TARGET_DIR` は、値が空なら設定されていないものとして扱う。[manifest.md](manifest.md#2-階層の設定)）、優先順位で採用されない層の値も確かめる（`--target-dir` があっても、`Cuno.toml` の `target-dir = "."` はエラー）。
   - 理由: 書き方（`""`、`"."`、`"a/.."`）や、どの層が採用されるかで結果が変わると、ほかの層の指定を外したときに初めてエラーになる。
   - 理由: `cuno clean` は出力先全体を削除するため。`target-dir = "."` のような指定を許すと、プロジェクトのソースごと消えてしまう。
-- プロジェクトに置かれた層（`cuno.toml`、`.cuno/config.toml`）の `target-dir` は、プロジェクトの中を指さなければならない。外を指す場合はエラー（終了コード 3）。採用されない層でも同じ。エラーは書いたファイルと行を示し、``error: `build.target-dir` in .cuno/config.toml points outside the project: <パス>`` と `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project` を出す。プロジェクトの外に置きたい場合は、ユーザー単位の config、環境変数 `CUNO_TARGET_DIR`、`--target-dir` で指定する。
+- プロジェクトに置かれた層（`Cuno.toml`、`.cuno/config.toml`）の `target-dir` は、プロジェクトの中を指さなければならない。外を指す場合はエラー（終了コード 3）。採用されない層でも同じ。エラーは書いたファイルと行を示し、``error: `build.target-dir` in .cuno/config.toml points outside the project: <パス>`` と `help: set it in the user-level config, CUNO_TARGET_DIR or --target-dir to put the output outside the project` を出す。プロジェクトの外に置きたい場合は、ユーザー単位の config、環境変数 `CUNO_TARGET_DIR`、`--target-dir` で指定する。
   - 理由: これらのファイルはリポジトリと一緒に配られうる。`cuno clean` は何も実行せずに出力先を削除するため、クローンしたプロジェクトがプロジェクトの外のディレクトリを消させることを防ぐ。ビルドがプロジェクトの設定を信用することについては [manifest.md](manifest.md#プロジェクトの設定と信用) を参照。
 - `cuno new` は出力先を `.gitignore` に追加する。
 
@@ -259,7 +259,7 @@ C/C++ のコンパイル以外の処理（シェーダのコンパイル、コ�
 
 ## ビルド設定
 
-- **define / include パス**: `cuno.toml` に書く。
+- **define / include パス**: `Cuno.toml` に書く。
   ```toml
   [build]
   defines = ["GAME_DEBUG"]

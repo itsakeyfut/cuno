@@ -6,18 +6,18 @@ CMake、Visual Studio、ctest、clang-format などから cuno に移るとき�
 
 各表の右の列は、次の 3 種類のどれかです。
 
-- **今できること**: cuno のコマンド、オプション、`cuno.toml` の項目をそのまま書いています。
+- **今できること**: cuno のコマンド、オプション、`Cuno.toml` の項目をそのまま書いています。
 - **未対応（Mn）**: cuno がまだ持っていないもの。その間どうするかと、対応する予定のマイルストーン（[ロードマップ](../roadmap.md)）を書いています。
 - **対応なし**: cuno に同じ概念がないもの。代わりに cuno で何をするかを書いています。
 
-cuno の設定は `cuno.toml` 1 つに書きます。項目の詳細は [manifest.md](../specs/manifest.md)、コマンドの詳細は [commands.md](../specs/commands.md) を見てください。
+cuno の設定は `Cuno.toml` 1 つに書きます。項目の詳細は [manifest.md](../specs/manifest.md)、コマンドの詳細は [commands.md](../specs/commands.md) を見てください。
 
 ## CMake から
 
 | CMake で | cuno で |
 |---|---|
-| `CMakeLists.txt` を書く | `cuno.toml` を書く。`cuno new <パス>` で、設定なしでビルドできるパッケージを作れる |
-| 既存のディレクトリに `CMakeLists.txt` を足す | 未対応（M5、`cuno init`）。その間は `cuno.toml` を手で置く |
+| `CMakeLists.txt` を書く | `Cuno.toml` を書く。`cuno new <パス>` で、設定なしでビルドできるパッケージを作れる |
+| 既存のディレクトリに `CMakeLists.txt` を足す | 未対応（M5、`cuno init`）。その間は `Cuno.toml` を手で置く |
 | `cmake -S . -B build` → `cmake --build build` | `cuno build`。生成の段階はない |
 | `add_executable(app src/main.cpp)` | 何も書かない。`src/main.cpp`（または `.c`）が既定の実行ファイルになる。名前やパスを変えるなら `[[bin]]` |
 | 実行ファイルを複数作る | `src/bin/` にソースを置く（ファイルごとに 1 つ）、または `[[bin]]` を複数書く |
@@ -32,7 +32,7 @@ cuno の設定は `cuno.toml` 1 つに書きます。項目の詳細は [manifes
 | `-DCMAKE_BUILD_TYPE=Release` | `cuno build --release`。設定は `[profile.release]` |
 | `$<CONFIG:Debug>` などの generator expression | 対応なし。構成ごとの設定は `[profile.dev.build]` / `[profile.release.build]`、コンパイラごとは `[build.msvc]` など、OS ごとは `[platform.windows.build]` などの表に書く |
 | `if(WIN32)` / `if(MSVC)` | `[platform.windows.build]`、`[build.msvc]` |
-| `option()` とキャッシュ変数 | 対応なし。値は `cuno.toml` に書く。マシンごとの設定は `.cuno/config.toml` |
+| `option()` とキャッシュ変数 | 対応なし。値は `Cuno.toml` に書く。マシンごとの設定は `.cuno/config.toml` |
 | `CMakePresets.json` | 対応なし。`.cuno/config.toml` と、`--release`、`--compiler` などのオプション |
 | `-G "Visual Studio 17 2022"` / `-T ClangCL` | `[toolchain]` の `compiler`、または `cuno build --compiler clang-cl` |
 | `find_package(Foo)` | 未対応（M6 / M7、`cuno add`）。その間は `include-dirs`、`links`、`lib-dirs` で手で指定する |
@@ -59,7 +59,7 @@ cuno の設定は `cuno.toml` 1 つに書きます。項目の詳細は [manifes
 | 「追加の依存ファイル」（`d3d12.lib`） | `[build]` の `links`（`.lib` は付けずに `d3d12`） |
 | 「追加のオプション」（コンパイラ） | `[build.msvc]` の `flags` |
 | 「サブシステム」（コンソール / Windows） | `[[bin]]` の `subsystem`（`console` / `windows`） |
-| プロパティシート（`.props`）で設定を共有する | 対応なし。設定は `cuno.toml` に書き、マシンごとの設定は `.cuno/config.toml` |
+| プロパティシート（`.props`）で設定を共有する | 対応なし。設定は `Cuno.toml` に書き、マシンごとの設定は `.cuno/config.toml` |
 | F5 でデバッグ実行する | 未対応（M9、`cuno ide vs`）。その間は `cuno build` の実行ファイルを Visual Studio で開いてデバッグできる |
 | 実行する（Ctrl+F5） | `cuno run`。作業ディレクトリはプロジェクトのルート |
 | 「コマンド引数」 | `cuno run -- <引数>` |
@@ -104,23 +104,23 @@ cuno のテストは、同梱のヘッダで書き、`cuno test` で動かしま
 
 | clang-format で | cuno で |
 |---|---|
-| `.clang-format` を書く | `cuno.toml` の `[fmt]` に書く。`style`（`cuno`、`llvm`、`google`、`microsoft` など）、`indent-width`、`column-limit`、`use-tabs` |
+| `.clang-format` を書く | `Cuno.toml` の `[fmt]` に書く。`style`（`cuno`、`llvm`、`google`、`microsoft` など）、`indent-width`、`column-limit`、`use-tabs` |
 | `.clang-format` のほかのオプション | `[fmt.clang-format]` に clang-format のオプションをそのまま書く |
 | `clang-format -i $(git ls-files '*.cpp' '*.h')` | `cuno fmt`。パッケージのコード（`src/`、`tests/`、`examples/`、`benches/` など）を対象にする |
 | CI で `clang-format --dry-run --Werror` | `cuno fmt --check`（整形されていないファイルがあれば終了コード 1） |
 | 整形しないファイルを除く | `[fmt]` の `exclude` |
-| エディタが `.clang-format` を読む | 何もしない。`cuno build`、`cuno fmt`、`cuno lint` が `cuno.toml` から `.clang-format` をプロジェクト直下に書き出す |
+| エディタが `.clang-format` を読む | 何もしない。`cuno build`、`cuno fmt`、`cuno lint` が `Cuno.toml` から `.clang-format` をプロジェクト直下に書き出す |
 
 ## clang-tidy から
 
 | clang-tidy で | cuno で |
 |---|---|
-| `.clang-tidy` の `Checks:` を書く | `cuno.toml` の `[lint]`。`preset`（`recommended` / `strict` / `none`）を選び、`allow` / `warn` / `deny` で調整する |
+| `.clang-tidy` の `Checks:` を書く | `Cuno.toml` の `[lint]`。`preset`（`recommended` / `strict` / `none`）を選び、`allow` / `warn` / `deny` で調整する |
 | `WarningsAsErrors:` | `[lint]` の `deny` |
 | `run-clang-tidy -p build` | `cuno lint`。`compile_commands.json` は cuno が用意する |
 | `clang-tidy --fix` | `cuno lint --fix` |
 | 解析しないファイルを除く | `[lint]` の `exclude` |
-| エディタが `.clang-tidy` を読む | 何もしない。`cuno build`、`cuno fmt`、`cuno lint` が `cuno.toml` から `.clang-tidy` をプロジェクト直下に書き出す |
+| エディタが `.clang-tidy` を読む | 何もしない。`cuno build`、`cuno fmt`、`cuno lint` が `Cuno.toml` から `.clang-tidy` をプロジェクト直下に書き出す |
 
 ## vcpkg / Conan から
 
@@ -128,9 +128,9 @@ cuno のテストは、同梱のヘッダで書き、`cuno test` で動かしま
 
 | vcpkg / Conan で | cuno で |
 |---|---|
-| `vcpkg.json` / `conanfile.txt` に依存を書く | 未対応（M6、`cuno.toml` の `[dependencies]`） |
+| `vcpkg.json` / `conanfile.txt` に依存を書く | 未対応（M6、`Cuno.toml` の `[dependencies]`） |
 | `vcpkg install sdl3` / `conan install` | 未対応（M6 で Git / URL、M7 で `cuno add sdl3`） |
-| `vcpkg-configuration.json` のベースライン、`conan.lock` | 未対応（M6、`cuno.lock`） |
+| `vcpkg-configuration.json` のベースライン、`conan.lock` | 未対応（M6、`Cuno.lock`） |
 | features（vcpkg）/ options（Conan） | 未対応（M7） |
 | バイナリキャッシュ | 未対応。マシン内のキャッシュは依存管理とともに入る予定（時期は未定）。チームや CI での共有は将来 |
 | 依存のソースをリポジトリに置く | 未対応（M7、`cuno vendor`）。その間は、ソースを `src/` 以下に置けば一緒にビルドされる |
@@ -151,7 +151,7 @@ cuno は Cargo を手本にしているので、多くのことは同じ形で�
 | `cargo fmt` / `cargo fmt --check` | `cuno fmt` / `cuno fmt --check` |
 | `cargo clippy` / `cargo clippy --fix` | `cuno lint` / `cuno lint --fix` |
 | `cargo clean` | `cuno clean` |
-| `Cargo.toml` の `[package]`、`[[bin]]`、`[profile.release]` | `cuno.toml` の同じ名前の表 |
+| `Cargo.toml` の `[package]`、`[[bin]]`、`[profile.release]` | `Cuno.toml` の同じ名前の表 |
 | `.cargo/config.toml` | `.cuno/config.toml` |
 | `[dependencies]` | 未対応（M6） |
 | `build.rs` | 未対応（M7、`[[build.rule]]` と Lua のビルドスクリプト） |
@@ -164,7 +164,7 @@ cuno は Cargo を手本にしているので、多くのことは同じ形で�
 
 | Premake で | cuno で |
 |---|---|
-| `premake5.lua` を書く | `cuno.toml` を書く。Lua のスクリプトは要らない |
+| `premake5.lua` を書く | `Cuno.toml` を書く。Lua のスクリプトは要らない |
 | `premake5 vs2022` でプロジェクトを生成してビルドする | `cuno build`。生成の段階はない。Visual Studio のプロジェクトの生成は未対応（M9、`cuno ide vs`） |
 | `kind "ConsoleApp"` / `"WindowedApp"` | `[[bin]]` の `subsystem`（`console` / `windows`） |
 | `kind "StaticLib"` / `"SharedLib"` | 未対応（M6、`[lib]` の `kind`） |
@@ -181,14 +181,14 @@ cuno は Cargo を手本にしているので、多くのことは同じ形で�
 
 | Meson で | cuno で |
 |---|---|
-| `meson.build` を書く | `cuno.toml` を書く |
+| `meson.build` を書く | `Cuno.toml` を書く |
 | `meson setup builddir` → `meson compile -C builddir` | `cuno build`。設定の段階はない |
 | `executable('app', sources)` | 何も書かない。`src/main.cpp` が既定の実行ファイルになる |
 | `meson test` | `cuno test` |
 | `--buildtype=release` | `cuno build --release` |
 | `default_options: ['cpp_std=c++20']` | `[package]` の `edition` |
 | `warning_level=3`、`werror=true` | `[build]` の `warnings`、`warnings-as-errors` |
-| `meson_options.txt` | 対応なし。値は `cuno.toml` に書き、マシンごとの設定は `.cuno/config.toml` |
+| `meson_options.txt` | 対応なし。値は `Cuno.toml` に書き、マシンごとの設定は `.cuno/config.toml` |
 | `dependency('zlib')`、wrap | 未対応（M6 / M7） |
 | `custom_target` | 未対応（M7、`[[build.rule]]`） |
 | クロスファイル（`--cross-file`） | 未対応（M8、`--target`） |
@@ -197,7 +197,7 @@ cuno は Cargo を手本にしているので、多くのことは同じ形で�
 
 | Bazel で | cuno で |
 |---|---|
-| `BUILD` と `MODULE.bazel` を書く | `cuno.toml` を書く |
+| `BUILD` と `MODULE.bazel` を書く | `Cuno.toml` を書く |
 | `bazel build //app:main` | `cuno build` |
 | `bazel run //app:main -- args` | `cuno run -- args` |
 | `bazel test //...` | `cuno test` |

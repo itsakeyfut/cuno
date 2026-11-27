@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/concept.md @ blob de3b19044d1b28c04f04586d8948a516954bcd12 -->
+<!-- translated-from: docs/ja/concept.md @ blob 103113c7857d2658301e8a1c2a30e8975eeb1c45 -->
 
 # cuno concept
 
@@ -73,12 +73,12 @@ Only where cargo's approach does not fit C/C++ is it adapted to the circumstance
 
 ### 2. Keep configuration in one place
 
-Project configuration goes in `cuno.toml`. Instead of a dedicated language like CMake's, it uses a form that can be read and written as TOML. Users do not need to write `.clang-format` or `.clang-tidy`.
+Project configuration goes in `Cuno.toml`. Instead of a dedicated language like CMake's, it uses a form that can be read and written as TOML. Users do not need to write `.clang-format` or `.clang-tidy`.
 
 ### 3. Work without configuration by default, and allow changes when needed
 
 Right after `cuno new`, everything works without writing a single line of configuration. At the same time, cuno never enforces a directory layout or coding rules.
-Whether you keep `include/` separate, put headers alongside sources in `src/`, or split them into `Public/` / `Private/` in the Unreal Engine style, `cuno.toml` can accommodate any convention.
+Whether you keep `include/` separate, put headers alongside sources in `src/`, or split them into `Public/` / `Private/` in the Unreal Engine style, `Cuno.toml` can accommodate any convention.
 
 ### 4. cuno absorbs compiler differences
 
@@ -107,7 +107,7 @@ Working in real-world settings takes priority over ideals. For example, the foll
 
 ### 9. Allow complex configuration, and never be silently wrong
 
-The special, complex configuration of large projects can also be written. There are three tiers, and anything that can be written in a higher tier is written there: declarations in `cuno.toml`, custom rules (`[[build.rule]]`), and Lua build scripts, in that order ([build.md](specs/build.md#custom-build-steps-three-layers)).
+The special, complex configuration of large projects can also be written. There are three tiers, and anything that can be written in a higher tier is written there: declarations in `Cuno.toml`, custom rules (`[[build.rule]]`), and Lua build scripts, in that order ([build.md](specs/build.md#custom-build-steps-three-layers)).
 
 In every tier, whenever the result could differ from what was written, cuno reports an error instead of guessing. For example:
 
@@ -118,9 +118,9 @@ In every tier, whenever the result could differ from what was written, cuno repo
 
 Reporting success and doing something different damages users' trust far more than stopping with an error because something cannot be written. A survey of complaints about existing tools found that the most serious took this form ([survey](../research/build-tool-complaints.md) (in Japanese)).
 
-The exception to stopping with an error is unknown keys in `cuno.toml` / `config.toml`. So that an older cuno can still read items added by a newer one, they are not an error: cuno warns, showing the file and line ([manifest.md "Unknown keys"](specs/manifest.md#unknown-keys)).
+The exception to stopping with an error is unknown keys in `Cuno.toml` / `config.toml`. So that an older cuno can still read items added by a newer one, they are not an error: cuno warns, showing the file and line ([manifest.md "Unknown keys"](specs/manifest.md#unknown-keys)).
 
-Keep the amount to learn small. New concepts are not required until they are needed. The order in which settings are read, and which layer wins, are explained on one page. Today, [manifest.md "Settings layering"](specs/manifest.md#settings-layering) explains the layering inside `cuno.toml`. When custom rules and build scripts arrive (M7), the same page will also say when they are evaluated.
+Keep the amount to learn small. New concepts are not required until they are needed. The order in which settings are read, and which layer wins, are explained on one page. Today, [manifest.md "Settings layering"](specs/manifest.md#settings-layering) explains the layering inside `Cuno.toml`. When custom rules and build scripts arrive (M7), the same page will also say when they are evaluated.
 
 ## What cuno does not do
 
