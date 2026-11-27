@@ -91,8 +91,34 @@ C++20 の指定を受け付けるものとする。
 ## コンパイラ抽象化
 
 - コンパイラ系統ごとの差（検出、`cuno.toml` 設定からフラグへの翻訳、依存ヘッダ情報の取得、診断出力の解釈）を **1 つのインターフェースの背後に閉じ込める**。
-- 新しいコンパイラは、そのインターフェースの実装を 1 つ追加するだけで対応できる。他の開発者による追加（GCC 等）を想定し、追加手順をドキュメント化する。
+- コンパイラの種類は 1 つの列挙（`CompilerKind`）で表し、種類ごとの答えは、すべての種類を名指しする `match` に書く。新しいコンパイラは、種類を 1 つ足すと、答えるべき箇所がコンパイルエラーとして挙がる。他の開発者による追加を想定し、手順を下に書く。
 - `cuno.toml` の `[build]` 設定（例: `warnings-as-errors = true`）を各系統のフラグ（`-Werror` / `/WX`）に翻訳する。
+
+### コンパイラを追加する手順
+
+GCC（MinGW-w64）を追加したときに要ったものの一覧。順に行えば、各段階でビルドとテストが通る。
+
+1. **仕様を先に書く。** この文書に、探す場所と順、版の読み方、選ぶ条件、最低バージョンを書く。[build.md](build.md#設定とフラグの対応) の表すべてに列を足し、どのフラグも実際のコンパイラで確かめる。表が答えない設定（ランタイムの選び方、`check` の方式、LTO）は、理由とともに書く。
+2. **検出**（`cuno-toolchain`）。そのコンパイラの検出のモジュール（GCC は `gcc.rs`）を作る。
+   - 探す順: `[toolchain.paths]` の設定、`PATH`、配布物の標準の場所。同じファイルは 1 つにまとめる。
+   - 版、プレリリースか、ビルド対象、ランタイムなど、選ぶ条件に要るものを、言語の設定によらない出力から読む（GCC は `-dumpfullversion`、`-dumpmachine`）。起動に要る環境（GCC は自分のディレクトリを `PATH` に）と、プロジェクトのファイルを読まない作業ディレクトリで起動する。
+   - 使うときだけ探す。そのコンパイラを選んだとき（`cuno-build` の `toolchain::ready`）と `cuno doctor` で呼び、ほかのコンパイラのビルドや `fmt`・`lint` では起動しない。
+3. **種類**（`cuno-toolchain` の `compiler.rs`）。`CompilerKind` に種類を、`CompilerKind::ALL` に同じ種類を足し、コンパイルエラーになった `match` をすべて答える。新しい系統（`Family`）、書き方（`Syntax`）、ヘッダ依存の取り方（`Dependencies`）が要るなら足す。主な答え:
+   - 名前、最低バージョン、MSVC のツールセットと標準ライブラリを使うか、`check` をコンパイルで行うか、リンクに使うドライバ（GCC の C++ は `g++`）。
+   - `cuno-manifest` の `CompilerName` との対応と、`[toolchain.version]` の置き場所（`Constraints::slot`）。
+   - `CompilerKind::parse` が「まだ対応していない」とする名前から外す。
+4. **選択**（`select.rs`）。`Found` に検出の結果を足し、`copy_of` で選ぶ条件を書く。`[toolchain.paths]` に書いたものはそれだけを使い、使えなければ設定を名指ししたエラーにする。見つからないとき、使えるものがないときの `help:` に、入れ方を書く（`error.rs`）。
+5. **環境**（`prepare.rs`）。起動に要る環境を作る。そのコンパイラが自分で読む環境変数は `TOOL_OPTION_VARIABLES` に足して取り除く。コマンドの識別（変更の判定）に要るもの、つまり標準ヘッダのディレクトリ（`Prepared::include_dirs`）と、全プログラムにリンクするランタイムのファイルを、`Prepared` に持たせる。[build.md](build.md#変更の判定) の、同じ名前のファイルの出現を見逃さないため。
+6. **フラグ**（`flags/`）。`compile.rs`、`link.rs` の各行と、`library_files`（リンカが探すライブラリのファイル名を、探す順に）、色の指定、ヘッダ依存のファイル、規格を受け付ける版（`check_edition`）。clang 系のツールに渡すコマンド（`clang_tools.rs`）には、ビルド対象と、ビルドが見る版のマクロ（GCC は `-fgnuc-version`）を書く。
+7. **テストのランタイム**（`cuno-build` の `headers/cuno/`）。テストの登録がそのコンパイラで動くか（`constructor` 属性か、MSVC の `.CRT$XCU` か）、通常ビルドがランタイムなしでリンクできるか、`long double` などの表示、そのコンパイラが知らない `#pragma` を確かめる。
+8. **テスト。**
+   - 各モジュールの単体テストの表に、そのコンパイラの行を足す。
+   - `tests/support/compilers.rs` の `Compiler` に足し、探す場所を `CUNO_TEST_*` で変えられるようにする。
+   - 実際のコンパイラで動かすテスト（`tests/compile_flags.rs`、`tests/examples.rs`、`tests/test_headers.rs`、`tests/lint.rs`）の対象に足し、そのコンパイラだけのテスト（GCC は `tests/gcc.rs`）で、`cuno new` から `lint` までを通す。
+   - 例の `examples/cpp/per-compiler-flags` に、そのコンパイラの `[build.<compiler>]` を足す。
+9. **CI。** `.github/workflows/ci.yml` の test ジョブで、そのコンパイラを、利用者が入れる場所に入れる。見つからなければテストは失敗する。
+10. **文書。** [commands.md](commands.md) と [manifest.md](manifest.md) の、コンパイラの名前の一覧と「まだ対応していない」の記述を直す。
+
 
 ## Windows での環境解決
 
