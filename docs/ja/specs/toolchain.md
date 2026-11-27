@@ -118,6 +118,8 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
    - `tests/support/compilers.rs` の `Compiler` に足し、探す場所を `CUNO_TEST_*` で変えられるようにする。
    - 実際のコンパイラで動かすテスト（`tests/compile_flags.rs`、`tests/examples.rs`、`tests/test_headers.rs`、`tests/lint.rs`）の対象に足し、そのコンパイラだけのテスト（GCC は `tests/gcc.rs`）で、`cuno new` から `lint` までを通す。
    - 例の `examples/cpp/per-compiler-flags` に、そのコンパイラの `[build.<compiler>]` を足す。
+   - ASCII でないパスで試す。プロジェクトのディレクトリ、ソース、実行ファイルの名前、一時ディレクトリを ASCII 以外の文字で名付け、そのコンパイラが起動するプログラム（コンパイラの本体、アセンブラ、リンカなど）がそれを開けるか、開けないものを cuno がビルドの前に拒むかを、そのコンパイラだけのテストで確かめる（GCC は `tests/gcc.rs` の `paths_that_are_not_ascii_build_or_are_refused`）。ANSI コードページがその文字を持つ Windows（日本語版の CP932）と、持たない Windows（英語版の CP1252。CI の Windows はこちら）の両方で通す。
+     - 理由: GCC では、プロジェクトのディレクトリ名による失敗はレビューで、一時ディレクトリによる失敗は CI で初めて見つかった。後者は CP932 の手元では通り、CP1252 の CI で失敗した（[MinGW（GCC）](#mingwgcc) の「ASCII でないパス」）。
 9. **CI。** `.github/workflows/ci.yml` の test ジョブで、そのコンパイラを、利用者が入れる場所に入れる。見つからなければテストは失敗する。
 10. **文書。** [commands.md](commands.md) と [manifest.md](manifest.md) の、コンパイラの名前の一覧と「まだ対応していない」の記述を直す。
 
