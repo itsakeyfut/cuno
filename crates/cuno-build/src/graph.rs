@@ -6,6 +6,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use cuno_toolchain::Version;
 use cuno_toolchain::compiler::{CompilerKind, Dependencies};
 use cuno_toolchain::flags::{
     BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, color_args, compile_args,
@@ -157,6 +158,8 @@ pub struct Plan<'a> {
     pub layout: &'a Layout,
     /// The compiler.
     pub kind: CompilerKind,
+    /// Its version, which some of its link flags depend on.
+    pub version: Version,
     /// Its driver, which compiles and links.
     pub program: &'a Path,
     /// The settings a source of each language compiles with.
@@ -400,6 +403,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
         let cxx = after.iter().any(|&i| cxx[i]);
         let input = LinkInput {
             kind: p.kind,
+            version: p.version,
             build: &link_build,
             profile: p.link.1,
             subsystem,
@@ -544,6 +548,11 @@ mod tests {
             products: Products::Programs { mode },
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/cl.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),
@@ -791,6 +800,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/m/bin/cc.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -887,6 +901,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/m/bin/gcc.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -959,6 +978,11 @@ mod tests {
             },
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/cl.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),
@@ -1011,6 +1035,11 @@ mod tests {
                 },
                 layout: &layout,
                 kind,
+                version: Version {
+                    major: 16,
+                    minor: 2,
+                    patch: 0,
+                },
                 program: Path::new("C:/clang.exe"),
                 compile: &compile,
                 link: (&link.build, &link.profile),
@@ -1132,6 +1161,11 @@ mod tests {
             products,
             layout: &layout,
             kind,
+            version: Version {
+                major: 16,
+                minor: 2,
+                patch: 0,
+            },
             program: Path::new("C:/clang.exe"),
             compile: &compile,
             link: (&link.build, &link.profile),

@@ -27,6 +27,11 @@ const RECOMMENDED: &[&str] = &[
     // Every C++ test suite is a static object built from a lambda, which
     // this check reads through.
     "-bugprone-throwing-static-initialization",
+    // With exceptions on (the default), any `main` that prints is a finding:
+    // the stream may throw. An exception that escapes stops the program
+    // loudly; `warn` puts the check back (`dev-tools.md`, "Contents of the
+    // presets").
+    "-bugprone-exception-escape",
     "clang-analyzer-*",
     "performance-*",
     "modernize-use-nullptr",
@@ -771,6 +776,7 @@ Diagnostics:
             ("bugprone-use-after-move", true),
             ("bugprone-easily-swappable-parameters", false),
             ("bugprone-throwing-static-initialization", false),
+            ("bugprone-exception-escape", false),
             ("clang-analyzer-core.NullDereference", true),
             ("performance-unnecessary-copy-initialization", true),
             ("modernize-use-nullptr", true),

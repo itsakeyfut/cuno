@@ -201,10 +201,15 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
                     unreachable!("a C edition with the C++ language")
                 }
             };
-            files.push((
-                lang.default_entry(),
-                include_str!("../templates/cxx/main.cpp").into(),
-            ));
+            // Printed as its standard would: `std::println` from C++23.
+            let main = match edition {
+                Edition::Cxx17 | Edition::Cxx20 => include_str!("../templates/cxx/main.cpp"),
+                Edition::Cxx23 => include_str!("../templates/cxx/main23.cpp"),
+                Edition::C11 | Edition::C17 | Edition::C23 => {
+                    unreachable!("a C edition with the C++ language")
+                }
+            };
+            files.push((lang.default_entry(), main.into()));
             files.push(("src/calc.h", include_str!("../templates/cxx/calc.h").into()));
             files.push(("src/calc.cpp", calc.into()));
         }
@@ -740,6 +745,25 @@ mod tests {
         assert!(cxx[3].1.contains("<cuno/test.hpp>"));
         let cxx17 = files("app", Lang::Cxx, Edition::Cxx17);
         assert!(cxx17[3].1.contains("<cuno/test.h>"));
+        // The sample prints as its standard would: `std::cout` with '\n'
+        // (never `std::endl`, which flushes each line) before C++23,
+        // `std::println` from it.
+        for edition in [Edition::Cxx17, Edition::Cxx20] {
+            let main = &files("app", Lang::Cxx, edition)[1].1;
+            assert!(
+                main.contains("std::cout << ") && main.contains("<< '\\n';"),
+                "{main}"
+            );
+            assert!(
+                !main.contains("std::endl") && !main.contains("println"),
+                "{main}"
+            );
+        }
+        let main = &files("app", Lang::Cxx, Edition::Cxx23)[1].1;
+        assert!(
+            main.contains("#include <print>") && main.contains("std::println("),
+            "{main}"
+        );
         let c = files("app", Lang::C, Edition::C17);
         let names: Vec<&str> = c.iter().map(|(n, _)| *n).collect();
         assert_eq!(
