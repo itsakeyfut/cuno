@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 9763321e557232e6770129d4da51194cc397e3f4 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 66d019c5835764abfcd12ba795bb6a6edff654d9 -->
 
 # Commands
 
@@ -117,7 +117,7 @@ Values of `--color`:
 - **Package name rules**: Only alphanumerics, `-`, and `_`. Must start with a letter. Violations are an error (exit code 2). If `--name` is omitted and the directory name does not satisfy the rules, it is also an error, and the user is directed to specify the name with `--name`.
   - Windows reserved names (`con`, `prn`, `aux`, `nul`, `com1` to `com9`, `lpt1` to `lpt9`, in any case) are also an error, on every OS.
     - Reason: a package name becomes a directory name and an executable name. On Windows, files or directories with these names cannot be created, or are hard to remove once created.
-- **If the target directory already exists**, it is an error (exit code 2). Turning an existing directory into a project is handled by `cuno init` (Right after MVP).
+- **If the target directory already exists**, it is an error (exit code 2). Turning an existing directory into a project is handled by [`cuno init`](#cuno-init-path).
 - If `--edition` and `--lang` do not match (e.g. `--lang c++ --edition c17`), it is an error. If only `--edition` is specified, the language is determined from that standard (`c11` / `c17` / `c23` mean C).
 - `--lib` (create as a library) will be added "Later", together with support for library projects ([project-layout.md](project-layout.md)).
 
@@ -152,6 +152,42 @@ Values of `--vcs`:
 | `--edition` does not match `--lang` | `` error: `<standard>` is not a standard of <language> `` and `help: use --lang <language of the standard>, or an edition of <language>: <list of that language's standards>` |
 
 - If git is not found, `warning: git was not found; the package is not under version control` is printed. If `git init` fails, this too is only a warning, `warning: git init failed: <git's output>` (the files have already been created, so what was created is not removed).
+
+### `cuno init [path]`
+
+Makes an existing directory (the current directory by default) into a package. The options are those of `cuno new` (`--lang`, `--edition`, `--name`, `--vcs`). The package name rules and the handling of `--lang` and `--edition` are also those of `cuno new`.
+
+What it writes depends on what the directory holds.
+
+| In the directory | What it writes |
+|---|---|
+| An entry file in `src/` (`src/main.*`, or a source directly in `src/bin/`; [project-layout.md](project-layout.md#entry-files-and-package-body)) | `cuno.toml` only |
+| No source at all (`.c` / `.cpp` / `.cc` / `.cxx`) | `cuno.toml`, plus the same `src/main.*` and `src/calc.*` as `cuno new` |
+| Sources, but neither of the above (sources only outside `src/`, or no entry file in `src/`) | Nothing; an error (exit code 2) |
+
+- Without `--lang` / `--edition`, the language is decided from the sources in `src/`:
+  - C++ if there is any C++ source;
+  - C if there are only `.c` files;
+  - C++ when there are no sources, as for `cuno new`.
+- `cuno.toml` holds what `cuno new` writes: only `name`, `version`, `lang` and `edition` of `[package]`.
+- **No existing file is overwritten.** If any file it would write is already there, it writes nothing and reports an error. `.gitignore` is the exception: missing lines are added, as below.
+- With `--vcs git` (the default), the `.gitignore` lines of `cuno new` (`target/` and the others) that an existing `.gitignore` lacks are added at its end. Its existing lines, line endings and BOM are kept. Without a `.gitignore`, one is created.
+  - Rationale: making an existing project into a package creates new files that cuno generates (`target/` and the others). Without these lines they are easy to commit by mistake.
+- Git is handled as by `cuno new`:
+  - inside an existing repository there is no `git init`;
+  - when git is missing or `git init` fails, there is only a warning.
+- When done, it prints ``     Created `<name>` package`` (not under `-q`).
+
+| Case | Message |
+|---|---|
+| The directory does not exist | `` error: `<path>` does not exist `` and `help: use cuno new to create a package in a new directory` |
+| A `cuno.toml` is already there | `` error: `<path>` already has a cuno.toml `` |
+| Sources only outside `src/` | `` error: the sources are not where cuno looks for them: <sources found> `` and `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
+| Sources in `src/` but no entry file | `` error: src/ has no entry file `` and `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
+| A file it would write is already there | `` error: <file> already exists `` and `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+
+- When many sources are found, the first few are named, with the number of the rest.
+- Rationale for not writing a source outside `src/` into `[[bin]]`: cuno gathers the package body only from `src/`. Writing only the entry point would leave the other sources unbuilt, and the link would fail.
 
 ### `cuno run`
 
