@@ -202,6 +202,10 @@ struct suite {
     template <class F>
     suite(F declare) {
 #ifdef CUNO_TEST
+        // Numbered apart from every other suite, so that the same name from
+        // one place twice in it is told from a header's copy in another
+        // translation unit (docs/en/specs/testing.md, "Common rules").
+        cuno_test_suite_begin();
         declare();
 #else
         (void)declare;

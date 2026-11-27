@@ -194,6 +194,87 @@ fn an_unlisted_executable_exits_1() {
     }
 }
 
+/// One suite registering one name from one place twice (a loop) is
+/// refused, naming the place, rather than merged into one test that would
+/// leave the failing copy unrun; a header's test that two sources include
+/// still runs once (`testing.md`, "Common rules").
+///
+/// Mutation: stop numbering suites (drop `cuno_test_suite_begin` from
+/// `suite`), so the loop merges again and reports success; this test fails.
+#[test]
+fn a_test_registered_twice_by_one_suite_is_refused() {
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let looped = project("").file(
+            "src/loop.cpp",
+            "#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+             static cuno::test::suite s = [] {
+             for (int i = 0; i < 2; i++) cuno::test::test(\"same\", [i] { cuno::test::expect(cuno::test::eq(i, 0)); });
+             };
+#endif
+",
+        );
+        let run = looped.cuno(&["test", "--compiler", name]);
+        assert_eq!(
+            run.code,
+            Some(1),
+            "{name}:
+{}",
+            run.stderr
+        );
+        assert!(
+            run.stderr
+                .contains("error: test `same` is registered more than once from src/loop.cpp:4"),
+            "{name}:
+{}",
+            run.stderr
+        );
+        assert!(
+            !run.stderr.contains("test same ... ok"),
+            "{name}:
+{}",
+            run.stderr
+        );
+
+        let header = "#pragma once
+#ifdef CUNO_TEST
+#include <cuno/test.hpp>
+                      static cuno::test::suite shared = [] { cuno::test::test(\"shared\", [] {}); };
+                      #endif
+";
+        let shared = project("")
+            .file("src/shared.hpp", header)
+            .file(
+                "src/one.cpp",
+                "#include \"shared.hpp\"
+",
+            )
+            .file(
+                "src/two.cpp",
+                "#include \"shared.hpp\"
+",
+            );
+        let run = shared.cuno(&["test", "--compiler", name]);
+        assert_eq!(
+            run.code,
+            Some(0),
+            "{name}:
+{}",
+            run.stderr
+        );
+        assert_eq!(
+            run.stderr.matches("test shared ... ok").count(),
+            1,
+            "{name}:
+{}",
+            run.stderr
+        );
+    }
+}
+
 /// Run from a subdirectory with `--release` and `-q`: the release build's tests
 /// run in the project root with the environment cuno was given, no `Running`
 /// line is shown, and no directory of results is left behind; without `-q`, the
