@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 90eef693c6cc1ebb71766cf046c8a907cfcd9a87 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob a97f860f572ea02355d2683ed3b52b794623b3d5 -->
 
 # Toolchain
 
@@ -236,6 +236,15 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
   - Rationale: deciding what changed uses these as it uses MSVC's `INCLUDE` ([build.md](build.md#deciding-what-changed)). Without them, cuno would not notice when a `sys/stat.h` placed in the project starts being read instead of GCC's `sys/stat.h`, and would report success with the old code.
 - When building (compiling and linking), too, GCC is run in an environment with its directory added to the front of `PATH` (for the same reason as above). The environment in which `cuno run` and the like run the built executable does not get it.
   - Rationale: with it added, the built executable would run inside cuno even if it needed GCC's DLLs, and that it does not start outside cuno would go unnoticed ([build.md](build.md#rationale)).
+- **Paths that are not ASCII.** In MSYS2's GCC, `gcc` and the compiler proper (`cc1`) work in UTF-8, while the assembler (`as`) and the linker (`ld`) work in the ANSI code page (CP932 on Japanese Windows). `as` and `ld` read the UTF-8 paths that `gcc` passes them as different characters, so they cannot open files whose paths are not ASCII (a directory with a Japanese name, the temporary directory of a user with a Japanese user name). cuno handles this as follows.
+  - Compiling gets `-pipe`. Without it, GCC writes the assembly to a file in the temporary directory and passes that file to `as`, so when the temporary directory is not ASCII (as happens with a Japanese user name), every compile fails.
+  - Of the paths passed to GCC, those that `as` and `ld` open (objects, executables, `lib-dirs`) are written relative to the project root when they are inside the project (GCC is run in the root). This is so that a project whose directory name is not ASCII can still be built.
+  - File names inside the output directory have their characters that are not ASCII rewritten ([build.md](build.md#output-directory)). This is so that sources and tests whose names are not ASCII can still be built.
+  - If a path that is not ASCII would still have to be passed to `as` or `ld`, it is an error (exit code 3) before compiling, naming that path.
+    - The output directory is outside the project and its path is not ASCII: `error: the target directory <path> is not ASCII, which MinGW's assembler and linker cannot open`, `help: build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)`.
+    - The path of a `lib-dirs` directory is not ASCII even when written relative to the project root: `` error: `lib-dirs` names <path>, which is not ASCII, which MinGW's linker cannot open ``, `help: move the libraries to a directory whose path is ASCII`.
+    - With `lto = true`, the temporary directory GCC uses (`TMP`, or `TEMP` when it is absent) is not ASCII (an LTO link writes files to the temporary directory and passes them to `ld`, which `-pipe` cannot avoid): `error: the temporary directory <path> is not ASCII, which GCC's link-time optimisation cannot use`, `help: set TMP and TEMP to a directory whose path is ASCII, or set lto = false`.
+  - Rationale: failing silently would show only an error from GCC's assembler with a garbled path. When a source's name is not ASCII, `as` writes the object under a garbled name, and the object cuno recorded never appears, so cuno compiles and links again every time even when nothing has changed.
 - GCC does not use the MSVC toolset, so choosing GCC does not need Visual Studio. Nor is the MSVC environment (`INCLUDE`, `LIB`, `LIBPATH`) built.
 - When `[toolchain.paths] gcc` is written, only that file is used, as for LLVM, and if it does not meet the conditions it is an error (exit code 3).
 
