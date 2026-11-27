@@ -9,10 +9,9 @@ use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{ConfigError, Profile, Settings};
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
-use cuno_toolchain::select::{self, Choices, Other};
+use cuno_toolchain::select::{self, Availability, Choices};
 use cuno_toolchain::{HostOs, SystemRunner};
 
-use cuno_build::bundled;
 use cuno_build::toolchain::{self, ReadyFor, Steps, TidyCompile};
 
 /// Prints `error:` and `help:` and counts problems, and prints the
@@ -86,7 +85,7 @@ pub fn doctor(
         &mut problems,
     ) {
         Ok(surveyed) => surveyed,
-        Err(_) => unreachable!("doctor's steps go on after every problem"),
+        Err(_) => unreachable!("`Problems` goes on after every problem"),
     };
 
     // A configured path with no file is already reported; every tool
@@ -95,18 +94,16 @@ pub fn doctor(
         // clang-tidy's standard library check analyses what the build
         // would, so it needs the compiler ready.
         let tidy = surveyed.ready.as_ref().and_then(|ready| {
-            let home = settings
-                .map(|s| s.home.clone())
-                .or_else(|| cuno_core::cuno_home(env).ok())?;
+            // Not written by doctor, which only looks: see
+            // `toolchain::steps`.
+            let bundled = toolchain::bundled_include(settings, env)?;
             toolchain::tidy_compile(
                 &ready.selected,
                 &ready.prepared,
                 project,
                 cwd,
                 host,
-                // Not written by doctor, which only looks: see
-                // `toolchain::steps`.
-                &bundled::include_dir(&home),
+                &bundled,
             )
         });
         tools(llvm, tidy.as_ref(), host, temp, &runner, &mut problems);
@@ -114,18 +111,22 @@ pub fn doctor(
     let found = surveyed
         .detected
         .found(settings.and_then(Settings::msvc_path));
-    for (kind, other) in select::others(
+    for (kind, availability) in select::survey(
         &surveyed.detected,
         found,
-        surveyed.attempted,
+        surveyed.wanted,
         surveyed.vs_reported,
         host,
     ) {
-        let line = match other {
-            Other::Selectable(version) => format!("{} {version} (not selected)", kind.name()),
-            Other::NotFound => format!("{} not found", kind.name()),
-            Other::NotUsable(error) => format!("{} not usable: {error}", kind.name()),
-            Other::Problem(error) => {
+        let line = match availability {
+            Availability::Selectable(version) => {
+                format!("{} {version} (not selected)", kind.name())
+            }
+            Availability::NotFound => format!("{} not found", kind.name()),
+            Availability::Unusable(error) => format!("{} not usable: {error}", kind.name()),
+            // The user's own setting is wrong: a problem even for a
+            // compiler not in use (commands.md, "`cuno doctor`").
+            Availability::ConfiguredUnusable(error) => {
                 problems.report(&error);
                 continue;
             }
@@ -138,7 +139,8 @@ pub fn doctor(
     count
 }
 
-/// doctor's [`Steps`]: each problem is reported and the diagnosis goes on;
+/// doctor's [`Steps`]: each problem is reported and the diagnosis goes on,
+/// so `problem` never answers `Break` (`doctor` relies on it);
 /// the variables left out of the environment are the build commands' to
 /// warn about (`docs/en/specs/toolchain.md`, "How it is resolved").
 impl Steps for Problems<'_> {

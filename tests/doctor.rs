@@ -1481,7 +1481,7 @@ fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
 /// (commands.md, "`cuno doctor`": "the selected compiler cannot build").
 ///
 /// Mutation: skip preparing the environment when the compiler has no MSVC
-/// toolset, as doctor once did; this test fails.
+/// toolset; this test fails.
 #[test]
 fn a_gcc_the_build_refuses_is_a_problem() {
     let gcc = "@echo off\r\n\

@@ -674,7 +674,7 @@ mod tests {
     /// Mutation: answer true for GCC when it was not searched, or for LLVM
     /// when its search failed; this test fails.
     #[test]
-    fn what_was_looked_for() {
+    fn only_a_search_that_ran_and_succeeded_looked_for_anything() {
         let missing = || ToolchainError::ConfiguredToolMissing {
             setting: "[toolchain.paths] clang".to_owned(),
             path: PathBuf::from("C:/nowhere/clang.exe"),

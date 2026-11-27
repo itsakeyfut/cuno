@@ -592,51 +592,57 @@ pub fn select_tool(
     }
 }
 
-/// What `cuno doctor` says of a compiler other than the one asked for.
+/// Whether a compiler can be selected here, and if not, why.
 #[derive(Debug)]
-pub enum Other {
+pub enum Availability {
     /// Selecting it would use a copy of this version.
     Selectable(Version),
-    /// No copy was found.
+    /// No copy was found: none installed, or no Visual Studio for cl.
     NotFound,
-    /// Copies were found and none can be used, for this reason.
-    NotUsable(ToolchainError),
-    /// The copy written in `[toolchain.paths]` cannot be used: a problem
-    /// even though it is not the compiler asked for (`commands.md`, "`cuno
+    /// Copies were found and none can be used, for this reason (too old, a
+    /// preview, another target).
+    Unusable(ToolchainError),
+    /// The copy written in `[toolchain.paths]` (or the Visual Studio in
+    /// `[toolchain.paths] msvc`) cannot be used. Unlike [`Self::Unusable`],
+    /// this is the user's own setting that is wrong, which is a problem
+    /// even for a compiler not in use (`docs/en/specs/commands.md`, "`cuno
     /// doctor`").
-    Problem(ToolchainError),
+    ConfiguredUnusable(ToolchainError),
 }
 
-/// Each compiler other than `attempted` that `detected` looked for, with
-/// what selecting it would use, judged as [`copy_of`] judges it with
-/// cuno's minimum only: `[toolchain.version]` applies to the compiler used.
-/// A Visual Studio in `[toolchain.paths] msvc` that cannot be used is left
-/// out when selection has reported it (`vs_reported`), which this would
-/// only repeat.
-pub fn others(
+/// Each compiler `detected` looked for, except `except`, with whether
+/// selecting it would succeed. Each is judged as [`copy_of`] judges it.
+/// Only cuno's minimum applies, since `[toolchain.version]` constrains the
+/// compiler in use and not the others. When `vs_reported`, selection has
+/// already reported the Visual Studio in `[toolchain.paths] msvc` as
+/// unusable, and cl is left out rather than reported again.
+pub fn survey(
     detected: &Detected,
     found: Found<'_>,
-    attempted: Option<CompilerKind>,
+    except: Option<CompilerKind>,
     vs_reported: bool,
     host: HostOs,
-) -> Vec<(CompilerKind, Other)> {
+) -> Vec<(CompilerKind, Availability)> {
     CompilerKind::ALL
         .into_iter()
-        .filter(|&kind| Some(kind) != attempted && detected.looked_for(kind))
+        .filter(|&kind| Some(kind) != except && detected.looked_for(kind))
         .filter_map(|kind| {
-            let other = match copy_of(kind, found, &Constraints::default(), host) {
-                Ok((_, version, _)) => Other::Selectable(version),
+            let availability = match copy_of(kind, found, &Constraints::default(), host) {
+                Ok((_, version, _)) => Availability::Selectable(version),
                 Err(ToolchainError::VisualStudioNotAt { .. }) if vs_reported => return None,
+                // Both name a setting the user wrote.
                 Err(
                     error @ (ToolchainError::ConfiguredToolUnusable { .. }
                     | ToolchainError::VisualStudioNotAt { .. }),
-                ) => Other::Problem(error),
+                ) => Availability::ConfiguredUnusable(error),
+                // cl is found through Visual Studio: none installed is cl
+                // not found.
                 Err(ToolchainError::CompilerNotFound { .. } | ToolchainError::NoVisualStudio) => {
-                    Other::NotFound
+                    Availability::NotFound
                 }
-                Err(error) => Other::NotUsable(error),
+                Err(error) => Availability::Unusable(error),
             };
-            Some((kind, other))
+            Some((kind, availability))
         })
         .collect()
 }
@@ -1642,10 +1648,11 @@ mod tests {
         }
     }
 
-    /// A configured GCC that cannot be used is a problem in doctor, not an
-    /// `Info` line, even when GCC is not the compiler asked for.
+    /// A configured GCC that cannot be used is the user's setting being
+    /// wrong, apart from copies that are merely unusable, even when GCC is
+    /// not the compiler in use.
     ///
-    /// Mutation: map `ConfiguredToolUnusable` to `NotUsable`; this test
+    /// Mutation: map `ConfiguredToolUnusable` to `Unusable`; this test
     /// fails.
     #[test]
     fn a_configured_copy_that_cannot_be_used_is_a_problem() {
@@ -1655,7 +1662,7 @@ mod tests {
             GccOrigin::Configured,
         );
         let detected = detected(Vec::new(), Some(vec![old]));
-        let others = others(
+        let others = survey(
             &detected,
             detected.found(None),
             Some(CompilerKind::Msvc),
@@ -1668,7 +1675,7 @@ mod tests {
                 gcc,
                 Some((
                     _,
-                    Other::Problem(ToolchainError::ConfiguredToolUnusable { .. })
+                    Availability::ConfiguredUnusable(ToolchainError::ConfiguredToolUnusable { .. })
                 ))
             ),
             "{others:?}"
@@ -1685,7 +1692,7 @@ mod tests {
         let detected = detected(Vec::new(), None);
         let nowhere = Path::new("C:/nowhere");
         let msvc = |vs_reported| {
-            others(
+            survey(
                 &detected,
                 detected.found(Some(nowhere)),
                 Some(CompilerKind::Clang),
@@ -1698,20 +1705,23 @@ mod tests {
         assert!(msvc(true).is_none());
         assert!(matches!(
             msvc(false),
-            Some((_, Other::Problem(ToolchainError::VisualStudioNotAt { .. })))
+            Some((
+                _,
+                Availability::ConfiguredUnusable(ToolchainError::VisualStudioNotAt { .. })
+            ))
         ));
     }
 
-    /// Only what was looked for has a line, the compiler asked for has
-    /// none, and one looked for and not found is `NotFound`.
+    /// Only what was looked for is surveyed, the compiler excepted is
+    /// not, and one looked for and not found is `NotFound`.
     ///
-    /// Mutation: keep `attempted`, or skip the `looked_for` filter; this
+    /// Mutation: keep `except`, or skip the `looked_for` filter; this
     /// test fails.
     #[test]
-    fn each_compiler_looked_for_but_the_one_asked_for_has_a_line() {
+    fn the_compiler_excepted_and_those_not_searched_have_no_line() {
         let llvm = [clang(Tool::Clang, "C:/llvm/clang.exe", v(20, 1, 0))];
         let detected = detected(llvm.to_vec(), None);
-        let others = others(
+        let others = survey(
             &detected,
             detected.found(None),
             Some(CompilerKind::ClangCl),
@@ -1721,8 +1731,8 @@ mod tests {
         let lines: Vec<String> = others
             .iter()
             .map(|(k, o)| match o {
-                Other::Selectable(v) => format!("{} {v}", k.name()),
-                Other::NotFound => format!("{} not found", k.name()),
+                Availability::Selectable(v) => format!("{} {v}", k.name()),
+                Availability::NotFound => format!("{} not found", k.name()),
                 other => format!("{} {other:?}", k.name()),
             })
             .collect();
