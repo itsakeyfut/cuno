@@ -22,6 +22,15 @@ pub enum ListError {
         /// The two places, as shown (`src/a.cpp:3`).
         places: [String; 2],
     },
+    /// A `test.hpp` test registered more than once from one place by one
+    /// translation unit: a loop, or a function that declares it called
+    /// twice.
+    RegisteredTwice {
+        /// The name.
+        name: String,
+        /// Its place, as shown.
+        place: String,
+    },
     /// A macro-API test registered more than once from one place: it is in
     /// a header several files include.
     InHeader {
@@ -40,6 +49,9 @@ impl fmt::Display for ListError {
                 "two tests are named `{name}`: {} and {}",
                 places[0], places[1]
             ),
+            ListError::RegisteredTwice { name, place } => {
+                write!(f, "test `{name}` is registered more than once from {place}")
+            }
             ListError::InHeader { name, place } => {
                 write!(f, "the test `{name}` at {place} is compiled more than once")
             }
@@ -52,6 +64,9 @@ impl ListError {
     pub fn help(&self) -> &'static str {
         match self {
             ListError::SameName { .. } => "give one of them another name",
+            ListError::RegisteredTwice { .. } => {
+                "give each registration its own name, such as with the loop's index"
+            }
             ListError::InHeader { .. } => {
                 "cuno_test does not support tests in headers; move it into a source file, or use cuno/test.hpp"
             }
@@ -99,9 +114,17 @@ pub fn tests_to_run(
                 places: [at(first), at(r)],
             });
         }
-        // One place twice is one test for `test.hpp`, which is how a test in
-        // a header is meant to be written; the macro API does not support
-        // that, and says so (`testing.md`, "Common rules").
+        // One place twice is one test for `test.hpp` when the copies come
+        // from different translation units, which is how a test in a
+        // header is meant to be written; twice from one unit, the later one
+        // would never run (`testing.md`, "Common rules").
+        if r.unit != 0 && earlier.iter().any(|e| e.name == r.name && e.unit == r.unit) {
+            return Err(ListError::RegisteredTwice {
+                name: r.name.clone(),
+                place: at(r),
+            });
+        }
+        // The macro API does not support a test in a header, and says so.
         if first.macro_api || r.macro_api {
             return Err(ListError::InHeader {
                 name: r.name.clone(),
@@ -126,13 +149,69 @@ pub fn tests_to_run(
 mod tests {
     use super::*;
 
+    /// A registration; a `test.hpp` one comes from a translation unit of its
+    /// own, as a header's copies do, and a macro one says none.
     fn registration(name: &str, file: &str, line: u32, macro_api: bool) -> Registration {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let unit = if macro_api {
+            0
+        } else {
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
+        in_unit(name, file, line, macro_api, unit)
+    }
+
+    fn in_unit(name: &str, file: &str, line: u32, macro_api: bool, unit: u32) -> Registration {
         Registration {
             name: name.into(),
             file: file.into(),
             line,
             macro_api,
+            unit,
         }
+    }
+
+    /// One translation unit registering one name from one place twice is a
+    /// test registered again, refused with the place; the same two from
+    /// different units are a header's copies, one test, even after a third
+    /// copy repeats in its own unit.
+    ///
+    /// Mutation: compare without the unit, compare only with the first
+    /// registration of the name, or merge as before; this test fails.
+    #[test]
+    fn one_unit_registering_one_place_twice_is_an_error() {
+        let root = Path::new(ROOT);
+        let twice = [
+            in_unit("same", "C:/p/src/loop.cpp", 3, false, 1),
+            in_unit("same", "C:/p/src/loop.cpp", 3, false, 1),
+        ];
+        let err = tests_to_run(&twice, false, None, root, CASE).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "test `same` is registered more than once from src/loop.cpp:3"
+        );
+        assert_eq!(
+            err.help(),
+            "give each registration its own name, such as with the loop's index"
+        );
+
+        let copies = [
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 1),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
+        ];
+        assert_eq!(
+            tests_to_run(&copies, false, None, root, CASE).unwrap(),
+            ["shared"]
+        );
+        let again_in_the_second = [
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 1),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
+            in_unit("shared", "C:/p/src/h.hpp", 3, false, 2),
+        ];
+        assert!(matches!(
+            tests_to_run(&again_in_the_second, false, None, root, CASE),
+            Err(ListError::RegisteredTwice { .. })
+        ));
     }
 
     const ROOT: &str = "C:/p";

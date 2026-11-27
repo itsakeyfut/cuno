@@ -563,7 +563,7 @@ mod tests {
         names
             .iter()
             .enumerate()
-            .map(|(i, n)| format!("test\t{n}\tC:/p/src/a.cpp\t{}\tmodern\n", i + 1))
+            .map(|(i, n)| format!("test\t{n}\tC:/p/src/a.cpp\t{}\tmodern\t1\n", i + 1))
             .collect()
     }
 
@@ -838,9 +838,9 @@ mod tests {
         fake.lists.insert(PathBuf::from("C:/p/broken.exe"), Err(3));
         fake.lists.insert(
             PathBuf::from("C:/p/tests-a.exe"),
-            Ok("test\tin source\tC:/p/src/a.cpp\t1\tmodern\n\
-                test\tadds one\tC:/p/tests/a.cpp\t2\tmodern\n\
-                test\tadds two\tC:/p/tests/a.cpp\t3\tmodern\n"
+            Ok("test\tin source\tC:/p/src/a.cpp\t1\tmodern\t1\n\
+                test\tadds one\tC:/p/tests/a.cpp\t2\tmodern\t1\n\
+                test\tadds two\tC:/p/tests/a.cpp\t3\tmodern\t1\n"
                 .into()),
         );
         fake.tests.insert("adds one".into(), passing());
@@ -946,7 +946,10 @@ mod tests {
         fake.unstartable.push(PathBuf::from("C:/p/gone.exe"));
         fake.lists.insert(
             PathBuf::from("C:/p/clash.exe"),
-            Ok("test\tx\tC:/p/src/a.cpp\t1\tmodern\ntest\tx\tC:/p/src/b.cpp\t2\tmodern\n".into()),
+            Ok(
+                "test\tx\tC:/p/src/a.cpp\t1\tmodern\t1\ntest\tx\tC:/p/src/b.cpp\t2\tmodern\t1\n"
+                    .into(),
+            ),
         );
         let exes = [
             exe("C:/p/one.exe"),

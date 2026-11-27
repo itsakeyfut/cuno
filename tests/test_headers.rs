@@ -273,10 +273,10 @@ fn names(p: &Project, exe: &Path) -> String {
     list(p, exe)
         .lines()
         .map(|record| {
-            // `test <name> <file> <line> <api>`, where only the name may
-            // hold spaces.
-            let fields: Vec<&str> = record.rsplitn(4, ' ').collect();
-            format!("{}\n", fields[3].strip_prefix("test ").unwrap())
+            // `test <name> <file> <line> <api> <unit>`, where only the
+            // name may hold spaces.
+            let fields: Vec<&str> = record.rsplitn(5, ' ').collect();
+            format!("{}\n", fields[4].strip_prefix("test ").unwrap())
         })
         .collect()
 }
@@ -507,8 +507,9 @@ static cuno::test::suite shared_tests = [] {
 /// include is listed twice from one place, and two tests of one name are
 /// listed from their own places. `--exact` runs the first registration.
 ///
-/// Mutation: list each name once, drop a field from the `test` record, or
-/// mark a `test.hpp` registration `macro`; this test fails.
+/// Mutation: list each name once, drop a field from the `test` record,
+/// mark a `test.hpp` registration `macro`, or number a header's two copies
+/// as one translation unit; this test fails.
 #[test]
 fn every_registration_is_listed_with_its_place() {
     let same = "#include <cuno/test.hpp>\n\
@@ -528,12 +529,16 @@ fn every_registration_is_listed_with_its_place() {
             continue;
         };
         let who = compiler.name();
-        let mut listed: Vec<&str> = Vec::new();
         let text = list(&p, &exe);
-        listed.extend(text.lines());
+        // Each record ends with the translation unit that registered it.
+        let mut listed: Vec<(&str, &str)> = text
+            .lines()
+            .map(|record| record.rsplit_once(' ').unwrap())
+            .collect();
         listed.sort_unstable();
+        let places: Vec<&str> = listed.iter().map(|(place, _)| *place).collect();
         assert_eq!(
-            listed,
+            places,
             [
                 "test same a.cpp 3 modern",
                 "test same b.cpp 4 modern",
@@ -542,6 +547,10 @@ fn every_registration_is_listed_with_its_place() {
             ],
             "{who}"
         );
+        // The header's two copies come from the two files' own units, which
+        // is what makes them one test rather than one registered twice.
+        assert_ne!(listed[2].1, listed[3].1, "{who}: {text}");
+        assert!(listed.iter().all(|(_, unit)| *unit != "0"), "{who}: {text}");
         assert_eq!(
             exact(&p, &exe, "twice doubles"),
             (Some(0), "done".to_owned()),
@@ -588,7 +597,7 @@ fn a_macro_test_in_a_header_is_listed_or_refused() {
         assert_eq!(run.code, Some(0), "{who}: {}{}", run.stdout, run.stderr);
         assert_eq!(
             list(&p, &exe),
-            "test in_header shared.h 2 macro\ntest in_header shared.h 2 macro",
+            "test in_header shared.h 2 macro 0\ntest in_header shared.h 2 macro 0",
             "{who}"
         );
     }

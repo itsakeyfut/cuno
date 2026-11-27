@@ -40,8 +40,10 @@ typedef struct cuno_test_value {
     } as;
 } cuno_test_value;
 
+/* `unit` stands for the translation unit registering: test.hpp passes an
+ * address of which each has its own (testing.md, "Common rules"). */
 void cuno_test_register(const char *name, const char *file, int line, void (*run)(void *),
-                        void *context);
+                        void *context, const void *unit);
 void cuno_test_register_macro(const char *name, const char *file, int line,
                               void (*run)(void *));
 void cuno_test_fail(const char *file, int line, const char *message, int fatal);
