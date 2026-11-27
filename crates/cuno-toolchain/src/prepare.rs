@@ -4,11 +4,10 @@
 //! these, so they diagnose and build with the same answers.
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use cuno_core::Env;
 
-use crate::gcc::{Gcc, find_gcc};
 use crate::llvm::{ExplicitPaths, LlvmTool, find_llvm_tools};
 use crate::msvc::{self, Registry, VsInstallation, WindowsSdk};
 use crate::select::Selected;
@@ -22,32 +21,19 @@ pub struct Detected {
     pub installs: Result<Vec<VsInstallation>, ToolchainError>,
     /// Every LLVM tool found, in search order.
     pub llvm: Result<Vec<LlvmTool>, ToolchainError>,
-    /// Every copy of GCC found, in search order.
-    pub gcc: Result<Vec<Gcc>, ToolchainError>,
 }
 
-/// Finds Visual Studio (on Windows), the LLVM tools and GCC, the copies
-/// `explicit` and `explicit_gcc` name first. LLVM is searched even when Visual Studio is not
+/// Finds Visual Studio (on Windows) and the LLVM tools, the copies
+/// `explicit` names first. LLVM is searched even when Visual Studio is not
 /// found, since its bundled LLVM is only one of the places looked in.
-pub fn detect(
-    env: &Env,
-    host: HostOs,
-    explicit: &ExplicitPaths,
-    explicit_gcc: Option<&Path>,
-    run: &dyn Runner,
-) -> Detected {
+pub fn detect(env: &Env, host: HostOs, explicit: &ExplicitPaths, run: &dyn Runner) -> Detected {
     let installs = match host {
         HostOs::Windows => msvc::find_installations(env, run),
         HostOs::Other => Ok(Vec::new()),
     };
     let found = installs.as_deref().unwrap_or(&[]);
     let llvm = find_llvm_tools(env, host, explicit, found, run);
-    let gcc = find_gcc(env, host, explicit_gcc, run);
-    Detected {
-        installs,
-        llvm,
-        gcc,
-    }
+    Detected { installs, llvm }
 }
 
 /// Variables compilers and linkers read options or include paths from by
@@ -312,13 +298,7 @@ mod tests {
     /// Mutation: look for Visual Studio on every host; this test fails.
     #[test]
     fn other_hosts_look_for_no_visual_studio() {
-        let detected = detect(
-            &env(),
-            HostOs::Other,
-            &ExplicitPaths::default(),
-            None,
-            &Nothing,
-        );
+        let detected = detect(&env(), HostOs::Other, &ExplicitPaths::default(), &Nothing);
         assert!(
             matches!(detected.installs, Ok(ref v) if v.is_empty()),
             "{detected:?}"
@@ -391,25 +371,7 @@ mod tests {
             )],
             NameCase::Insensitive,
         );
-        let detected = detect(&env, HostOs::Windows, &ExplicitPaths::default(), None, &run);
-        assert!(detected.gcc.is_ok());
-        // The GCC written in `[toolchain.paths]` reaches GCC's detection.
-        let missing = root.path().join("no-gcc").join("gcc.exe");
-        let configured = detect(
-            &env,
-            HostOs::Windows,
-            &ExplicitPaths::default(),
-            Some(&missing),
-            &run,
-        );
-        assert!(
-            matches!(
-                configured.gcc,
-                Err(ToolchainError::ConfiguredToolMissing { .. })
-            ),
-            "{:?}",
-            configured.gcc
-        );
+        let detected = detect(&env, HostOs::Windows, &ExplicitPaths::default(), &run);
         assert_eq!(detected.installs.unwrap().len(), 1);
         let llvm = detected.llvm.unwrap();
         assert_eq!(llvm.len(), 1, "{llvm:?}");

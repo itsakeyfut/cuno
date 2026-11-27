@@ -1,5 +1,9 @@
 //! MinGW GCC: finding `gcc` (and the `g++` beside it). See
 //! `docs/en/specs/toolchain.md`, "MinGW (GCC)".
+//!
+//! Nothing here runs unless GCC is wanted: the detection of every build
+//! (`prepare::detect`) does not call it, so an MSVC or Clang build, `cuno
+//! fmt` and `cuno lint` never start a GCC.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -9,7 +13,8 @@ use cuno_core::Env;
 use crate::{HostOs, Runner, ToolchainError, Version};
 
 /// The MSYS2 directories searched on Windows after `PATH`, in order: the
-/// UCRT64 environment, then MINGW64.
+/// UCRT64 environment, then MINGW64 (whose GCC is found, and refused for
+/// its C runtime, so the error can say why).
 const MSYS2_DIRS: [&str; 2] = [r"C:\msys64\ucrt64\bin", r"C:\msys64\mingw64\bin"];
 
 /// Where a copy of GCC was found.
@@ -49,18 +54,21 @@ impl Gcc {
     }
 }
 
-/// What running a copy of GCC told.
+/// What running a copy of GCC told, each from output no locale changes
+/// (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Probe {
     /// It ran and gave its version.
     Ran {
-        /// The version, the first `<n>.<n>.<n>` on `--version`'s first line
-        /// (`gcc.exe (Rev2, Built by MSYS2 project) 14.2.0`).
+        /// What `-dumpfullversion` printed (`14.2.0`).
         version: Version,
-        /// Whether that line marks a snapshot (`experimental`, `prerelease`).
+        /// Whether `--version`'s first line marks a snapshot
+        /// (`experimental`, `prerelease`).
         prerelease: bool,
         /// What `-dumpmachine` printed (`x86_64-w64-mingw32`), if anything.
         target: Option<String>,
+        /// Whether its C runtime is UCRT: it predefines `_UCRT`.
+        ucrt: bool,
     },
     /// It ran but gave no version that could be read.
     NoVersion,
@@ -121,7 +129,7 @@ fn find_in(
             continue;
         }
         seen.push(identity);
-        let probe = probe(&path, run, env);
+        let probe = probe(&path, host, run, env);
         found.push(Gcc {
             path,
             probe,
@@ -143,32 +151,41 @@ fn path_dirs(env: &Env) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// Runs `gcc --version` for the version, and `gcc -dumpmachine` for the
-/// target.
-fn probe(path: &Path, run: &dyn Runner, env: &Env) -> Probe {
-    let Some(output) = run
-        .run(path, &[OsStr::new("--version")], env)
+/// What `gcc` prints for `args`, when it ran and succeeded.
+fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String> {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    run.run(path, &args, env)
         .ok()
         .filter(|o| o.success)
-    else {
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Runs `gcc` for its version, whether it is a snapshot, its target and
+/// its C runtime.
+fn probe(path: &Path, host: HostOs, run: &dyn Runner, env: &Env) -> Probe {
+    let Some(full) = ask(path, &["-dumpfullversion"], run, env) else {
         return Probe::Failed;
     };
-    let text = String::from_utf8_lossy(&output.stdout);
-    let first = text.lines().next().unwrap_or_default();
-    let Some(version) = Version::find_in(first) else {
+    let Some(version) = Version::find_in(full.trim()) else {
         return Probe::NoVersion;
     };
+    let banner = ask(path, &["--version"], run, env).unwrap_or_default();
+    let first = banner.lines().next().unwrap_or_default();
     let prerelease = first.contains("experimental") || first.contains("prerelease");
-    let target = run
-        .run(path, &[OsStr::new("-dumpmachine")], env)
-        .ok()
-        .filter(|o| o.success)
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    let target = ask(path, &["-dumpmachine"], run, env)
+        .map(|t| t.trim().to_owned())
         .filter(|t| !t.is_empty());
+    let empty_input = match host {
+        HostOs::Windows => "NUL",
+        HostOs::Other => "/dev/null",
+    };
+    let ucrt = ask(path, &["-dM", "-E", "-x", "c", empty_input], run, env)
+        .is_some_and(|macros| macros.lines().any(|l| l.starts_with("#define _UCRT ")));
     Probe::Ran {
         version,
         prerelease,
         target,
+        ucrt,
     }
 }
 
@@ -178,10 +195,11 @@ mod tests {
     use crate::Output;
     use cuno_core::NameCase;
 
-    /// Answers as the GCC in each directory would: `--version` with the
-    /// version in the directory's name (`.../v14/gcc.exe` is 14.2.0, `exp`
-    /// an experimental 15.0.0), and `-dumpmachine` with MinGW's target, or
-    /// another for a directory named `linux`.
+    /// Answers as the GCC in each directory would, by the directory's name:
+    /// `v<major>` is `<major>.2.0`, UCRT, MinGW; `msvcrt` lacks `_UCRT`;
+    /// `exp` and `pre` are snapshots; `linux` targets Linux; `nover` gives
+    /// no version; `nomachine` fails `-dumpmachine`; `blank` prints an empty
+    /// target; `broken` fails everything.
     struct ByDir;
 
     impl Runner for ByDir {
@@ -193,30 +211,45 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            let out = if args == [OsStr::new("-dumpmachine")] {
-                if dir == "linux" {
-                    "x86_64-linux-gnu\n".to_owned()
-                } else {
-                    "x86_64-w64-mingw32\n".to_owned()
-                }
-            } else if dir == "linux" {
-                "gcc (Ubuntu 13.2.0-23ubuntu4) 13.2.0\n".to_owned()
-            } else if dir == "exp" {
-                "gcc.exe (GCC) 15.0.0 20260101 (experimental)\nCopyright\n".to_owned()
-            } else if dir == "broken" {
-                return Ok(Output {
-                    success: false,
-                    stdout: Vec::new(),
-                    stderr: b"boom".to_vec(),
-                });
-            } else {
-                let major = dir.trim_start_matches('v');
-                format!("gcc.exe (Rev2, Built by MSYS2 project) {major}.2.0\nCopyright 3.1.4\n")
-            };
-            Ok(Output {
+            let arg = args[0].to_string_lossy().into_owned();
+            let ok = |text: &str| Output {
                 success: true,
-                stdout: out.into_bytes(),
+                stdout: text.as_bytes().to_vec(),
                 stderr: Vec::new(),
+            };
+            let failed = Output {
+                success: false,
+                stdout: Vec::new(),
+                stderr: b"boom".to_vec(),
+            };
+            if dir == "broken" {
+                return Ok(failed);
+            }
+            Ok(match arg.as_str() {
+                "-dumpfullversion" => match dir.as_str() {
+                    "nover" => ok("unknown\n"),
+                    "exp" | "pre" => ok("15.0.1\n"),
+                    "linux" | "msvcrt" | "nomachine" | "blank" => ok("13.2.0\n"),
+                    _ => ok(&format!("{}.2.0\n", dir.trim_start_matches('v'))),
+                },
+                "--version" => match dir.as_str() {
+                    "exp" => ok("gcc.exe (GCC) 15.0.1 20260101 (experimental)\n"),
+                    "pre" => ok("gcc.exe (GCC) 15.0.1 20260101 (prerelease)\n"),
+                    // A vendor name with a number of its own, which is not
+                    // the version.
+                    _ => ok("gcc.exe (Buildroot 2023.02.1) 99.9.9\nCopyright 3.1.4\n"),
+                },
+                "-dumpmachine" => match dir.as_str() {
+                    "linux" => ok("x86_64-linux-gnu\n"),
+                    "nomachine" => failed,
+                    "blank" => ok("\n"),
+                    _ => ok("x86_64-w64-mingw32\n"),
+                },
+                "-dM" => match dir.as_str() {
+                    "msvcrt" | "linux" => ok("#define __MINGW64__ 1\n#define _UCRTX 1\n"),
+                    _ => ok("#define __MINGW64__ 1\n#define _UCRT 1\n"),
+                },
+                _ => failed,
             })
         }
     }
@@ -233,23 +266,28 @@ mod tests {
         Env::from_pairs([("PATH".into(), path)], NameCase::Insensitive)
     }
 
-    /// The configured path comes first, then `PATH` in order, and a file
-    /// reached twice is listed once; the version is read from `--version`'s
-    /// first line, never a later one, and the target from `-dumpmachine`.
+    fn find(env: &Env, explicit: Option<&Path>) -> Vec<Gcc> {
+        find_in(env, HostOs::Windows, explicit, &[], &ByDir).unwrap()
+    }
+
+    /// The configured path comes first, then `PATH` in order; a file
+    /// reached twice, even by another spelling, is listed once; the version
+    /// is `-dumpfullversion`'s, never a number in the banner.
     ///
-    /// Mutation: search `PATH` before the configured path, list a file
-    /// twice, or read the version from a later line; this test fails.
+    /// Mutation: search `PATH` before the configured path, compare paths as
+    /// written, or read the version from the banner; this test fails.
     #[test]
     fn copies_are_found_in_order_once_each() {
         let root = tempfile::tempdir().unwrap();
         let configured = gcc_in(&root.path().join("v13"));
         let on_path = gcc_in(&root.path().join("v14"));
+        let respelled = root.path().join("v14").join("..").join("v14");
         let env = env_with_path(&[
             on_path.parent().unwrap(),
+            &respelled,
             configured.parent().unwrap(),
-            Path::new("relative"),
         ]);
-        let found = find_in(&env, HostOs::Windows, Some(&configured), &[], &ByDir).unwrap();
+        let found = find(&env, Some(&configured));
         let listed: Vec<(&Path, &Origin, Option<Version>)> = found
             .iter()
             .map(|g| (g.path.as_path(), &g.origin, g.version()))
@@ -265,42 +303,61 @@ mod tests {
                 (on_path.as_path(), &Origin::Path, Version::find_in("14.2.0")),
             ]
         );
-        assert!(matches!(
-            &found[0].probe,
-            Probe::Ran { target: Some(t), prerelease: false, .. } if t == "x86_64-w64-mingw32"
-        ));
+        assert_eq!(
+            found[0].probe,
+            Probe::Ran {
+                version: Version::find_in("13.2.0").unwrap(),
+                prerelease: false,
+                target: Some("x86_64-w64-mingw32".to_owned()),
+                ucrt: true,
+            }
+        );
     }
 
-    /// A snapshot is a pre-release, another target is recorded as such,
-    /// and one that fails is recorded, not dropped.
+    /// Snapshots by either word, another target, no version, a run that
+    /// fails, a failed or empty `-dumpmachine`, and a C runtime other than
+    /// UCRT are each recorded as such, not dropped.
     ///
-    /// Mutation: miss `experimental`, drop the target, or leave out a copy
-    /// that fails; this test fails.
+    /// Mutation: miss `experimental` or `prerelease`, keep an empty target,
+    /// ignore `-dumpmachine` failing, record no version as failed, take
+    /// `_UCRTX` for `_UCRT`, or leave a copy out; this test fails.
     #[test]
     fn what_each_copy_is_is_recorded() {
         let root = tempfile::tempdir().unwrap();
-        let exp = gcc_in(&root.path().join("exp"));
-        let linux = gcc_in(&root.path().join("linux"));
-        let broken = gcc_in(&root.path().join("broken"));
-        let env = env_with_path(&[
-            exp.parent().unwrap(),
-            linux.parent().unwrap(),
-            broken.parent().unwrap(),
-        ]);
-        let found = find_in(&env, HostOs::Windows, None, &[], &ByDir).unwrap();
-        assert_eq!(found.len(), 3);
-        assert!(matches!(
-            found[0].probe,
+        let names = [
+            "exp",
+            "pre",
+            "linux",
+            "nover",
+            "broken",
+            "nomachine",
+            "blank",
+            "msvcrt",
+        ];
+        let dirs: Vec<PathBuf> = names
+            .iter()
+            .map(|n| gcc_in(&root.path().join(n)).parent().unwrap().to_owned())
+            .collect();
+        let env = env_with_path(&dirs.iter().map(PathBuf::as_path).collect::<Vec<_>>());
+        let found = find(&env, None);
+        assert_eq!(found.len(), names.len());
+        let ran = |i: usize| match &found[i].probe {
             Probe::Ran {
-                prerelease: true,
+                prerelease,
+                target,
+                ucrt,
                 ..
-            }
-        ));
-        assert!(matches!(
-            &found[1].probe,
-            Probe::Ran { target: Some(t), .. } if t == "x86_64-linux-gnu"
-        ));
-        assert_eq!(found[2].probe, Probe::Failed);
+            } => (*prerelease, target.clone(), *ucrt),
+            other => panic!("{}: {other:?}", names[i]),
+        };
+        assert!(ran(0).0, "experimental");
+        assert!(ran(1).0, "prerelease");
+        assert_eq!(ran(2).1.as_deref(), Some("x86_64-linux-gnu"));
+        assert_eq!(found[3].probe, Probe::NoVersion);
+        assert_eq!(found[4].probe, Probe::Failed);
+        assert_eq!(ran(5).1, None, "a failed -dumpmachine");
+        assert_eq!(ran(6).1, None, "an empty -dumpmachine");
+        assert!(!ran(7).2, "MSVCRT");
     }
 
     /// A configured path with no file is an error naming the setting.
@@ -310,12 +367,28 @@ mod tests {
     fn a_configured_path_with_no_file_is_an_error() {
         let root = tempfile::tempdir().unwrap();
         let missing = root.path().join("nowhere").join("gcc.exe");
-        let env = env_with_path(&[]);
-        let err = find_in(&env, HostOs::Windows, Some(&missing), &[], &ByDir).unwrap_err();
+        let err = find_in(
+            &env_with_path(&[]),
+            HostOs::Windows,
+            Some(&missing),
+            &[],
+            &ByDir,
+        )
+        .unwrap_err();
         assert!(
             matches!(&err, ToolchainError::ConfiguredToolMissing { setting, .. } if setting == "[toolchain.paths] gcc"),
             "{err:?}"
         );
+    }
+
+    /// Only absolute `PATH` entries are searched.
+    ///
+    /// Mutation: keep a relative entry; this test fails.
+    #[test]
+    fn only_absolute_path_entries_are_searched() {
+        let root = tempfile::tempdir().unwrap();
+        let env = env_with_path(&[Path::new("relative"), root.path()]);
+        assert_eq!(path_dirs(&env), [root.path().to_owned()]);
     }
 
     /// On Windows MSYS2's directories come after `PATH`, in the order
@@ -353,8 +426,11 @@ mod tests {
                 (mingw.as_path(), &Origin::Msys2),
             ]
         );
-        // Off Windows the file is `gcc`, and MSYS2 is not searched.
-        std::fs::write(on_path.with_file_name("gcc"), "").unwrap();
+        // Off Windows the file is `gcc`, and MSYS2 is not searched, though
+        // its directories hold one.
+        for gcc in [&on_path, &ucrt, &mingw] {
+            std::fs::write(gcc.with_file_name("gcc"), "").unwrap();
+        }
         let elsewhere = find_in(&env, HostOs::Other, None, &msys2, &ByDir).unwrap();
         assert_eq!(elsewhere.len(), 1);
         assert_eq!(

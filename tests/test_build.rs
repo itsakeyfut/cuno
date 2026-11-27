@@ -73,13 +73,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
     .value;
     let (project, manifest) = settings.project.as_ref().expect("a project");
     let runner = SystemRunner::new();
-    let detected = prepare::detect(
-        &env,
-        host,
-        &settings.llvm_paths(),
-        settings.gcc_path(),
-        &runner,
-    );
+    let detected = prepare::detect(&env, host, &settings.llvm_paths(), &runner);
     let installs = detected.installs.expect("Visual Studio");
     let llvm = detected.llvm.expect("LLVM");
     let found = Found {
