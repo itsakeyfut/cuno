@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob af6fa2274ece0c729100c7ec983d72141caa1041 -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob bf779c813a83d66a9b4518d02ee43d917bd7bb6c -->
 
 # Configuration Files
 
@@ -378,6 +378,7 @@ Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags
 | User-level | `<cuno home>/config.toml` | All projects on that machine | — |
 
 - Both hold machine-specific settings. Settings shared with the team go in `cuno.toml`.
+- `[toolchain] compiler` of the per-user config can also be written with `cuno toolchain default` ([commands.md](commands.md#cuno-toolchain-default-compiler)).
 - Precedence (higher wins):
   1. Command-line arguments
   2. Environment variables

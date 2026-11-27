@@ -376,6 +376,7 @@ MVP では使わない。項目名のみ予約。
 | ユーザー単位 | `<管理ディレクトリ>/config.toml` | そのマシンの全プロジェクト | — |
 
 - どちらもマシン固有の設定を書く。チームで共有する設定は `cuno.toml` に書く。
+- ユーザー単位の config の `[toolchain] compiler` は、`cuno toolchain default` でも書ける（[commands.md](commands.md#cuno-toolchain-default-コンパイラ)）。
 - 優先順位（上ほど優先）:
   1. コマンド引数
   2. 環境変数
