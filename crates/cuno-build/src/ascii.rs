@@ -11,7 +11,7 @@ use cuno_toolchain::compiler::CompilerKind;
 use crate::error::{BuildError, NotAscii};
 use crate::layout::Layout;
 use crate::sources::Bin;
-use cuno_toolchain::short_path::fits_ansi_code_page;
+use cuno_toolchain::short_path::{fits_ansi_code_page, temp_dir};
 
 /// Whether `path` is all ASCII.
 fn is_ascii(path: &Path) -> bool {
@@ -71,14 +71,11 @@ pub fn check(
     // The build's environment already names it by its ASCII short name
     // where it has one; without one, a link works only when the path fits
     // the ANSI code page, and LTO's not at all.
-    if let Some(temp) = ["TMP", "TEMP", "USERPROFILE"]
-        .iter()
-        .find_map(|name| env.get(name))
-        .map(Path::new)
-        && !is_ascii(temp)
-        && (linking.lto || !fits_ansi_code_page(temp))
+    if let Some(temp) = temp_dir(env)
+        && !is_ascii(&temp)
+        && (linking.lto || !fits_ansi_code_page(&temp))
     {
-        return Err(refuse(NotAscii::Temp, temp));
+        return Err(refuse(NotAscii::Temp, &temp));
     }
     Ok(())
 }
