@@ -110,7 +110,7 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
    - `CompilerKind::parse` が「まだ対応していない」とする名前から外す。
 4. **選択**（`select.rs`）。`Found` に検出の結果を足し、`copy_of` で選ぶ条件を書く。`[toolchain.paths]` に書いたものはそれだけを使い、使えなければ設定を名指ししたエラーにする。見つからないとき、使えるものがないときの `help:` に、入れ方を書く（`error.rs`）。MSVC のツールセットを使わないコンパイラなら、Visual Studio が見つからなくてもビルドが止まらないこと（`toolchain::ready`）と、`cuno doctor` がそれを問題にしないことを確かめる。
 5. **環境**（`prepare.rs`）。起動に要る環境を作る。そのコンパイラが自分で読む環境変数は `TOOL_OPTION_VARIABLES` に足して取り除く。コマンドの識別（変更の判定）に要るもの、つまり標準ヘッダのディレクトリ（`Prepared::include_dirs`）と、全プログラムにリンクするランタイムのファイルを、`Prepared` に持たせる。[build.md](build.md#変更の判定) の、同じ名前のファイルの出現を見逃さないため。
-6. **フラグ**（`flags/`）。`compile.rs`、`link.rs` の各行と、`library_files`（リンカが探すライブラリのファイル名を、探す順に）、色の指定、ヘッダ依存のファイル、規格を受け付ける版（`check_edition`）。clang 系のツールに渡すコマンド（`clang_tools.rs`）には、ビルド対象と、ビルドが見る版のマクロ（GCC は `-fgnuc-version`。どの版をどのマクロで伝えるかは、`ToolContext::new` の、系統ごとの `match` に答える）を書く。MSVC の標準ライブラリを使わないコンパイラでは、clang-tidy の標準ライブラリの確認（`toolchain::tidy_compile`）を行わない。
+6. **フラグ**（`flags/`）。`compile.rs`、`link.rs` の各行と、`library_files`（リンカが探すライブラリのファイル名を、探す順に）、色の指定、ヘッダ依存のファイル、規格を受け付ける版（`check_edition`）。clang 系のツールに渡すコマンド（`clang_tools.rs`）には、ビルド対象と、ビルドが見る版のマクロ（GCC は `-fgnuc-version`。どの版をどのマクロで伝えるかは、`ToolContext::of` の、系統ごとの `match` に答える）を書く。MSVC の標準ライブラリを使わないコンパイラでは、clang-tidy の標準ライブラリの確認（`toolchain::tidy_compile`）を行わない。
 
 7. **テストのランタイム**（`cuno-build` の `headers/cuno/`）。テストの登録がそのコンパイラで動くか（`constructor` 属性か、MSVC の `.CRT$XCU` か）、通常ビルドがランタイムなしでリンクできるか、`long double` などの表示、そのコンパイラが知らない `#pragma` を確かめる。
 8. **テスト。**

@@ -24,7 +24,7 @@ use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
 use cuno_toolchain::select::{self, Choices, LlvmChoice, Selected};
-use cuno_toolchain::{HostOs, Runner, ToolchainError, Version};
+use cuno_toolchain::{HostOs, Runner, ToolchainError};
 
 use crate::bundled;
 use crate::input::{CompileSettings, compile_settings, editor_settings};
@@ -135,17 +135,15 @@ pub struct TidyCompile {
     pub settings: CompileSettings,
     /// Where the build runs, as for [`ProbeCompile`].
     pub cwd: PathBuf,
-    kind: CompilerKind,
-    version: Version,
+    selected: Selected,
     include: Vec<PathBuf>,
-    msvc: Option<Version>,
 }
 
 impl TidyCompile {
     /// What clang-tidy is told of the compiler, as compile_commands.json
     /// tells it.
     pub fn context(&self) -> ToolContext<'_> {
-        ToolContext::new(self.kind, &self.version, self.msvc.as_ref(), &self.include)
+        ToolContext::of(&self.selected, &self.include)
     }
 }
 
@@ -171,10 +169,8 @@ pub fn tidy_compile(
         env: prepared.env.clone(),
         settings: editor_settings(project, selected.kind, Lang::Cxx, host, bundled),
         cwd: project.map_or_else(|| cwd.to_owned(), |(root, _)| root.to_owned()),
-        kind: selected.kind,
-        version: selected.version,
+        selected: selected.clone(),
         include: prepared.include_dirs(),
-        msvc: selected.msvc.as_ref().map(|toolset| toolset.cl_version),
     })
 }
 
@@ -580,6 +576,7 @@ mod tests {
     use super::*;
     use cuno_core::ExitClass;
     use cuno_core::NameCase;
+    use cuno_toolchain::Version;
     use cuno_toolchain::msvc::MsvcToolset;
     use cuno_toolchain::select::Source;
 

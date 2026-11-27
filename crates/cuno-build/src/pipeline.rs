@@ -10,11 +10,10 @@ use std::time::Instant;
 
 use cuno_core::{Env, NameCase, Shell, paths};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
-use cuno_toolchain::compiler::CompilerKind;
+use cuno_toolchain::HostOs;
 use cuno_toolchain::flags::{Mode, ToolContext};
 use cuno_toolchain::prepare::Prepared;
 use cuno_toolchain::select::Selected;
-use cuno_toolchain::{HostOs, Version};
 
 use crate::BuildError;
 use crate::compdb;
@@ -56,8 +55,15 @@ fn compile_commands(
     bundled: &Path,
     sources: &Sources,
 ) -> std::io::Result<Vec<PathBuf>> {
-    let for_editors =
-        |lang, _: Purpose| editor_settings(Some((root, manifest)), tool.kind, lang, host, bundled);
+    let for_editors = |lang, _: Purpose| {
+        editor_settings(
+            Some((root, manifest)),
+            tool.selected.kind,
+            lang,
+            host,
+            bundled,
+        )
+    };
     // Never linked; the plan takes link settings all the same.
     let link = for_editors(
         manifest.package.lang,
@@ -73,14 +79,14 @@ fn compile_commands(
         // The test build's objects: what compile_commands.json describes is
         // compiled with `CUNO_TEST` (build.md, "Output").
         layout: &Layout::new(target_dir, Profile::Dev, root, host),
-        kind: tool.kind,
-        program: tool.executable,
+        kind: tool.selected.kind,
+        program: &tool.selected.executable,
         compile: &for_editors,
         link: (&link.build, &link.profile),
         // compile_commands.json never carries the color flags.
         color: false,
     });
-    let context = ToolContext::new(tool.kind, tool.version, tool.msvc, &tool.include);
+    let context = ToolContext::of(tool.selected, &tool.include);
     compdb::write(root, &editors, context)?;
     let mut described: Vec<PathBuf> = Vec::new();
     for step in &editors.steps {
@@ -99,14 +105,9 @@ fn compile_commands(
 
 /// The compiler a build runs, once the toolchain is ready.
 pub struct Toolchain<'a> {
-    /// Which compiler.
-    pub kind: CompilerKind,
-    /// Its driver.
-    pub executable: &'a Path,
-    /// Its version.
-    pub version: &'a Version,
-    /// The cl version of the MSVC toolset in use, for compile_commands.json.
-    pub msvc: Option<&'a Version>,
+    /// The compiler: which, its driver, its version and the MSVC toolset
+    /// it builds with.
+    pub selected: &'a Selected,
     /// The environment it runs in.
     pub env: &'a Env,
     /// The include directories its environment gives
@@ -126,10 +127,7 @@ impl<'a> Toolchain<'a> {
     pub fn new(selected: &'a Selected, prepared: &'a Prepared) -> Toolchain<'a> {
         let version = selected.version.to_string();
         Toolchain {
-            kind: selected.kind,
-            executable: &selected.executable,
-            version: &selected.version,
-            msvc: selected.msvc.as_ref().map(|toolset| &toolset.cl_version),
+            selected,
             env: &prepared.env,
             include: prepared.include_dirs(),
             identity: prepared.identity(&version),
@@ -240,7 +238,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let compile = |lang: Lang, purpose: Purpose| {
         compile_settings(
             Some((root, manifest)),
-            tool.kind,
+            tool.selected.kind,
             profile,
             lang,
             host,
@@ -280,7 +278,7 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
         Goal::Build | Goal::Run { .. } => Some(linking(&sources.bins[..])),
         Goal::Test => Some(linking(&[][..])),
     };
-    crate::ascii::check(tool.kind, &layout, target_dir, linking, tool.env)?;
+    crate::ascii::check(tool.selected.kind, &layout, target_dir, linking, tool.env)?;
     // Chosen, and named, before anything is built, so a wrong `--bin` or
     // two test executables of one name cost nothing.
     let (mode, exe) = match goal {
@@ -337,8 +335,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
             sources: &sources,
             products,
             layout: &Layout::new(target_dir, profile, root, host),
-            kind: tool.kind,
-            program: tool.executable,
+            kind: tool.selected.kind,
+            program: &tool.selected.executable,
             compile: &compile,
             link: (&link.build, &link.profile),
             color: shell.uses_color(),
@@ -376,8 +374,8 @@ pub fn build(request: &Request<'_>, shell: &mut Shell) -> Result<Built, BuildErr
     let mut first_status = Some(format!(
         "{package} v{} ({} {})",
         manifest.package.version,
-        tool.kind.name(),
-        tool.version
+        tool.selected.kind.name(),
+        tool.selected.version
     ));
     let mut dated_ahead = std::collections::BTreeSet::new();
     let mut replayed: Vec<Vec<u8>> = Vec::new();
@@ -597,6 +595,8 @@ mod tests {
 
     use cuno_core::NameCase;
     use cuno_core::paths;
+    use cuno_toolchain::Version;
+    use cuno_toolchain::compiler::CompilerKind;
 
     use crate::exec::Output;
     use crate::input::tests::BUNDLED;
@@ -688,6 +688,18 @@ mod tests {
         (root, manifest)
     }
 
+    /// A Clang without a toolset, as the plan's tests build with; leaked,
+    /// since a test's `Toolchain` borrows it for the whole test.
+    fn clang(version: Version) -> &'static Selected {
+        Box::leak(Box::new(Selected {
+            kind: CompilerKind::Clang,
+            executable: PathBuf::from("clang.exe"),
+            version,
+            msvc: None,
+            source: cuno_toolchain::select::Source::CommandLine,
+        }))
+    }
+
     fn package() -> (tempfile::TempDir, Manifest) {
         package_with("", &[])
     }
@@ -738,10 +750,7 @@ mod tests {
             jobs: options.jobs,
             started: Instant::now() - options.ago,
             toolchain: Toolchain {
-                kind: CompilerKind::Clang,
-                executable: Path::new("clang.exe"),
-                version: &version,
-                msvc: None,
+                selected: clang(version),
                 env: &env,
                 include: Vec::new(),
                 identity: vec![OsString::from("22.1.8")],
@@ -1129,10 +1138,7 @@ defines = [\"X=1\"]
         let env = Env::from_pairs([], NameCase::Insensitive);
         let version = Version::find_in("22.1.8").unwrap();
         let tool = Toolchain {
-            kind: CompilerKind::Clang,
-            executable: Path::new("clang.exe"),
-            version: &version,
-            msvc: None,
+            selected: clang(version),
             env: &env,
             include: Vec::new(),
             identity: vec![OsString::from("22.1.8")],
@@ -1173,10 +1179,7 @@ defines = [\"X=1\"]
         let env = Env::from_pairs([], NameCase::Insensitive);
         let version = Version::find_in("22.1.8").unwrap();
         let tool = Toolchain {
-            kind: CompilerKind::Clang,
-            executable: Path::new("clang.exe"),
-            version: &version,
-            msvc: None,
+            selected: clang(version),
             env: &env,
             include: Vec::new(),
             identity: vec![OsString::from("22.1.8")],
