@@ -95,7 +95,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 **エラーにする**（終了コード 3。無視すると、利用者の意図と違うものが黙ってビルドされるもの）:
 
-- `compiler = "gcc"` / `"safec"`（`--compiler`、`CUNO_COMPILER`、config.toml での指定を含む）。使うコンパイラとして選ばれたときだけエラーにする。上位の層で別のコンパイラに上書きされていればエラーにしない（`[toolchain.version]` が使うコンパイラの制約だけを見るのと同じ）。
+- `compiler = "safec"`（`--compiler`、`CUNO_COMPILER`、config.toml での指定を含む）。使うコンパイラとして選ばれたときだけエラーにする。上位の層で別のコンパイラに上書きされていればエラーにしない（`[toolchain.version]` が使うコンパイラの制約だけを見るのと同じ）。
 - `[test] framework = "gtest"` / `"catch2"` / `"doctest"`
 - 独自プロファイル（`inherits`、および `dev` / `release` 以外の `--profile`）
 - `[lib]`
@@ -103,7 +103,7 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 - `.cuno/config.toml` の `[target.<ビルド対象環境>]`、`--target`
 - `[dependencies]`
 
-上記以外（`[platform.<OS>.build]`、`[toolchain.version]` の `msvc` / `clang` / `clang-cl` を含む）は MVP で実装する。`[toolchain.version]` / `[build.<compiler>]` の `gcc` / `safec` キーは、そのコンパイラを使わない限り無害なので、書かれていてもエラーにしない。
+上記以外（`[platform.<OS>.build]`、`[toolchain.version]` の `msvc` / `clang` / `clang-cl` / `gcc` を含む）は実装する。`[toolchain.version]` / `[build.<compiler>]` の `safec` キーは、そのコンパイラを使わない限り無害なので、書かれていてもエラーにしない。
 
 ### 未知のキー
 
@@ -179,7 +179,7 @@ clang = ">=17"
 - `msvc`: Microsoft Visual C++（cl.exe）。Windows の自動選択の既定。
 - `clang`: Clang（GCC 形式のフラグを使う `clang` / `clang++`）。
 - `clang-cl`: MSVC 互換モードの Clang（MSVC 形式のフラグを使う）。
-- `gcc`: GCC。MVP 直後に対応。
+- `gcc`: GCC。Windows では MinGW-w64 の GCC（[toolchain.md](toolchain.md#mingwgcc)）。
 - `safec`: cuno の開発者が別途開発している実験的コンパイラ（[toolchain.md](toolchain.md)）。主要コンパイラでの成立後に対応。
 
 ### `[build]`

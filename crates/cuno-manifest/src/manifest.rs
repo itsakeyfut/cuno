@@ -295,13 +295,14 @@ impl From<CompilerKind> for CompilerName {
             CompilerKind::Msvc => CompilerName::Msvc,
             CompilerKind::Clang => CompilerName::Clang,
             CompilerKind::ClangCl => CompilerName::ClangCl,
+            CompilerKind::Gcc => CompilerName::Gcc,
         }
     }
 }
 
 impl CompilerName {
     /// The compiler cuno builds with by this name, or `None` for one it
-    /// recognises but cannot build with yet (`gcc`, `safec`): the inverse of
+    /// recognises but cannot build with yet (`safec`): the inverse of
     /// `From<CompilerKind>`, so a name's settings are read for exactly the
     /// compilers cuno can use, and supporting one here turns them on.
     pub fn kind(self) -> Option<CompilerKind> {
@@ -309,7 +310,8 @@ impl CompilerName {
             CompilerName::Msvc => Some(CompilerKind::Msvc),
             CompilerName::Clang => Some(CompilerKind::Clang),
             CompilerName::ClangCl => Some(CompilerKind::ClangCl),
-            CompilerName::Gcc | CompilerName::Safec => None,
+            CompilerName::Gcc => Some(CompilerKind::Gcc),
+            CompilerName::Safec => None,
         }
     }
 }
@@ -1105,8 +1107,7 @@ mod tests {
     }
 
     /// A name maps back to the kind it was made from, for every kind cuno
-    /// builds with; `gcc` and `safec` map to none until cuno can build
-    /// with them.
+    /// builds with; `safec` maps to none until cuno can build with it.
     ///
     /// Mutation: map a kind's name to `None`, or to another kind; this test
     /// fails.
@@ -1120,7 +1121,6 @@ mod tests {
                 kind.name()
             );
         }
-        assert_eq!(CompilerName::Gcc.kind(), None);
         assert_eq!(CompilerName::Safec.kind(), None);
     }
 
@@ -1149,7 +1149,7 @@ mod tests {
             ));
         }
         text.push_str(
-            "gcc = \">=13\"
+            "safec = \">=13\"
 ",
         );
         let loaded = read(&text).unwrap();
@@ -1495,7 +1495,7 @@ indent-width = 2
             "precompiled-header = \"p.h\"\n", // 6
             "wanings = \"all\"\n",            // 7
             "[toolchain.version]\n",          // 8
-            "gcc = \">=13\"\n",               // 9
+            "safec = \">=13\"\n",             // 9
             "nvcc = \">=12\"\n",              // 10
             "[platform.beos.build]\n",        // 11
             "defines = [\"X\"]\n",            // 12

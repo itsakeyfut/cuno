@@ -39,7 +39,7 @@
 | C++ | C++17 | C++20 |
 | C | C11 | C17 |
 
-- `edition` で指定した規格を、使用するコンパイラが受け付けない場合（例: cl 19.52 未満で `c++23`、cl 19.37 未満で `c23`）はエラーにし、必要なコンパイラのバージョンを案内する。cl は知らない `/std` を警告だけ出して無視するため、受け付けるかどうかはコンパイラのバージョンで判定する。
+- `edition` で指定した規格を、使用するコンパイラが受け付けない場合（例: cl 19.52 未満で `c++23`、cl 19.37 未満で `c23`、GCC 11 未満で `c++23`）はエラーにし、必要なコンパイラのバージョンを案内する。cl は知らない `/std` を警告だけ出して無視するため、受け付けるかどうかはコンパイラのバージョンで判定する。
 - `edition` と各コンパイラの規格フラグの対応は [build.md](build.md#設定とフラグの対応) にある。
 
 ### コンパイラの最低バージョン
@@ -114,7 +114,7 @@ C++20 の指定を受け付けるものとする。
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
 
-- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang のインクルードパス）は、ビルド、標準ライブラリの確認、`cuno doctor` の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
+- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC のインクルードパス）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC がライブラリと自分のプログラムを探す場所）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC が書くもう 1 つのヘッダ依存のファイル）は、ビルド、標準ライブラリの確認、`cuno doctor` の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
   - 理由: これらはコマンドラインに現れずにフラグを足すため、`cuno.toml` と違うフラグで黙ってビルドし、成功と報告することになる（例: `_CL_=-DNDEBUG` で dev プロファイルにも `NDEBUG` が定義される）。`-v` の表示にも出ない。エラーにしないのは、全体に `CL=/MP` などを設定している利用者が、cuno を使うたびに消さずに済むように。
 
 - **Developer Command Prompt の変数は取り除く。** `VSINSTALLDIR`、`VCINSTALLDIR`、`VCToolsInstallDir`、`EXTERNAL_INCLUDE`、`WindowsSdkDir`、`WindowsSDKVersion`、`UniversalCRTSdkDir`、`UCRTVersion`。clang / clang-cl はこれらからツールセットとリンカーを探すため、別の Visual Studio の Developer Command Prompt から cuno を実行すると、cuno が選んだものと違うツールセットで成功してしまう。
@@ -201,6 +201,11 @@ C++20 の指定を受け付けるものとする。
   - 理由: UCRT は Windows 10 以降の標準の C ランタイムで、MSVC も使う。MSVCRT の GCC と UCRT の GCC は同じビルド対象を名乗るため、区別せずに新しいものを選ぶと、どちらのランタイムの実行ファイルができるかが、その時に入っている GCC 次第になる。
 - GCC を探すのは、GCC を使うとき（GCC を選ぶとき、`cuno doctor`）だけ。MSVC や Clang でのビルド、`cuno fmt`、`cuno lint` では GCC を起動しない。
 - `g++` は、使う `gcc` と同じディレクトリのものを使う。`g++` の場所を別に書く設定はない。
+- 選んだ GCC には、ビルドの前に、インクルードのディレクトリ（`-E -v -x c++` で空の入力を前処理したときの `#include <...> search starts here:` と `End of search list.` の間）と、ライブラリのディレクトリ（`-print-search-dirs` の `libraries: =` の行）を尋ねる。言語の設定は `LC_ALL=C` にし、その GCC のディレクトリで起動する。どちらかが読めなければエラー（終了コード 3）にする。
+  - 理由: 変更の判定は、これらを MSVC の `INCLUDE` と同じように使う（[build.md](build.md#変更の判定)）。知らないままでは、プロジェクトに置いた `sys/stat.h` が GCC の `sys/stat.h` の代わりに読まれるようになっても気づかず、古いコードのまま成功と報告する。
+- ビルド（コンパイルとリンク）でも、GCC は、そのディレクトリを `PATH` の先頭に加えた環境で起動する（理由は上と同じ）。作った実行ファイルを `cuno run` などで実行する環境には加えない。
+  - 理由: 加えると、作った実行ファイルが GCC の DLL を必要としても cuno の中では動いてしまい、外で起動しないことに気づけない（[build.md](build.md#理由)）。
+- GCC は MSVC のツールセットを使わないため、GCC を選んでも Visual Studio は要らない。MSVC の環境（`INCLUDE`、`LIB`、`LIBPATH`）も組み立てない。
 - `[toolchain.paths] gcc` に書いた場合は、LLVM と同じく、そのファイルだけを使い、条件を満たさなければエラー（終了コード 3）にする。
 
 ## 選択
@@ -217,7 +222,7 @@ C++20 の指定を受け付けるものとする。
 - プロジェクトで決めた設定（`cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
 - プロジェクトの外（`cuno doctor` をプロジェクトの外で実行した場合など）では、プロジェクトの層（`.cuno/config.toml` と `cuno.toml` の `[toolchain]`）がないので、`--compiler` → `CUNO_COMPILER` → ユーザー単位の config → 自動選択 の順で選ぶ。
   - 理由: 新しいプロジェクトで `cuno build` したときに使われるコンパイラと一致させるため。自動選択だけを見ると、ユーザー単位の config で clang を選んでいる人に MSVC を診断して「問題なし」と答え、その後のビルドが失敗しうる。
-- MVP で未対応のコンパイラ（`gcc` / `safec`）が選ばれた場合はエラー（終了コード 3）。警告して別のコンパイラでビルドすることはしない（黙って別のコンパイラでビルドされるのを防ぐため）。
+- まだ対応していないコンパイラ（`safec`）が選ばれた場合はエラー（終了コード 3）。警告して別のコンパイラでビルドすることはしない（黙って別のコンパイラでビルドされるのを防ぐため）。
 
 自動選択の既定: Windows は MSVC、Linux は GCC、macOS は Apple Clang。
 

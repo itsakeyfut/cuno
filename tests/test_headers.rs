@@ -96,7 +96,7 @@ fn compile(compiler: Compiler, flags: Flags, source: &Path, object: &str) -> Opt
             }
             cmd.arg(source).arg(format!("/Fo{object}"));
         }
-        Compiler::Clang => {
+        Compiler::Clang | Compiler::Gcc => {
             cmd.args(["-c", "-Wall", "-Wextra", "-Werror", "-I"]);
             cmd.arg(&include);
             cmd.arg(match flags.std {
@@ -181,6 +181,13 @@ fn compile_and_link(
             link.args(&objects).arg("-o").arg(format!("{exe}.exe"));
             if lto {
                 link.args(["-flto", "-fuse-ld=lld"]);
+            }
+        }
+        // Not in `COMPILERS` until the headers are checked with GCC (#322).
+        Compiler::Gcc => {
+            link.args(&objects).arg("-o").arg(format!("{exe}.exe"));
+            if lto {
+                link.arg("-flto");
             }
         }
     }

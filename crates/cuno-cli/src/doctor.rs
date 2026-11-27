@@ -67,10 +67,17 @@ pub fn doctor(
     };
     let settings = settings.as_ref();
 
+    let choices = choices(settings, compiler, env);
+    let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
     let detected = toolchain::detect(settings, env, host, &runner);
     let no_visual_studio = detected.installs.is_err();
     let installs = detected.installs.unwrap_or_else(|error| {
-        problems.report(&error);
+        // Visual Studio missing is a problem for a compiler that needs it,
+        // or none named; for one that does not (GCC), the MSVC `Info` line
+        // says so.
+        if attempted.is_none_or(|kind| kind.uses_msvc_toolset(host)) {
+            problems.report(&error);
+        }
         Vec::new()
     });
     let no_llvm = detected.llvm.is_err();
@@ -78,15 +85,24 @@ pub fn doctor(
         problems.report(&error);
         Vec::new()
     });
+    // Doctor looks for GCC whichever compiler is asked for, for its `Info`
+    // line (`toolchain.md`, "MinGW (GCC)").
+    let detected_gcc = toolchain::detect_gcc(settings, env, host, &runner);
+    let no_gcc = detected_gcc.is_err();
+    let gcc = detected_gcc.unwrap_or_else(|error| {
+        problems.report(&error);
+        Vec::new()
+    });
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &gcc,
         explicit_msvc: settings.and_then(Settings::msvc_path),
     };
 
     let diagnosed = diagnose(
         settings,
-        compiler,
+        choices,
         found,
         no_visual_studio,
         env,
@@ -108,7 +124,7 @@ pub fn doctor(
             &mut problems,
         );
     }
-    others(&diagnosed, found, !no_llvm, host, &mut problems);
+    others(&diagnosed, found, !no_llvm, !no_gcc, host, &mut problems);
 
     let count = problems.count;
     problems.status("Finished", finished(count));
@@ -139,11 +155,27 @@ struct Diagnosed {
     tidy: Option<TidyCompile>,
 }
 
+/// The compiler choices: the settings', or, when the configuration cannot
+/// be read, only what does not come from a file: --compiler, CUNO_COMPILER
+/// and the defaults.
+fn choices(settings: Option<&Settings>, compiler: Option<String>, env: &Env) -> Choices {
+    settings
+        .map(|s| s.compiler.clone())
+        .unwrap_or_else(|| Choices {
+            cli: compiler,
+            env: env
+                .set_value("CUNO_COMPILER")
+                .map(|v| v.to_string_lossy().into_owned()),
+            project: None,
+            user: None,
+        })
+}
+
 // Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 fn diagnose(
     settings: Option<&Settings>,
-    compiler: Option<String>,
+    choices: Choices,
     found: Found<'_>,
     no_visual_studio: bool,
     env: &Env,
@@ -153,19 +185,6 @@ fn diagnose(
     runner: &SystemRunner,
     problems: &mut Problems<'_>,
 ) -> Diagnosed {
-    // A configuration that cannot be read leaves only what does not come
-    // from a file: --compiler, CUNO_COMPILER and the defaults.
-    let choices = settings
-        .map(|s| s.compiler.clone())
-        .unwrap_or_else(|| Choices {
-            cli: compiler,
-            env: env
-                .set_value("CUNO_COMPILER")
-                .map(|v| v.to_string_lossy().into_owned()),
-            project: None,
-            user: None,
-        });
-
     // The kind asked for is diagnosed here, and so has no `Info` line, even
     // when its selection fails.
     let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
@@ -188,7 +207,7 @@ fn diagnose(
             if vs_error
                 && let Some(kind) = attempted.filter(|k| match k.family() {
                     Family::Llvm => true,
-                    Family::Msvc => false,
+                    Family::Msvc | Family::Gnu => false,
                 })
                 && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
                     select::copy_of(kind, found, &constraints, host)
@@ -235,7 +254,7 @@ fn diagnose(
     // its standard library below; MSVC's own is on its `Selected` line.
     let borrows_msvc = match selected.kind.family() {
         Family::Llvm => true,
-        Family::Msvc => false,
+        Family::Msvc | Family::Gnu => false,
     };
     if borrows_msvc {
         problems.status(
@@ -247,7 +266,7 @@ fn diagnose(
             ),
         );
     }
-    let prepared = match prepare::prepare(&selected, env, &SystemRegistry) {
+    let prepared = match prepare::prepare(&selected, env, host, &SystemRegistry, runner) {
         Ok(prepared) => prepared,
         Err(error) => {
             problems.report(&error);
@@ -325,12 +344,14 @@ fn tools(
 /// (only the compiler used is held to it). Never a problem, except a copy
 /// written in `[toolchain.paths]` that cannot be used (commands.md, "`cuno
 /// doctor`"), which is reported once: no MSVC line follows selection's own
-/// report of the configured Visual Studio. Without `looked_for_llvm` (a configured LLVM path had no file,
-/// already reported), no Clang line is printed: nothing was looked for.
+/// report of the configured Visual Studio. Without `looked_for_llvm` or
+/// `looked_for_gcc` (a configured path had no file, already reported), no
+/// Clang or GCC line is printed: nothing was looked for.
 fn others(
     diagnosed: &Diagnosed,
     found: Found<'_>,
     looked_for_llvm: bool,
+    looked_for_gcc: bool,
     host: HostOs,
     problems: &mut Problems<'_>,
 ) {
@@ -338,7 +359,9 @@ fn others(
         let skip = match kind.family() {
             Family::Llvm => !looked_for_llvm,
             Family::Msvc => diagnosed.vs_reported,
+            Family::Gnu => !looked_for_gcc,
         };
+
         if Some(kind) == diagnosed.attempted || skip {
             continue;
         }

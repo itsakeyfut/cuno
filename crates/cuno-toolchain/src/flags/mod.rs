@@ -12,7 +12,7 @@ pub use compile::{
     CompileInput, Mode, TARGET_SWITCH, check_edition, color_args, compile_args, compile_flags,
     dependency_args,
 };
-pub use link::{LinkInput, library_file, link_args};
+pub use link::{LinkInput, library_files, link_args};
 
 pub use settings::{
     BuildSettings, Edition, Lang, OptLevel, ProfileSettings, Runtime, Subsystem, Warnings,

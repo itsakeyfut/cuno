@@ -19,18 +19,59 @@ pub struct LinkInput<'a> {
     pub profile: &'a ProfileSettings,
     /// The executable's `[[bin]] subsystem`.
     pub subsystem: Subsystem,
+    /// Whether any of its objects is C++, which GCC links with `g++` and
+    /// its C++ runtime.
+    pub cxx: bool,
 }
 
-/// The file the linker takes `lib` from, for a `links` entry built with
-/// `kind`: `<lib>.lib` for every compiler cuno builds with, as all build for
-/// the MSVC ABI. The MSVC and clang-cl link commands name it, clang's
-/// `-l<lib>` is found as it by lld, and the build looks for it in
-/// `lib-dirs` to relink when it changes. A compiler naming libraries
-/// otherwise answers here, and its link command must then name the same
-/// file.
-pub fn library_file(kind: CompilerKind, lib: &str) -> String {
+/// The files the linker may take `lib` from, for a `links` entry built
+/// with `kind`, in the order it tries them in each directory: `<lib>.lib`
+/// for the compilers that build for the MSVC ABI (the MSVC and clang-cl
+/// link commands name it, clang's `-l<lib>` is found as it by lld), and
+/// the seven names MinGW's `ld` tries for `-l<lib>` (as `-Wl,--verbose`
+/// lists its attempts). The
+/// build looks for them in `lib-dirs` to relink when one changes
+/// (`docs/en/specs/build.md`, "Deciding what changed"), so a compiler
+/// naming libraries otherwise answers here.
+pub fn library_files(kind: CompilerKind, lib: &str) -> Vec<String> {
     match kind {
-        CompilerKind::Msvc | CompilerKind::ClangCl | CompilerKind::Clang => format!("{lib}.lib"),
+        CompilerKind::Msvc | CompilerKind::ClangCl | CompilerKind::Clang => {
+            vec![format!("{lib}.lib")]
+        }
+        CompilerKind::Gcc => vec![
+            format!("lib{lib}.dll.a"),
+            format!("{lib}.dll.a"),
+            format!("lib{lib}.a"),
+            format!("{lib}.lib"),
+            format!("lib{lib}.lib"),
+            format!("lib{lib}.dll"),
+            format!("{lib}.dll"),
+        ],
+    }
+}
+
+/// What makes GCC link its own runtime and `winpthread` statically, for
+/// either `runtime` (`docs/en/specs/build.md`, "Settings and flags"): their
+/// DLLs are not part of Windows. `-lstdc++` comes before `-lwinpthread`,
+/// which resolves what libstdc++ uses; `-Bdynamic` after them leaves the
+/// libraries the driver adds (UCRT's) as they are.
+fn gcc_runtime_args(cxx: bool) -> &'static [&'static str] {
+    if cxx {
+        &[
+            "-static-libgcc",
+            "-static-libstdc++",
+            "-Wl,-Bstatic",
+            "-lstdc++",
+            "-lwinpthread",
+            "-Wl,-Bdynamic",
+        ]
+    } else {
+        &[
+            "-static-libgcc",
+            "-Wl,-Bstatic",
+            "-lwinpthread",
+            "-Wl,-Bdynamic",
+        ]
     }
 }
 
@@ -71,13 +112,25 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
                 push(&mut args, &["-flto"]);
             }
         }
+        CompilerKind::Gcc => {
+            if profile.debug_info {
+                push(&mut args, &["-g"]);
+            }
+            // At link time GCC optimises at the level the objects were
+            // compiled at, so no level is given; `auto` runs it in
+            // parallel, where plain `-flto` warns that it runs serially.
+            if profile.lto {
+                push(&mut args, &["-flto=auto"]);
+            }
+        }
     }
 
     args.extend(objects.iter().map(OsString::from));
 
     match input.kind {
-        // clang's GNU-style driver, linking with lld for the MSVC ABI.
-        CompilerKind::Clang => {
+        // The GNU-style drivers: clang linking with lld for the MSVC ABI,
+        // and MinGW's GCC with its own ld.
+        CompilerKind::Clang | CompilerKind::Gcc => {
             args.extend(["-o".into(), exe.into()]);
             for lib in &build.links {
                 args.push(format!("-l{lib}").into());
@@ -87,14 +140,22 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
                 arg.push(dir);
                 args.push(arg);
             }
+            let gcc = input.kind == CompilerKind::Gcc;
             push(
                 &mut args,
-                match input.subsystem {
-                    Subsystem::Console => &["-Wl,/subsystem:console"][..],
-                    Subsystem::Windows => &["-Wl,/subsystem:windows", "-Wl,/entry:mainCRTStartup"],
+                match (input.subsystem, gcc) {
+                    (Subsystem::Console, false) => &["-Wl,/subsystem:console"][..],
+                    (Subsystem::Windows, false) => {
+                        &["-Wl,/subsystem:windows", "-Wl,/entry:mainCRTStartup"]
+                    }
+                    // MinGW's start-up code calls `main` for either.
+                    (Subsystem::Console, true) => &["-mconsole"],
+                    (Subsystem::Windows, true) => &["-mwindows"],
                 },
             );
-            if profile.lto {
+            if gcc {
+                push(&mut args, gcc_runtime_args(input.cxx));
+            } else if profile.lto {
                 args.push(format!("-Wl,/opt:lldlto={lto_level}").into());
             }
             // `-Xlinker`, not `-Wl,`, which would split a flag at its commas.
@@ -112,7 +173,8 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
     // Everything after `/link` goes to the linker itself.
     args.push("/link".into());
     for lib in &build.links {
-        args.push(library_file(input.kind, lib).into());
+        // The first name is the one cl and clang-cl are given.
+        args.push(library_files(input.kind, lib).remove(0).into());
     }
     for dir in &build.lib_dirs {
         let mut arg = OsString::from("/LIBPATH:");
@@ -133,15 +195,16 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
         match input.kind.family() {
             // link.exe links incrementally under /DEBUG; lld does not.
             Family::Msvc => push(&mut args, &["/INCREMENTAL:NO"]),
-            Family::Llvm => {}
+            Family::Llvm | Family::Gnu => {}
         }
     }
     if profile.lto {
         match input.kind.family() {
             Family::Msvc => push(&mut args, &["/LTCG"]),
-            Family::Llvm => args.push(format!("/opt:lldlto={lto_level}").into()),
+            Family::Llvm | Family::Gnu => args.push(format!("/opt:lldlto={lto_level}").into()),
         }
     }
+
     args.extend(build.link_flags.iter().map(OsString::from));
     args
 }
@@ -150,16 +213,30 @@ pub fn link_args(input: &LinkInput<'_>, objects: &[PathBuf], exe: &Path) -> Vec<
 mod tests {
     use super::*;
 
-    /// Every compiler cuno builds with names a library `<lib>.lib`.
+    /// The compilers for the MSVC ABI name a library `<lib>.lib`; GCC's
+    /// `ld` tries seven names in each directory, in the order
+    /// `-Wl,--verbose` lists its attempts.
     ///
-    /// Mutation: name it otherwise for one compiler; this test fails. The
-    /// callers' use of it (the link command, the relink check) cannot be
-    /// told from writing `<lib>.lib` themselves while every compiler
-    /// answers the same, so no test guards that they ask.
+    /// Mutation: name it otherwise for one compiler, or reorder GCC's
+    /// names; this test fails.
     #[test]
-    fn a_library_is_its_lib_file() {
+    fn a_library_is_the_files_its_linker_tries() {
         for kind in CompilerKind::ALL {
-            assert_eq!(library_file(kind, "foo"), "foo.lib", "{kind:?}");
+            let want: Vec<&str> = match kind {
+                CompilerKind::Msvc | CompilerKind::ClangCl | CompilerKind::Clang => {
+                    vec!["foo.lib"]
+                }
+                CompilerKind::Gcc => vec![
+                    "libfoo.dll.a",
+                    "foo.dll.a",
+                    "libfoo.a",
+                    "foo.lib",
+                    "libfoo.lib",
+                    "libfoo.dll",
+                    "foo.dll",
+                ],
+            };
+            assert_eq!(library_files(kind, "foo"), want, "{kind:?}");
         }
     }
     use crate::flags::Runtime;
@@ -195,11 +272,22 @@ mod tests {
         profile: &ProfileSettings,
         subsystem: Subsystem,
     ) -> Vec<String> {
+        args_for(kind, build, profile, subsystem, true)
+    }
+
+    fn args_for(
+        kind: CompilerKind,
+        build: &BuildSettings,
+        profile: &ProfileSettings,
+        subsystem: Subsystem,
+        cxx: bool,
+    ) -> Vec<String> {
         let input = LinkInput {
             kind,
             build,
             profile,
             subsystem,
+            cxx,
         };
         link_args(
             &input,
@@ -255,6 +343,40 @@ mod tests {
                     "-o",
                     "app.exe",
                     "-Wl,/subsystem:console"
+                ]
+            );
+        }
+        // GCC links its runtime and winpthread statically under either
+        // runtime; only C++ takes libstdc++.
+        for b in [&b, &static_runtime] {
+            assert_eq!(
+                args_for(CompilerKind::Gcc, b, &p, Subsystem::Console, true),
+                [
+                    "a.obj",
+                    "b.obj",
+                    "-o",
+                    "app.exe",
+                    "-mconsole",
+                    "-static-libgcc",
+                    "-static-libstdc++",
+                    "-Wl,-Bstatic",
+                    "-lstdc++",
+                    "-lwinpthread",
+                    "-Wl,-Bdynamic"
+                ]
+            );
+            assert_eq!(
+                args_for(CompilerKind::Gcc, b, &p, Subsystem::Console, false),
+                [
+                    "a.obj",
+                    "b.obj",
+                    "-o",
+                    "app.exe",
+                    "-mconsole",
+                    "-static-libgcc",
+                    "-Wl,-Bstatic",
+                    "-lwinpthread",
+                    "-Wl,-Bdynamic"
                 ]
             );
         }
@@ -346,6 +468,32 @@ mod tests {
                 "/STACK:2097152"
             ]
         );
+        assert_eq!(
+            args(CompilerKind::Gcc, &full_build, &full_profile, w),
+            [
+                "-g",
+                "-flto=auto",
+                "a.obj",
+                "b.obj",
+                "-o",
+                "app.exe",
+                "-luser32",
+                "-lgdi32",
+                "-Llibs",
+                "-Lmore",
+                "-mwindows",
+                "-static-libgcc",
+                "-static-libstdc++",
+                "-Wl,-Bstatic",
+                "-lstdc++",
+                "-lwinpthread",
+                "-Wl,-Bdynamic",
+                "-Xlinker",
+                "/OPT:REF,ICF",
+                "-Xlinker",
+                "/STACK:2097152"
+            ]
+        );
     }
 
     /// Mutation: map any `opt-level` to another LTO level; this test fails.
@@ -375,6 +523,8 @@ mod tests {
             );
             let msvc = args(CompilerKind::Msvc, &build(), &p, Subsystem::Console);
             assert!(!msvc.iter().any(|a| a.contains("lldlto")), "{msvc:?}");
+            let gcc = args(CompilerKind::Gcc, &build(), &p, Subsystem::Console);
+            assert!(!gcc.iter().any(|a| a.contains("lldlto")), "{gcc:?}");
         }
     }
 }

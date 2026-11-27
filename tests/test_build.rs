@@ -79,11 +79,13 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &[],
         explicit_msvc: settings.msvc_path(),
     };
     let selected =
         select::select(&settings.compiler, found, &settings.constraints, host).expect("a compiler");
-    let prepared = prepare::prepare(&selected, &env, &SystemRegistry).expect("its environment");
+    let prepared =
+        prepare::prepare(&selected, &env, host, &SystemRegistry, &runner).expect("its environment");
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/cuno-build/headers");
     let request = Request {
         root: &project.root,

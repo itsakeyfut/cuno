@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 21fb99c540ab92909e552d5d29866da145827c5c -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 56d3059917bf8b42a3c4908a1fb1ea02f66d7bf4 -->
 
 # Build
 
@@ -19,8 +19,8 @@
 ### Deciding what changed
 
 - For each step (compiling one source, linking one executable), cuno records, when it last succeeded:
-  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang color its output ([commands.md](commands.md#format)) are not part of it;
-  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first `<lib>.lib` found, searching `lib-dirs` in order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above.
+  - the command line (the arguments, the compiler's location and version, and the environment variables `INCLUDE` / `LIB` / `LIBPATH` cuno builds; on GCC, also the location, size and modification time of each runtime file linked into every program (those of `crt2.o`, `libmingw32.a`, `libmingwex.a`, `libgcc.a`, `libgcc_eh.a`, `libstdc++.a`, `libwinpthread.a` and `libucrt.a` found in GCC's library directories), because MSYS2 updates them without changing GCC's version). The variables are included because when the Windows SDK or the MSVC toolset is updated, the arguments stay the same while the headers and libraries read change. The flags that make Clang and GCC color their output ([commands.md](commands.md#format)) are not part of it;
+  - each input's modification time, size and content hash. The inputs of a compile are the source and every header it read (the header dependencies above); those of a link are the object files and the libraries of `links` found in `lib-dirs` (the first library file found, searching `lib-dirs` in order: `<lib>.lib` on MSVC and Clang; on GCC, the file found by searching each directory in the order its `ld` uses, `lib<lib>.dll.a`, `<lib>.dll.a`, `lib<lib>.a`, `<lib>.lib`, `lib<lib>.lib`, `lib<lib>.dll`, `<lib>.dll`; `-Wl,--verbose` shows this order). Those not found there (system libraries such as `kernel32`) are identified by `LIB` above (on GCC, where they ship with GCC, by the compiler's version and the runtime files above).
 - The next build runs only the steps for which one of these holds:
   - there is no record, or the output is missing;
   - the command line differs from the record (a setting, the compiler or the profile changed);
@@ -28,7 +28,7 @@
   - a file with the same name as a header or library it read has newly appeared in another place that is searched (below).
 - Same-named files appearing: when a file with the same name appears in a place the search reaches earlier, the next compile reads that one instead. Recording only the files read would miss this and report success with the old code. So for each step, cuno checks the following.
   - Where it looks: for a compile, `include-dirs`, the default include paths (below), and the directories holding the source and the headers it read (because `#include "..."` searches from the directory of the including file), but not the compiler's own directories (`INCLUDE` and where the compiler is installed). For a link, `lib-dirs`.
-  - Which names: for each file read, its path relative to the directory of `include-dirs` or of the default include paths that holds it (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. For a file outside all of these but where the compiler is installed (such as a header that ships with Clang), its file name. A header found only in the including file's directory is not checked: `#include "..."` searches there first, so no place is searched ahead of it. For a link, `<lib>.lib` for every name in `links`, including one not found in `lib-dirs` and read from the system.
+  - Which names: for each file read, its path relative to the directory of `include-dirs` or of the default include paths that holds it (`sub/cfg.h` for `#include "sub/cfg.h"`). For a header found in a directory of `INCLUDE`, its path relative to that directory. On GCC, GCC's own include directories ([toolchain.md](toolchain.md#mingw-gcc)) are used in place of `INCLUDE`. For a file outside all of these but where the compiler is installed (such as a header that ships with Clang), its file name. A header found only in the including file's directory is not checked: `#include "..."` searches there first, so no place is searched ahead of it. For a link, the library file names above for every name in `links`, including one not found in `lib-dirs` and read from the system.
   - If any combination of these places and names that did not exist when the record was made now exists, the step runs. One that already existed then (one later in the search order, which was not read) does not count as a change. But if one of them was modified two seconds or less before the step started, or later, the step is not recorded, as with an input (whether the compiler saw it before or after it was made cannot be told).
   - Rationale: the search order differs between compilers. Checking every place that may be searched, without reproducing the order, and looking only at what differs from the time of the record misses nothing on any compiler, and does not rerun a step every time because of an unrelated file of the same name. The only extra runs come when a file with the same name as a header or library read newly appears in a place later in the search order.
 - An input whose modification time or size alone differs, with the same hash, is unchanged, and its record is updated.
@@ -61,60 +61,62 @@ Include paths that cuno always adds, separately from `include-dirs` in `cuno.tom
 
 ## Settings and flags
 
-How the settings in `cuno.toml`, and the flags cuno always adds, become each compiler's arguments. The flags are written only here; other documents link to this section. `clang` is the GNU-style Clang (targeting `x86_64-pc-windows-msvc`). Every mapping was checked with the real cl, clang-cl and clang.
+How the settings in `cuno.toml`, and the flags cuno always adds, become each compiler's arguments. The flags are written only here; other documents link to this section. `clang` is the GNU-style Clang (targeting `x86_64-pc-windows-msvc`). `GCC` is MinGW-w64 GCC (targeting `x86_64-w64-mingw32`; [toolchain.md](toolchain.md#mingw-gcc)). Every mapping was checked with the real cl, clang-cl, clang and GCC.
 
 ### Always-on flags
 
-| When | MSVC | clang-cl | clang |
-|---|---|---|---|
-| Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` |
-| For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
-| Build / `check` | `/c` / `/c` (the same as the build; see below) | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
-| Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
-| Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
-| Header dependencies (when building and for `check`) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
+| When | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| Always | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` | — |
+| For C++ | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — | — |
+| Build / `check` | `/c` / `/c` (the same as the build; see below) | `/c` / `/Zs` | `-c` / `-fsyntax-only` | `-c` / `-c` (the same as the build; see below) |
+| Language (per source) | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` | `-x c` / `-x c++` |
+| Object file (when building) | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` | `-o <obj>` |
+| Header dependencies (when building and for `check`) | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` | `-MD -MF <file>` |
 
-- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang). `check` uses the same name (so that `check`, which produces no object file, also avoids rechecking unchanged sources by the same mechanism).
-- MSVC's `check` runs the build's own compile (the same command, the same object file) without linking. The objects and records it produces are the build's own, so the build that follows only links.
+- The header dependency file `<file>` is the object file with its extension replaced by `.json` (MSVC) or `.d` (clang-cl, clang, GCC). `check` uses the same name (so that `check`, which produces no object file, also avoids rechecking unchanged sources by the same mechanism).
+- MSVC's and GCC's `check` run the build's own compile (the same command, the same object file) without linking. The objects and records it produces are the build's own, so the build that follows only links.
   - Rationale: MSVC's `/Zs` does not emit the diagnostics raised during code generation. For example, C4716 for a function that returns no value, under the default settings, and C4700 and C4701 for uninitialized variables and C4715 for a function with a path that returns no value, under `warnings-as-errors`, fail a build but do not appear with `/Zs`. With `/Zs`, `check` would report success and the build would then fail. clang-cl's `/Zs` and clang's `-fsyntax-only` do emit them, so there `check` stays fast and does no code generation.
-  - Cost: MSVC's `check` is slower than `/Zs`, since it does code generation. But the objects it produces are not thrown away; the build uses them, so the build after a `check` does not repeat the same work.
+  - GCC is the same, for the same reason. Diagnostics such as out-of-bounds array accesses (`-Warray-bounds`) and buffer overflows (`-Wstringop-overflow`) are raised during optimization, so they do not appear with `-fsyntax-only`, and only the build with `-O2`, `-Wall` and `warnings-as-errors` fails.
+  - Cost: MSVC's and GCC's `check` are slower than `/Zs` and `-fsyntax-only`, since they do code generation. But the objects it produces are not thrown away; the build uses them, so the build after a `check` does not repeat the same work.
 - The flags of this table (the language, the source, the object file and the header dependencies) come after `[build.<compiler>] flags`, so that cuno's win over a user's `-MF` and the like: cuno reads the dependency file. When a dependency file holds several rules (a user's `-MP`, for example), only the first is read.
 
 ### Compiling
 
-| Setting | MSVC | clang-cl | clang |
-|---|---|---|---|
-| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++23` (cl 19.52 or later) | `/std:c++17` / `/std:c++20` / `/clang:-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` |
-| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest` (cl 19.37 or later) | `/std:c11` / `/std:c17` / `/clang:-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` |
-| `warnings` `default` / `all` / `pedantic` | None / `/W4` / `/W4 /permissive-` | None / `/W4` / `/W4 -Wpedantic` | None / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
-| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` |
-| `defines`, test builds (`CUNO_TEST`) | `/D<define>` | `/D<define>` | `-D<define>` |
-| Include paths (`src/`, the bundled header location, `include-dirs`, in that order) | `/I<dir>` | `/I<dir>` | `-I<dir>` |
-| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` |
-| `exceptions` (C++) `true` / `false` | `/EHsc` / `/we4530 /D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | None / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
-| `rtti = false` (C++) | `/GR- /we4541` | `/GR- -Werror=rtti` | `-fno-rtti` |
-| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | Same as MSVC | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
-| `debug-info = true` | `/Z7` | `/Z7` | `-g` |
-| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
-| `lto = true` | `/GL` | `-flto` | `-flto` |
-| `[build.<compiler>] flags` | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given |
+| Setting | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++23` (cl 19.52 or later) | `/std:c++17` / `/std:c++20` / `/clang:-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` (GCC 11 or later) |
+| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest` (cl 19.37 or later) | `/std:c11` / `/std:c17` / `/clang:-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` |
+| `warnings` `default` / `all` / `pedantic` | None / `/W4` / `/W4 /permissive-` | None / `/W4` / `/W4 -Wpedantic` | None / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` | None / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
+| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` | `-Werror` |
+| `defines`, test builds (`CUNO_TEST`) | `/D<define>` | `/D<define>` | `-D<define>` | `-D<define>` |
+| Include paths (`src/`, the bundled header location, `include-dirs`, in that order) | `/I<dir>` | `/I<dir>` | `-I<dir>` | `-I<dir>` |
+| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` | None (given when linking; see below) |
+| `exceptions` (C++) `true` / `false` | `/EHsc` / `/we4530 /D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | None / `-fno-exceptions -D_HAS_EXCEPTIONS=0` | None / `-fno-exceptions` |
+| `rtti = false` (C++) | `/GR- /we4541` | `/GR- -Werror=rtti` | `-fno-rtti` | `-fno-rtti` |
+| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | Same as MSVC | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
+| `debug-info = true` | `/Z7` | `/Z7` | `-g` | `-g` |
+| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` | `-DNDEBUG` |
+| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto -ffat-lto-objects` |
+| `[build.<compiler>] flags` | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given | After the flags made from settings, as given |
 
 ### Linking
 
-Linking goes through the compiler driver (so that each driver adds the C runtime and other libraries itself).
+Linking goes through the compiler driver (so that each driver adds the C runtime and other libraries itself). GCC's driver is `g++` for a package with C++ sources and `gcc` for a C-only package (only `g++` adds the C++ standard library).
 
-| Setting | MSVC | clang-cl | clang |
-|---|---|---|---|
-| Always | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` |
-| Linker | `link.exe` (arguments after `/link`) | `-fuse-ld=lld`, `lld-link` (arguments after `/link`) | `-fuse-ld=lld` |
-| Output | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
-| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
-| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
-| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` |
-| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
-| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` |
-| `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` |
-| `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Xlinker <flag>` |
+| Setting | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| Always | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` | — |
+| Linker | `link.exe` (arguments after `/link`) | `-fuse-ld=lld`, `lld-link` (arguments after `/link`) | `-fuse-ld=lld` | GCC's `ld` (not specified) |
+| Output | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` | `-o <exe>` |
+| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` | `-l<lib>` |
+| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` | `-L<dir>` |
+| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` | `-mconsole` |
+| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
+| `runtime` `dynamic` / `static` | None (given when compiling) | None (given when compiling) | None (given when compiling) | Both: for C, `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`; for C++, `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
+| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
+| `lto = true` | `/LTCG` | `-flto`, `/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
+| `link-flags` | Last after `/link`, as given | Last after `/link`, as given | Last, each as `-Xlinker <flag>` | Last, each as `-Xlinker <flag>` |
 
 - `<n>` is `opt-level` (`0` / `1` / `2` / `3`; `"s"` is `2`).
 
@@ -139,8 +141,16 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - `debug-info` does not use `/Zi`, because PDB writes conflict in parallel builds and it cannot be cached by sccache. `clang -g` emits CodeView and links as with `/DEBUG`.
 - `opt-level = 1` is `/O2` on MSVC, which has no equivalent level.
 - The debug C runtime (`/MDd`) is not the default, because mixing it with prebuilt dependencies causes link errors (the same policy as Rust).
-- With MinGW GCC, GCC's runtime (`libgcc`, `libstdc++`) is linked statically even with `runtime = "dynamic"` (`-static-libgcc -static-libstdc++`). The C runtime (UCRT) stays dynamic. `runtime = "static"` is `-static`.
-  - Rationale: GCC's runtime DLLs (`libstdc++-6.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
+- With MinGW GCC, whatever `runtime` says, GCC's runtime (`libgcc`, `libstdc++`) and the threading library (`winpthread`) are linked statically, and the C runtime (UCRT) stays dynamic. `runtime = "static"` is the same as `dynamic`.
+  - Rationale: the DLLs of GCC's runtime and of `winpthread` (`libstdc++-6.dll`, `libwinpthread-1.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
+  - With `-static-libgcc -static-libstdc++` alone, `libstdc++` loads `libwinpthread-1.dll`, so `winpthread` is also named and made static. `-lstdc++` comes first because `winpthread` resolves functions that `libstdc++` uses.
+  - Why `static` is the same as `dynamic`: MinGW cannot link UCRT statically (even with `-static`, the UCRT DLL is loaded). On top of that, `-static` makes the import libraries of the DLLs in `links` (`libfoo.dll.a`) impossible to link.
+  - The libraries written in `links` are not among those made static. What `ld` finds in the order above is linked. For example, `links = ["pthread"]` finds `libpthread.dll.a`, and the built executable loads `libwinpthread-1.dll`.
+- GCC's `subsystem = "windows"` is `-mwindows`. MinGW's startup code calls `main` even for a GUI program, so no entry point needs to be given.
+- GCC does not get `_HAS_EXCEPTIONS=0`. It is a macro of MSVC's standard library; GCC's standard library (`libstdc++`) uses its non-throwing implementation with `-fno-exceptions` alone.
+- GCC's LTO uses the optimisation level of the compile at link time, so `<n>` is not passed.
+  - Why the compile gets `-ffat-lto-objects`: without it, the objects hold only the intermediate representation, and the diagnostics raised during optimisation (`-Warray-bounds` and the like) appear neither when compiling nor when linking. A build that should fail with `warnings-as-errors` would succeed. The cost is slower compiles in LTO builds.
+  - `-flto=auto` at link time runs the optimisation in parallel. With `-flto` alone, GCC warns every time that it is not running in parallel.
 
 ## Custom build steps (three layers)
 

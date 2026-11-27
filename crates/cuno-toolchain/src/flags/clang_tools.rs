@@ -60,6 +60,8 @@ impl ToolCommand {
         match self.kind.family() {
             Family::Msvc => out.push(TARGET_SWITCH.into()),
             Family::Llvm => {}
+            // GCC's flags name no target either, and it builds for MinGW-w64.
+            Family::Gnu => out.push("--target=x86_64-w64-mingw32".into()),
         }
         out.extend(self.args.iter().cloned());
         out
@@ -120,7 +122,7 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
                 }
             }
         }
-        CompilerKind::ClangCl | CompilerKind::Clang => {}
+        CompilerKind::ClangCl | CompilerKind::Clang | CompilerKind::Gcc => {}
     }
     out.splice(0..0, include);
     if let Some(version) = context.msvc {

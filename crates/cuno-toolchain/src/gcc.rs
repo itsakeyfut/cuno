@@ -166,7 +166,7 @@ fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String
 /// `env` with the directory holding `gcc` first on `PATH`: its compiler
 /// proper loads DLLs from there, and fails silently when it is not on
 /// `PATH` (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
-fn env_for(gcc: &Path, env: &Env) -> Env {
+pub fn env_for(gcc: &Path, env: &Env) -> Env {
     let Some(dir) = gcc.parent() else {
         return env.clone();
     };
@@ -216,6 +216,140 @@ fn probe(path: &Path, host: HostOs, run: &dyn Runner, env: &Env) -> Probe {
         target,
         ucrt,
     }
+}
+
+/// What a GCC builds with besides its command line, which the build records
+/// so that a change to it is not missed (`docs/en/specs/build.md`,
+/// "Deciding what changed").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Install {
+    /// The directories it searches for `#include <...>`, in its order: they
+    /// play the part `INCLUDE` plays for MSVC, so a header a project puts in
+    /// front of one of them is looked for by its name inside them
+    /// (`sys/stat.h`, not `stat.h`).
+    pub include: Vec<PathBuf>,
+    /// Each runtime file it links into every program, with its size and
+    /// time: MSYS2 updates these (crt, winpthreads) without changing GCC's
+    /// version.
+    pub runtime: Vec<String>,
+}
+
+/// The files GCC links into every program, statically: its start-up code,
+/// MinGW's runtime, its own and the C++ runtime, and winpthread.
+pub const RUNTIME_FILES: [&str; 8] = [
+    "crt2.o",
+    "libmingw32.a",
+    "libmingwex.a",
+    "libgcc.a",
+    "libgcc_eh.a",
+    "libstdc++.a",
+    "libwinpthread.a",
+    "libucrt.a",
+];
+
+/// Asks the GCC at `path` where its headers and libraries are, in `env`
+/// (the build's, with GCC's directory on `PATH`) and in its own directory,
+/// with its messages untranslated so they can be read.
+pub fn install(
+    path: &Path,
+    host: HostOs,
+    env: &Env,
+    run: &dyn Runner,
+) -> Result<Install, ToolchainError> {
+    let env = env.with("LC_ALL", "C".into()).without(&["LANGUAGE"]);
+    let cwd = path.parent().unwrap_or(Path::new("."));
+    let empty_input = match host {
+        HostOs::Windows => "NUL",
+        HostOs::Other => "/dev/null",
+    };
+    let ask = |asked: &'static str, args: &[&str], stderr: bool| {
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        let unreadable = move |output: String| ToolchainError::GccUnreadable {
+            path: path.to_owned(),
+            asked,
+            output,
+        };
+        let output = run
+            .run_in(path, &args, &env, cwd)
+            .map_err(|e| unreadable(e.to_string()))?;
+        let text = String::from_utf8_lossy(if stderr {
+            &output.stderr
+        } else {
+            &output.stdout
+        })
+        .into_owned();
+        if !output.success {
+            return Err(unreadable(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
+        Ok((text, unreadable))
+    };
+    // C++'s list holds C's, and its own headers before them.
+    let (verbose, unreadable) = ask(
+        "where its headers are",
+        &["-E", "-v", "-x", "c++", empty_input],
+        true,
+    )?;
+    let include = search_list(&verbose).ok_or_else(|| unreadable(verbose.clone()))?;
+    let (dirs, unreadable) = ask("where its libraries are", &["-print-search-dirs"], false)?;
+    let libraries = dirs
+        .lines()
+        .find_map(|l| l.strip_prefix("libraries: ="))
+        .ok_or_else(|| unreadable(dirs.clone()))?;
+    let libraries: Vec<PathBuf> = std::env::split_paths(libraries)
+        .map(|d| normal(&d))
+        .collect();
+    let runtime = RUNTIME_FILES
+        .iter()
+        .filter_map(|name| libraries.iter().map(|d| d.join(name)).find(|p| p.is_file()))
+        .map(|file| stamp(&file))
+        .collect();
+    Ok(Install { include, runtime })
+}
+
+/// The directories between `#include <...> search starts here:` and `End
+/// of search list.` in `gcc -E -v`'s stderr, or `None` without both.
+fn search_list(stderr: &str) -> Option<Vec<PathBuf>> {
+    let mut lines = stderr.lines();
+    lines.find(|l| l.trim() == "#include <...> search starts here:")?;
+    let mut dirs = Vec::new();
+    for line in lines {
+        if line.trim() == "End of search list." {
+            return Some(dirs);
+        }
+        dirs.push(normal(Path::new(line.trim())));
+    }
+    None
+}
+
+/// `path` with its `.` and `..` resolved by name, as GCC prints them
+/// (`.../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../include`); not
+/// canonicalised, which on Windows gives a `\\?\` path.
+fn normal(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// `file` with its size and modification time, to tell an update.
+fn stamp(file: &Path) -> String {
+    let meta = std::fs::metadata(file).ok();
+    let len = meta.as_ref().map_or(0, std::fs::Metadata::len);
+    let time = meta
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    format!("{} {len} {time}", file.display())
 }
 
 #[cfg(test)]

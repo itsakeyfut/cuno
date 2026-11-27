@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 538b0ccdb1648e8c0e0d3c1867595335dd519d64 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob faeba13dfdd3371883c55fa95964a697d0709528 -->
 
 # Toolchain
 
@@ -41,7 +41,7 @@ All three major families are supported.
 | C++ | C++17 | C++20 |
 | C | C11 | C17 |
 
-- If the compiler in use does not accept the standard specified in `edition` (e.g. `c++23` below cl 19.52, `c23` below cl 19.37), it is an error, and cuno indicates the required compiler version. cl only warns about a `/std` it does not know and ignores it, so whether it is accepted is decided from the compiler's version.
+- If the compiler in use does not accept the standard specified in `edition` (e.g. `c++23` below cl 19.52, `c23` below cl 19.37, `c++23` below GCC 11), it is an error, and cuno indicates the required compiler version. cl only warns about a `/std` it does not know and ignores it, so whether it is accepted is decided from the compiler's version.
 - The mapping from `edition` to each compiler's standard flag is in [build.md](build.md#settings-and-flags).
 
 ### Minimum compiler versions
@@ -116,7 +116,7 @@ A compiler must accept a C++20 specification.
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH` (prepended) | `<MSVC>\bin\Hostx64\x64`, `<SDK>\bin\<version>\x64` |
 
-- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (Clang's include paths) are removed from the environment of the build, the standard library check and `cuno doctor`. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in cuno.toml`).
+- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (the include paths of Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (where GCC looks for libraries and its own programs), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (an additional header dependency file GCC writes) are removed from the environment of the build, the standard library check and `cuno doctor`. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in cuno.toml`).
   - Rationale: they add flags without appearing on the command line, so the build would run with flags other than `cuno.toml`'s and report success (with `_CL_=-DNDEBUG`, for example, `NDEBUG` is defined in the dev profile too), and `-v` would not show them. They are not an error so that a user who sets `CL=/MP` globally need not unset it every time they use cuno.
 
 - **Developer Command Prompt variables are removed**: `VSINSTALLDIR`, `VCINSTALLDIR`, `VCToolsInstallDir`, `EXTERNAL_INCLUDE`, `WindowsSdkDir`, `WindowsSDKVersion`, `UniversalCRTSdkDir`, `UCRTVersion`. clang / clang-cl look for the toolset and linker through them, so running cuno from another Visual Studio's Developer Command Prompt would succeed with a toolset other than the one cuno chose.
@@ -203,6 +203,11 @@ A compiler must accept a C++20 specification.
   - Rationale: UCRT is the standard C runtime since Windows 10, and MSVC uses it too. An MSVCRT GCC and a UCRT GCC report the same target, so choosing the newest without telling them apart would make which runtime the executable is built against depend on whichever GCCs happen to be installed.
 - GCC is looked for only when GCC is used (when choosing GCC, and `cuno doctor`). Building with MSVC or Clang, `cuno fmt` and `cuno lint` do not start GCC.
 - `g++` is the one in the same directory as the `gcc` used. There is no separate setting for where `g++` is.
+- Before building, cuno asks the chosen GCC for its include directories (between `#include <...> search starts here:` and `End of search list.` when an empty input is preprocessed with `-E -v -x c++`) and its library directories (the `libraries: =` line of `-print-search-dirs`). The language setting is `LC_ALL=C`, and GCC is run in that GCC's directory. If either cannot be read, it is an error (exit code 3).
+  - Rationale: deciding what changed uses these as it uses MSVC's `INCLUDE` ([build.md](build.md#deciding-what-changed)). Without them, cuno would not notice when a `sys/stat.h` placed in the project starts being read instead of GCC's `sys/stat.h`, and would report success with the old code.
+- When building (compiling and linking), too, GCC is run in an environment with its directory added to the front of `PATH` (for the same reason as above). The environment in which `cuno run` and the like run the built executable does not get it.
+  - Rationale: with it added, the built executable would run inside cuno even if it needed GCC's DLLs, and that it does not start outside cuno would go unnoticed ([build.md](build.md#rationale)).
+- GCC does not use the MSVC toolset, so choosing GCC does not need Visual Studio. Nor is the MSVC environment (`INCLUDE`, `LIB`, `LIBPATH`) built.
 - When `[toolchain.paths] gcc` is written, only that file is used, as for LLVM, and if it does not meet the conditions it is an error (exit code 3).
 
 ## Selection
@@ -219,7 +224,7 @@ Precedence (higher wins):
 - Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
 - Outside a project (for example when `cuno doctor` runs outside one), there are no project layers (`.cuno/config.toml` and `[toolchain]` in `cuno.toml`), so the compiler is chosen in the order `--compiler` → `CUNO_COMPILER` → user-level config → automatic selection.
   - Rationale: to match the compiler a `cuno build` in a new project would use. Looking only at automatic selection could diagnose MSVC for a user whose user-level config selects clang, answer "no problem", and leave the following build to fail.
-- If a compiler not supported in MVP (`gcc` / `safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
+- If a compiler not supported yet (`safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
 
 Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macOS.
 

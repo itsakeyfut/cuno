@@ -35,13 +35,13 @@ pub struct ProbeInputs<'a> {
 }
 
 /// Whether [`check`] asks anything of `selected`: only an LLVM compiler
-/// using the MSVC standard library is checked. A caller asks first, so
+/// using the MSVC standard library is checked; GCC brings its own. A caller asks first, so
 /// that nothing is prepared (a scratch directory) for a check that does not
 /// apply.
 pub fn applies(selected: &Selected) -> bool {
     match selected.kind.family() {
         Family::Llvm => selected.msvc.is_some(),
-        Family::Msvc => false,
+        Family::Msvc | Family::Gnu => false,
     }
 }
 

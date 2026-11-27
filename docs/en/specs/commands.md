@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 2187e510e5947306ccada2f7908708d822f78274 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob d4b0edc4dd3506657dc3ca60dbe7fc6c4289ab56 -->
 
 # Commands
 
@@ -70,7 +70,7 @@ See [dependencies.md](dependencies.md) for the stages of dependency management.
 
 | Option | Description |
 |---|---|
-| `--compiler <name>` | Compiler to use (msvc / clang / clang-cl / gcc / safec). See `compiler` in [manifest.md](manifest.md) for the values. Specifying `gcc` / `safec` in the MVP is an error (exit code 3) |
+| `--compiler <name>` | Compiler to use (msvc / clang / clang-cl / gcc / safec). See `compiler` in [manifest.md](manifest.md) for the values. Specifying `safec` is an error (exit code 3, since it is not supported yet) |
 | `--target <target>` | Cross-compilation. Reserved only in the MVP; specifying it is an error (exit code 3) ([toolchain.md](toolchain.md)) |
 | `--target-dir <path>` | Output directory ([build.md](build.md)). Relative paths are resolved against the current directory (the same applies to the `CUNO_TARGET_DIR` environment variable) |
 | `-j, --jobs <n>` | Number of parallel jobs. Defaults to the number of CPU cores |
@@ -293,7 +293,7 @@ Diagnoses the environment and shows a fix for each problem.
 | `--compiler <name>` | The compiler to diagnose. Same as `--compiler` of the build commands. If not specified, diagnoses the compiler chosen by the same selection precedence as the build commands ([toolchain.md](toolchain.md#selection)) |
 
 - Can be run outside a project (where no `cuno.toml` is found). In that case, the compiler is chosen by the precedence without the project layers ([toolchain.md](toolchain.md#selection)).
-- Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported in the MVP (`gcc` / `safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
+- Even if a configuration file (`cuno.toml`, `.cuno/config.toml`, the user-level config) has an error, or a compiler not supported yet (`safec`) is selected, `doctor` does not stop: it reports it as a problem (exit code `1`) and continues diagnosing the other items.
   - When a configuration file cannot be read, the compiler is chosen from `--compiler`, `CUNO_COMPILER` and automatic selection only. When that comes to automatic selection, the reason on the `Selected` line says `automatic selection; the configuration could not be read`, so it is not taken for the compiler the configuration chose.
   - Rationale: `doctor` is what users run when the environment or settings are wrong, so stopping at a configuration error would make it useless.
 
@@ -365,8 +365,8 @@ Follows cargo.
     - Rationale: it is neither an error nor a warning, appears once per source with MSVC alone, and makes the output differ from the other compilers'.
   - They are not translated (cl.exe from a Japanese-language Visual Studio stays in Japanese). Only cuno's own messages are unified in English.
   - Compilers that can produce colored output, such as Clang, are displayed in color. MSVC does not produce color, so its output is shown as is, without color.
-    - Only when cuno colors its output (by the order in "Available for all commands" above) does it pass `-fcolor-diagnostics -fansi-escape-codes` to clang and clang-cl. cuno receives the compiler's output through a pipe, so without them Clang does not color it. On Windows, `-fansi-escape-codes` is also needed so that the colors are written as escape sequences. These two are placed first among the arguments, so a `-fno-color-diagnostics` the user writes in `[build.clang] flags` or the like comes later and wins. They are not passed to a link (the linker's output has no color). The command `-v` shows includes them (it shows the command that was run).
-    - These two are kept out of both the command line used to decide what changed ([build.md](build.md#deciding-what-changed)) and `compile_commands.json`. Rationale: changing only the color setting should not recompile everything. The generated code does not change. Clang does record its command line in debug info, though, so in a build with debug info the object files and PDB differ by whether these two were passed (and since nothing is recompiled, the previous build's stay).
+    - Only when cuno colors its output (by the order in "Available for all commands" above) does it pass `-fcolor-diagnostics -fansi-escape-codes` to clang and clang-cl, and `-fdiagnostics-color=always` to GCC. GCC, too, does not color output written to a pipe unless told. cuno receives the compiler's output through a pipe, so without them Clang does not color it. On Windows, `-fansi-escape-codes` is also needed so that the colors are written as escape sequences. These flags are placed first among the arguments, so a `-fno-color-diagnostics` the user writes in `[build.clang] flags` or the like comes later and wins. They are not passed to a link (the linker's output has no color). The command `-v` shows includes them (it shows the command that was run).
+    - These flags are kept out of both the command line used to decide what changed ([build.md](build.md#deciding-what-changed)) and `compile_commands.json`. Rationale: changing only the color setting should not recompile everything. The generated code does not change. Clang and GCC do record their command line in debug info, though, so in a build with debug info the object files and PDB differ by whether these flags were passed (and since nothing is recompiled, the previous build's stay).
 
 ## Exit codes
 

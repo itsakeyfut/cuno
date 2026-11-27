@@ -48,6 +48,7 @@ fn selected(kind: CompilerKind) -> Option<(Selected, Env)> {
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &[],
         explicit_msvc: None,
     };
     let selected =

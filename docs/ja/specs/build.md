@@ -17,8 +17,8 @@
 ### 変更の判定
 
 - 各手順（ソース 1 つのコンパイル、実行ファイル 1 つのリンク）について、前回成功したときの次の内容を記録する。
-  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
-  - 入力ごとの更新時刻・サイズ・内容のハッシュ。入力は、コンパイルならソースとそれが読んだすべてのヘッダ（上のヘッダ依存）、リンクならオブジェクトファイルと、`links` のうち `lib-dirs` で見つかるライブラリ（`lib-dirs` を順に探し、最初に見つかった `<lib>.lib`）。見つからないもの（`kernel32` などシステムのライブラリ）は、上の `LIB` で識別する
+  - コマンドライン（引数と、コンパイラの場所・バージョン、cuno が組み立てる環境変数 `INCLUDE` / `LIB` / `LIBPATH`。GCC では、すべてのプログラムにリンクするランタイムのファイル（`crt2.o`、`libmingw32.a`、`libmingwex.a`、`libgcc.a`、`libgcc_eh.a`、`libstdc++.a`、`libwinpthread.a`、`libucrt.a` のうち、GCC のライブラリのディレクトリで見つかるもの）それぞれの場所・サイズ・更新時刻も含める。MSYS2 は、これらを GCC のバージョンを変えずに更新するため）。環境変数を含めるのは、Windows SDK や MSVC のツールセットが更新されたとき、引数は同じでも読むヘッダとライブラリが変わるため。Clang と GCC に色を付けさせるフラグ（[commands.md](commands.md#形式)）は含めない
+  - 入力ごとの更新時刻・サイズ・内容のハッシュ。入力は、コンパイルならソースとそれが読んだすべてのヘッダ（上のヘッダ依存）、リンクならオブジェクトファイルと、`links` のうち `lib-dirs` で見つかるライブラリ（`lib-dirs` を順に探し、最初に見つかったライブラリのファイル。MSVC と Clang では `<lib>.lib`。GCC では、ディレクトリごとに、その `ld` が探す順 `lib<lib>.dll.a`、`<lib>.dll.a`、`lib<lib>.a`、`<lib>.lib`、`lib<lib>.lib`、`lib<lib>.dll`、`<lib>.dll` で探したもの。この順は `-Wl,--verbose` が示す）。見つからないもの（`kernel32` などシステムのライブラリ）は、上の `LIB` で識別する（GCC では、GCC に付属するライブラリなので、コンパイラのバージョンと、上のランタイムのファイルで識別する）
 - 次のビルドでは、次のどれかに当てはまる手順だけを実行する。
   - 記録がない、または出力がない
   - コマンドラインが記録と違う（設定、コンパイラ、プロファイルを変えた場合）
@@ -26,7 +26,7 @@
   - 読んだヘッダやライブラリと同じ名前のファイルが、検索される別の場所に新しく現れた（下記）
 - 同じ名前のファイルの出現: 検索の順で先に見つかる場所に同じ名前のファイルができると、次のコンパイルはそちらを読む。読んだファイルだけを記録していると、これを見逃して古いコードのまま成功と報告する。そこで、手順ごとに次を調べる。
   - 調べる場所: コンパイルなら `include-dirs`、既定のインクルードパス（下記）、ソースと読んだヘッダのあるディレクトリ（`#include "..."` はインクルードした側のディレクトリから探すため）。ただし、コンパイラ自身のディレクトリ（`INCLUDE` と、コンパイラのインストール先）は含めない。リンクなら `lib-dirs`。
-  - 調べる名前: 読んだファイルそれぞれの、それを含む `include-dirs`、既定のインクルードパス、`INCLUDE` のディレクトリからの相対パス（`#include "sub/cfg.h"` なら `sub/cfg.h`）。コンパイラのインストール先にあってこれらの外にあるもの（Clang に付属するヘッダなど）は、ファイル名。インクルードした側のディレクトリにしかないヘッダは調べない。`#include "..."` はそこを最初に探すため、先に見つかる場所がない。リンクなら、`links` のすべての名前の `<lib>.lib`（`lib-dirs` で見つからず、システムから読んだものも含む）。
+  - 調べる名前: 読んだファイルそれぞれの、それを含む `include-dirs`、既定のインクルードパス、`INCLUDE` のディレクトリからの相対パス（`#include "sub/cfg.h"` なら `sub/cfg.h`）。GCC では、`INCLUDE` の代わりに GCC 自身のインクルードのディレクトリ（[toolchain.md](toolchain.md#mingwgcc)）を使う。コンパイラのインストール先にあってこれらの外にあるもの（Clang に付属するヘッダなど）は、ファイル名。インクルードした側のディレクトリにしかないヘッダは調べない。`#include "..."` はそこを最初に探すため、先に見つかる場所がない。リンクなら、`links` のすべての名前の、上のライブラリのファイル名（`lib-dirs` で見つからず、システムから読んだものも含む）。
   - 調べる場所と名前の組み合わせのうち、記録した時点でなかったものが現れていれば、その手順を実行する。記録した時点ですでにあったもの（検索の順で後ろにあり、読まれなかったもの）は変更とみなさない。ただし、手順を始める 2 秒前以降に更新されたものがあれば、入力と同じく手順を記録しない（コンパイラが見たのが作られる前か後か分からないため）。
   - 理由: 検索の順はコンパイラごとに異なる。順を再現せずに、検索され得る場所をすべて調べ、記録した時点との違いだけを見れば、どのコンパイラでも見逃さず、関係のない同名ファイルで毎回実行し直すこともない。余分に実行するのは、読んだヘッダやライブラリと同じ名前のファイルが、検索の順で後ろの場所に新しく現れたときだけ。
 - 更新時刻かサイズだけが違い、ハッシュが同じ入力は、変更なしとして記録を更新する。
@@ -59,60 +59,62 @@
 
 ## 設定とフラグの対応
 
-`cuno.toml` の設定と、cuno が常に付けるフラグを、各コンパイラの引数にどう変換するかの一覧。フラグの対応はここだけに書き、他の文書はここを参照する。`clang` は GNU 形式の Clang（対象は `x86_64-pc-windows-msvc`）。どの対応も、実際の cl・clang-cl・clang で確かめたもの。
+`cuno.toml` の設定と、cuno が常に付けるフラグを、各コンパイラの引数にどう変換するかの一覧。フラグの対応はここだけに書き、他の文書はここを参照する。`clang` は GNU 形式の Clang（対象は `x86_64-pc-windows-msvc`）。`GCC` は MinGW-w64 の GCC（対象は `x86_64-w64-mingw32`。[toolchain.md](toolchain.md#mingwgcc)）。どの対応も、実際の cl・clang-cl・clang・GCC で確かめたもの。
 
 ### 常に付けるフラグ
 
-| 対象 | MSVC | clang-cl | clang |
-|---|---|---|---|
-| 常に | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` |
-| C++ のとき | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — |
-| ビルド / `check` | `/c` / `/c`（ビルドと同じ。下記） | `/c` / `/Zs` | `-c` / `-fsyntax-only` |
-| 言語（ソースごと） | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` |
-| オブジェクトファイル（ビルドのとき） | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` |
-| ヘッダ依存（ビルドと `check` のとき） | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` |
+| 対象 | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| 常に | `/nologo` `/utf-8` | `/nologo` `/utf-8` `--target=x86_64-pc-windows-msvc` | `--target=x86_64-pc-windows-msvc` | — |
+| C++ のとき | `/Zc:__cplusplus` | `/Zc:__cplusplus` | — | — |
+| ビルド / `check` | `/c` / `/c`（ビルドと同じ。下記） | `/c` / `/Zs` | `-c` / `-fsyntax-only` | `-c` / `-c`（ビルドと同じ。下記） |
+| 言語（ソースごと） | `/TC` / `/TP` | `/TC` / `/TP` | `-x c` / `-x c++` | `-x c` / `-x c++` |
+| オブジェクトファイル（ビルドのとき） | `/Fo<obj>` | `/Fo<obj>` | `-o <obj>` | `-o <obj>` |
+| ヘッダ依存（ビルドと `check` のとき） | `/sourceDependencies <file>` | `/clang:-MD /clang:-MF<file>` | `-MD -MF <file>` | `-MD -MF <file>` |
 
-- ヘッダ依存のファイル `<file>` は、オブジェクトファイルの拡張子を `.json`（MSVC）または `.d`（clang-cl、clang）に替えたもの。`check` でも同じ名前を使う（オブジェクトを作らない `check` も、同じ仕組みで変更のないソースを確認し直さないため）。
-- MSVC の `check` は、ビルドと同じコンパイル（同じコマンド、同じオブジェクトファイル）をリンクなしで行う。作ったオブジェクトと記録はビルドのものそのものなので、続くビルドはリンクだけを行う。
+- ヘッダ依存のファイル `<file>` は、オブジェクトファイルの拡張子を `.json`（MSVC）または `.d`（clang-cl、clang、GCC）に替えたもの。`check` でも同じ名前を使う（オブジェクトを作らない `check` も、同じ仕組みで変更のないソースを確認し直さないため）。
+- MSVC と GCC の `check` は、ビルドと同じコンパイル（同じコマンド、同じオブジェクトファイル）をリンクなしで行う。作ったオブジェクトと記録はビルドのものそのものなので、続くビルドはリンクだけを行う。
   - 理由: MSVC の `/Zs` は、コード生成の段階で出る診断を出さない。たとえば、値を返さない関数（C4716）は既定の設定で、未初期化の変数（C4700・C4701）と、値を返さない経路のある関数（C4715）は `warnings-as-errors` のときに、ビルドでは失敗になるが `/Zs` では出ない。`/Zs` のままでは、`check` が成功と報告したのにビルドが失敗する。clang-cl と clang の `/Zs`・`-fsyntax-only` はこれらを出すので、`check` はコード生成をせず速いままにする。
-  - 代償: MSVC の `check` はコード生成をするぶん、`/Zs` より遅い。ただし作ったオブジェクトは捨てずにビルドが使うので、`check` の後のビルドで同じ作業を繰り返さない。
+  - GCC も同じ理由による。配列の範囲外の参照（`-Warray-bounds`）やバッファのあふれ（`-Wstringop-overflow`）などは最適化の段階で出るため `-fsyntax-only` では出ず、`-O2` で `-Wall` と `warnings-as-errors` のビルドだけが失敗する。
+  - 代償: MSVC と GCC の `check` はコード生成をするぶん、`/Zs`・`-fsyntax-only` より遅い。ただし作ったオブジェクトは捨てずにビルドが使うので、`check` の後のビルドで同じ作業を繰り返さない。
 - この表のフラグ（言語、ソース、オブジェクトファイル、ヘッダ依存）は、`[build.<compiler>] flags` の後に付ける。依存ファイルを cuno が読むため、利用者の `-MF` 等より cuno のものを優先する。依存ファイルに複数の規則がある場合（利用者の `-MP` など）は最初の規則だけを読む。
 
 ### コンパイル
 
-| 設定 | MSVC | clang-cl | clang |
-|---|---|---|---|
-| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++23`（cl 19.52 以上） | `/std:c++17` / `/std:c++20` / `/clang:-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` |
-| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest`（cl 19.37 以上） | `/std:c11` / `/std:c17` / `/clang:-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` |
-| `warnings` `default` / `all` / `pedantic` | なし / `/W4` / `/W4 /permissive-` | なし / `/W4` / `/W4 -Wpedantic` | なし / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
-| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` |
-| `defines`、テストのビルド（`CUNO_TEST`） | `/D<define>` | `/D<define>` | `-D<define>` |
-| インクルードパス（`src/`、同梱ヘッダの場所、`include-dirs` の順） | `/I<dir>` | `/I<dir>` | `-I<dir>` |
-| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` |
-| `exceptions`（C++）`true` / `false` | `/EHsc` / `/we4530 /D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions -D_HAS_EXCEPTIONS=0` |
-| `rtti = false`（C++） | `/GR- /we4541` | `/GR- -Werror=rtti` | `-fno-rtti` |
-| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | MSVC と同じ | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
-| `debug-info = true` | `/Z7` | `/Z7` | `-g` |
-| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` |
-| `lto = true` | `/GL` | `-flto` | `-flto` |
-| `[build.<compiler>] flags` | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま |
+| 設定 | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| `edition` `c++17` / `c++20` / `c++23` | `/std:c++17` / `/std:c++20` / `/std:c++23`（cl 19.52 以上） | `/std:c++17` / `/std:c++20` / `/clang:-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23` | `-std=c++17` / `-std=c++20` / `-std=c++23`（GCC 11 以上） |
+| `edition` `c11` / `c17` / `c23` | `/std:c11` / `/std:c17` / `/std:clatest`（cl 19.37 以上） | `/std:c11` / `/std:c17` / `/clang:-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` | `-std=c11` / `-std=c17` / `-std=c2x` |
+| `warnings` `default` / `all` / `pedantic` | なし / `/W4` / `/W4 /permissive-` | なし / `/W4` / `/W4 -Wpedantic` | なし / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` | なし / `-Wall -Wextra` / `-Wall -Wextra -Wpedantic` |
+| `warnings-as-errors = true` | `/WX` | `/WX` | `-Werror` | `-Werror` |
+| `defines`、テストのビルド（`CUNO_TEST`） | `/D<define>` | `/D<define>` | `-D<define>` | `-D<define>` |
+| インクルードパス（`src/`、同梱ヘッダの場所、`include-dirs` の順） | `/I<dir>` | `/I<dir>` | `-I<dir>` | `-I<dir>` |
+| `runtime` `dynamic` / `static` | `/MD` / `/MT` | `/MD` / `/MT` | `-fms-runtime-lib=dll` / `-fms-runtime-lib=static` | なし（リンクで指定。下記） |
+| `exceptions`（C++）`true` / `false` | `/EHsc` / `/we4530 /D_HAS_EXCEPTIONS=0` | `/EHsc` / `/D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions -D_HAS_EXCEPTIONS=0` | なし / `-fno-exceptions` |
+| `rtti = false`（C++） | `/GR- /we4541` | `/GR- -Werror=rtti` | `-fno-rtti` | `-fno-rtti` |
+| `opt-level` `0` / `1` / `2` / `3` / `"s"` | `/Od` / `/O2` / `/O2` / `/O2` / `/O1` | MSVC と同じ | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` | `-O0` / `-O1` / `-O2` / `-O3` / `-Os` |
+| `debug-info = true` | `/Z7` | `/Z7` | `-g` | `-g` |
+| `debug-assertions = false` | `/DNDEBUG` | `/DNDEBUG` | `-DNDEBUG` | `-DNDEBUG` |
+| `lto = true` | `/GL` | `-flto` | `-flto` | `-flto -ffat-lto-objects` |
+| `[build.<compiler>] flags` | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま | 設定から作るフラグの後にそのまま |
 
 ### リンク
 
-リンクはコンパイラのドライバ経由で行う（各ドライバが C ランタイム等のライブラリを自分で加えるため）。
+リンクはコンパイラのドライバ経由で行う（各ドライバが C ランタイム等のライブラリを自分で加えるため）。GCC のドライバは、C++ のソースを含むパッケージでは `g++`、C だけのパッケージでは `gcc`（C++ の標準ライブラリを加えるのは `g++` だけのため）。
 
-| 設定 | MSVC | clang-cl | clang |
-|---|---|---|---|
-| 常に | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` |
-| リンカ | `link.exe`（`/link` の後に引数） | `-fuse-ld=lld`、`lld-link`（`/link` の後に引数） | `-fuse-ld=lld` |
-| 出力 | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` |
-| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` |
-| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` |
-| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` |
-| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` |
-| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` |
-| `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` |
-| `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | ひとつずつ `-Xlinker <flag>` として最後に |
+| 設定 | MSVC | clang-cl | clang | GCC |
+|---|---|---|---|---|
+| 常に | `/nologo` | `/nologo` | `--target=x86_64-pc-windows-msvc` | — |
+| リンカ | `link.exe`（`/link` の後に引数） | `-fuse-ld=lld`、`lld-link`（`/link` の後に引数） | `-fuse-ld=lld` | GCC の `ld`（指定しない） |
+| 出力 | `/Fe:<exe>` | `/Fe:<exe>` | `-o <exe>` | `-o <exe>` |
+| `links` | `<lib>.lib` | `<lib>.lib` | `-l<lib>` | `-l<lib>` |
+| `lib-dirs` | `/LIBPATH:<dir>` | `/LIBPATH:<dir>` | `-L<dir>` | `-L<dir>` |
+| `subsystem = "console"` | `/SUBSYSTEM:CONSOLE` | `/SUBSYSTEM:CONSOLE` | `-Wl,/subsystem:console` | `-mconsole` |
+| `subsystem = "windows"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-Wl,/subsystem:windows -Wl,/entry:mainCRTStartup` | `-mwindows` |
+| `runtime` `dynamic` / `static` | なし（コンパイルで指定） | なし（コンパイルで指定） | なし（コンパイルで指定） | どちらも C では `-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`、C++ では `-static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic` |
+| `debug-info = true` | `/DEBUG /INCREMENTAL:NO` | `/DEBUG` | `-g` | `-g` |
+| `lto = true` | `/LTCG` | `-flto`、`/opt:lldlto=<n>` | `-flto -Wl,/opt:lldlto=<n>` | `-flto=auto` |
+| `link-flags` | `/link` の後に最後にそのまま | `/link` の後に最後にそのまま | ひとつずつ `-Xlinker <flag>` として最後に | ひとつずつ `-Xlinker <flag>` として最後に |
 
 - `<n>` は `opt-level`（`0` / `1` / `2` / `3`、`"s"` は `2`）。
 
@@ -137,8 +139,16 @@
 - `debug-info` に `/Zi` を使わないのは、並列ビルドで PDB への書き込みが競合し、sccache でキャッシュできないため。`clang -g` は CodeView を出し、`/DEBUG` 相当でリンクする。
 - `opt-level = 1` は MSVC に同等の段階がないため `/O2`。
 - デバッグ版の C ランタイム（`/MDd`）は既定にしない。ビルド済みの依存と混ぜるとリンクエラーになるため（Rust と同じ方針）。
-- MinGW の GCC では、`runtime = "dynamic"` でも GCC のランタイム（`libgcc`、`libstdc++`）は静的にリンクする（`-static-libgcc -static-libstdc++`）。C のランタイム（UCRT）は動的のまま。`runtime = "static"` は `-static`。
-  - 理由: GCC のランタイムの DLL（`libstdc++-6.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
+- MinGW の GCC では、`runtime` によらず、GCC のランタイム（`libgcc`、`libstdc++`）とスレッドのライブラリ（`winpthread`）を静的にリンクし、C のランタイム（UCRT）は動的のままにする。`runtime = "static"` は `dynamic` と同じ。
+  - 理由: GCC のランタイムと `winpthread` の DLL（`libstdc++-6.dll`、`libwinpthread-1.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
+  - `-static-libgcc -static-libstdc++` だけでは、`libstdc++` が `libwinpthread-1.dll` を読む。そのため `winpthread` も名前を挙げて静的にする。`-lstdc++` を先に挙げるのは、`winpthread` が、`libstdc++` の使う関数を解決するため。
+  - `static` を `dynamic` と同じにする理由: MinGW では UCRT を静的にリンクできない（`-static` でも UCRT の DLL を読む）。そのうえ `-static` は、`links` の DLL のインポートライブラリ（`libfoo.dll.a`）をリンクできなくする。
+  - `links` に書いたライブラリは、静的にする対象に含めない。`ld` が上の順で見つけたものをリンクする。たとえば `links = ["pthread"]` は `libpthread.dll.a` を見つけ、作った実行ファイルは `libwinpthread-1.dll` を読む。
+- GCC の `subsystem = "windows"` は `-mwindows`。MinGW の起動コードは GUI のプログラムでも `main` を呼ぶため、入口の指定は要らない。
+- GCC では `_HAS_EXCEPTIONS=0` を定義しない。これは MSVC の標準ライブラリのマクロで、GCC の標準ライブラリ（`libstdc++`）は `-fno-exceptions` だけで例外を投げない実装を使う。
+- GCC の LTO は、リンク時にコンパイル時の最適化の段階を使うため、`<n>` を渡さない。
+  - コンパイルに `-ffat-lto-objects` を付ける理由: 付けないと、オブジェクトは中間表現だけを持ち、最適化の段階で出る診断（`-Warray-bounds` など）がコンパイルでもリンクでも出ない。`warnings-as-errors` を付けたのに、エラーになるはずのビルドが成功する。代償は、LTO のビルドでコンパイルが遅くなること。
+  - リンクの `-flto=auto` は、最適化を並列に行う。`-flto` だけでは、並列にしないことを毎回警告する。
 
 ## カスタムビルド処理（3 層構造）
 
