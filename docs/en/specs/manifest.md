@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/manifest.md @ blob bf779c813a83d66a9b4518d02ee43d917bd7bb6c -->
+<!-- translated-from: docs/ja/specs/manifest.md @ blob 572001ad0858b90f5e2341ba7ab64f43173ccf70 -->
 
 # Configuration Files
 
@@ -394,9 +394,10 @@ Values of `opt-level` (For the flags, see [build.md](build.md#settings-and-flags
 
 ### A project's settings and trust
 
-- The build commands, such as `cuno build`, and `cuno doctor` trust the settings kept in the project (`cuno.toml`, `.cuno/config.toml`). A tool written in `[toolchain.paths]` of `.cuno/config.toml` is run as written.
+- The build commands, such as `cuno build`, `cuno doctor` and `cuno toolchain` trust the settings kept in the project (`cuno.toml`, `.cuno/config.toml`). A tool written in `[toolchain.paths]` of `.cuno/config.toml` is run as written.
   - Rationale: the raw flags of `[build.<compiler>]` alone can make a compiler run arbitrary code, by loading a plugin for example. By the time it is built, a project is already trusted. Restricting tool paths alone would not make it safe, and would break projects that ship LLVM in their repository.
   - Checking `cuno.toml` and `.cuno/config.toml` before building someone else's project is the user's responsibility.
+  - `cuno doctor` and `cuno toolchain` also run the tools these settings name, to read their versions, so that they show what a build in that place would select. Leaving the project's layers out would make what they show differ from the real build. Check the settings before running them inside someone else's project too.
 - The exception is `target-dir` in a layer kept in the project, which is limited to the project ([build.md](build.md#output-directory)). `cuno clean` deletes the output directory without running anything, so it is treated apart from building.
 
 ### Items
