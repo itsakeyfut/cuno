@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 7a5d8bde704d4c0f6edadbd0b4540ccd24e48790 -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob c6545e09628a9d6615eca8efe374fd4e9a2c8d37 -->
 
 # Testing
 
@@ -134,7 +134,7 @@ cuno_test(add_works) {
 - **Mixed languages**: Each file uses the entry point for its own language. A `.c` file in a C++ package uses `cuno/test.h`; a `.cpp` file in a C package uses the entry point that fits its standard (`cuno/test.hpp` for C++20 and later). Tests written either way register with the same runtime and run in the same test executable.
 - **Test identity**: Determined by the pair of "name" and "source location (file + line)". cuno makes this decision, using the location of each registration that the test executable reports in its list.
   - Multiple registrations from the same location (when a header is included by multiple translation units) are merged into one.
-  - Except that registering the same name from the same location more than once within one suite (one initialization of a `cuno::test::suite`), such as a `test` inside a loop or a function containing `test` called twice, is an error as a duplicate. A header's tests are registered from a separate suite in each translation unit, which tells the two cases apart.
+  - Except that registering the same name from the same location more than once within one translation unit, such as a `test` inside a loop or a function containing `test` called twice, inside a suite or outside one, is an error as a duplicate. A header's tests are registered once from each translation unit, which tells the two cases apart. The modern API tells the test executable which translation unit called `test`.
     - Rationale: merged, every registration after the first would never run, and the tests would be reported as passing. Giving each registration its own name runs each.
   - Whether two locations are in the same file is decided by the file system, not by how the path is spelled (same as [project-layout.md](project-layout.md)). The same header included under different spellings, such as `"util.h"` and `"../src/util.h"`, is the same location.
   - If a test with the same name exists at a different location, it is an error as a duplicate.
@@ -167,7 +167,7 @@ cuno_test(add_works) {
 
 | Argument | Behavior |
 |---|---|
-| `--list` | Reports the registered tests, each registration with its name, file, line, entry point (modern API / macro API) and the suite that registered it |
+| `--list` | Reports the registered tests, each registration with its name, file, line, entry point (modern API / macro API) and the translation unit that registered it |
 | `--exact <name>` | Runs only the specified test |
 
 - Results are returned via the exit code (`0` = success, anything else = failure).
@@ -201,7 +201,7 @@ test result: FAILED. 1 passed; 1 failed; 1 skipped; finished in 0.02s
 - Each test's line is printed in the order the tests finish (tests run in parallel, so this is not necessarily name order). A skipped test with a reason is shown as `test slow path ... skipped (reason)`.
 - The failure details go under `failures:`, per test: `---- name ----`, then the failed checks (`file:line: message`, with the file as a path relative to the project root), then the `info` notes, then the captured standard output and standard error. A test that ended without writing the result file shows its exit code, as in `the test ended without reporting a result (exit code 3)`. On Windows, exit codes that mean a crash (such as `0xC0000005`, the ones that come out negative) are shown in hexadecimal.
 - With `--nocapture`, each test's output is printed all together right after that test's line. Even when tests run in parallel, the output of two tests is never mixed.
-- A test executable whose list cannot be taken (it cannot be started, `--list` exits with a non-zero code, a test with the same name exists at a different location, one suite registers the same name from the same location more than once, or a macro-API test is in a header) is reported with `error:`, and none of that test executable's tests are run.
+- A test executable whose list cannot be taken (it cannot be started, `--list` exits with a non-zero code, a test with the same name exists at a different location, one translation unit registers the same name from the same location more than once, or a macro-API test is in a header) is reported with `error:`, and none of that test executable's tests are run.
 
 ## Later (outside the MVP)
 
