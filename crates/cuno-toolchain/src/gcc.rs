@@ -152,9 +152,12 @@ fn path_dirs(env: &Env) -> Vec<PathBuf> {
 }
 
 /// What `gcc` prints for `args`, when it ran and succeeded.
+/// It runs in its own directory, which holds no headers: `-include` looks
+/// in the working directory first, and cuno's is the project's.
 fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String> {
     let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
-    run.run(path, &args, env)
+    let cwd = path.parent().unwrap_or(Path::new("."));
+    run.run_in(path, &args, env, cwd)
         .ok()
         .filter(|o| o.success)
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -198,11 +201,14 @@ fn probe(path: &Path, host: HostOs, run: &dyn Runner, env: &Env) -> Probe {
         HostOs::Other => "/dev/null",
     };
     let args = ["-dM", "-E", "-x", "c", "-include", "_mingw.h", empty_input];
-    let ucrt = ask(path, &args, run, env).is_some_and(|macros| {
-        macros.lines().any(|l| {
-            let mut words = l.split_whitespace();
-            words.next() == Some("#define") && words.next() == Some("_UCRT")
-        })
+    // A GCC that cannot preprocess cannot build either; calling it MSVCRT
+    // would send its user to install the GCC they already have.
+    let Some(macros) = ask(path, &args, run, env) else {
+        return Probe::Failed;
+    };
+    let ucrt = macros.lines().any(|l| {
+        let mut words = l.split_whitespace();
+        words.next() == Some("#define") && words.next() == Some("_UCRT")
     });
     Probe::Ran {
         version,
@@ -224,11 +230,22 @@ mod tests {
     /// _mingw.h`, run with its own directory first on `PATH`;
     /// `exp` and `pre` are snapshots; `linux` targets Linux; `nover` gives
     /// no version; `nomachine` fails `-dumpmachine`; `blank` prints an empty
-    /// target; `broken` fails everything.
+    /// target; `nocc1` cannot preprocess; `broken` fails everything.
     struct ByDir;
 
     impl Runner for ByDir {
+        /// As if in a project whose root holds a `_mingw.h` of its own.
         fn run(&self, program: &Path, args: &[&OsStr], env: &Env) -> std::io::Result<Output> {
+            self.run_in(program, args, env, Path::new("project"))
+        }
+
+        fn run_in(
+            &self,
+            program: &Path,
+            args: &[&OsStr],
+            env: &Env,
+            cwd: &Path,
+        ) -> std::io::Result<Output> {
             let dir = program
                 .parent()
                 .unwrap()
@@ -254,7 +271,7 @@ mod tests {
                 "-dumpfullversion" => match dir.as_str() {
                     "nover" => ok("unknown\n"),
                     "exp" | "pre" => ok("15.0.1\n"),
-                    "linux" | "msvcrt" | "nomachine" | "blank" => ok("13.2.0\n"),
+                    "linux" | "msvcrt" | "nomachine" | "blank" | "nocc1" => ok("13.2.0\n"),
                     _ => ok(&format!("{}.2.0\n", dir.trim_start_matches('v'))),
                 },
                 "--version" => match dir.as_str() {
@@ -275,17 +292,21 @@ mod tests {
                         .get("PATH")
                         .and_then(|p| std::env::split_paths(p).next());
                     let header = args.windows(2).any(|w| w == ["-include", "_mingw.h"]);
-                    if first_on_path.as_deref() != program.parent() {
+                    if dir == "nocc1" || first_on_path.as_deref() != program.parent() {
                         // Its compiler proper finds no DLLs: exit 1, silent.
                         Output {
                             success: false,
                             stdout: Vec::new(),
                             stderr: Vec::new(),
                         }
+                    } else if cwd != program.parent().unwrap() {
+                        // The project's `_mingw.h` was read instead.
+                        ok("#define __MINGW64__ 1\n")
                     } else if !header || matches!(dir.as_str(), "msvcrt" | "linux") {
                         ok("#define __MINGW64__ 1\n#define _UCRTX 1\n")
                     } else {
-                        ok("#define __MINGW64__ 1\n#define _UCRT \n")
+                        // No trailing space, which the real one prints.
+                        ok("#define __MINGW64__ 1\n#define _UCRT\n")
                     }
                 }
                 _ => failed,
@@ -316,8 +337,8 @@ mod tests {
     ///
     /// Mutation: search `PATH` before the configured path, compare paths as
     /// written, read the version from the banner, check `_UCRT` without
-    /// `-include _mingw.h`, or run GCC with the caller's `PATH`; this test
-    /// fails.
+    /// `-include _mingw.h`, run GCC with the caller's `PATH`, or run it in
+    /// the project (whose `_mingw.h` shadows GCC's); this test fails.
     #[test]
     fn copies_are_found_in_order_once_each() {
         let root = tempfile::tempdir().unwrap();
@@ -357,12 +378,14 @@ mod tests {
     }
 
     /// Snapshots by either word, another target, no version, a run that
-    /// fails, a failed or empty `-dumpmachine`, and a C runtime other than
-    /// UCRT are each recorded as such, not dropped.
+    /// fails, a failed or empty `-dumpmachine`, a C runtime other than UCRT,
+    /// and a GCC that cannot preprocess (failed, not MSVCRT) are each
+    /// recorded as such, not dropped.
     ///
     /// Mutation: miss `experimental` or `prerelease`, keep an empty target,
     /// ignore `-dumpmachine` failing, record no version as failed, take
-    /// `_UCRTX` for `_UCRT`, or leave a copy out; this test fails.
+    /// `_UCRTX` for `_UCRT`, require a space after `_UCRT`, record a GCC that
+    /// cannot preprocess as MSVCRT, or leave a copy out; this test fails.
     #[test]
     fn what_each_copy_is_is_recorded() {
         let root = tempfile::tempdir().unwrap();
@@ -375,6 +398,8 @@ mod tests {
             "nomachine",
             "blank",
             "msvcrt",
+            "nocc1",
+            "v15",
         ];
         let dirs: Vec<PathBuf> = names
             .iter()
@@ -400,6 +425,22 @@ mod tests {
         assert_eq!(ran(5).1, None, "a failed -dumpmachine");
         assert_eq!(ran(6).1, None, "an empty -dumpmachine");
         assert!(!ran(7).2, "MSVCRT");
+        assert_eq!(found[8].probe, Probe::Failed, "cannot preprocess");
+        assert!(ran(9).2, "`#define _UCRT` with nothing after it");
+    }
+
+    /// GCC's directory goes in front of `PATH`, and the rest stays, in order.
+    ///
+    /// Mutation: drop the rest of `PATH`, or put the directory last; this
+    /// test fails.
+    #[test]
+    fn gcc_s_directory_goes_in_front_of_path() {
+        let root = tempfile::tempdir().unwrap();
+        let (a, b) = (root.path().join("a"), root.path().join("b"));
+        let gcc = root.path().join("gcc").join("gcc.exe");
+        let env = env_for(&gcc, &env_with_path(&[&a, &b]));
+        let path: Vec<PathBuf> = std::env::split_paths(env.get("PATH").unwrap()).collect();
+        assert_eq!(path, [root.path().join("gcc"), a, b]);
     }
 
     /// A configured path with no file is an error naming the setting.
