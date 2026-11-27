@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 4a724393016c96ac702b93209a1b140092f15598 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 5cb8869fb60fa2079e3cfcc0253cca09d8096bba -->
 
 # Toolchain
 
@@ -120,6 +120,8 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
    - Add it to `Compiler` in `tests/support/compilers.rs`, with a `CUNO_TEST_*` variable to point at it.
    - Add it to the tests run with the real compilers (`tests/compile_flags.rs`, `tests/examples.rs`, `tests/test_headers.rs`, `tests/lint.rs`), and take a package from `cuno new` through `lint` in a test of its own (GCC's is `tests/gcc.rs`).
    - Add its `[build.<compiler>]` to the `examples/cpp/per-compiler-flags` example.
+   - Try it on paths that are not ASCII. In the compiler's own integration test (GCC's is `paths_that_are_not_ascii_build_or_are_refused` in `tests/gcc.rs`), name the project directory, a source, an executable and the temporary directory outside ASCII. Check that each program the compiler starts (the compiler proper, the assembler, the linker and so on) can open them, or that cuno refuses before building what it cannot. Pass on a Windows whose ANSI code page holds those characters (Japanese, CP932) and on one whose code page does not (English, CP1252, which CI's Windows uses).
+     - Rationale: for GCC, the failure caused by the project directory's name was found only in review, and the one caused by the temporary directory only in CI. The second passed locally on CP932 and failed on CI's CP1252 ([MinGW (GCC)](#mingw-gcc), "Paths that are not ASCII").
 9. **CI.** In the test job of `.github/workflows/ci.yml`, install it where users install it. The tests fail if it is not found.
 10. **Documents.** Correct the lists of compiler names and what is "not supported yet" in [commands.md](commands.md) and [manifest.md](manifest.md).
 
