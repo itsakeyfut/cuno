@@ -1474,3 +1474,63 @@ fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
         .unwrap();
     assert!(include.contains(first), "INCLUDE was {include:?}");
 }
+
+/// A GCC cuno finds and selects, but cannot ask where its headers are, is
+/// one the build refuses, so doctor reports it: preparing the environment
+/// is a step of every compiler, not only of one with an MSVC toolset
+/// (commands.md, "`cuno doctor`": "the selected compiler cannot build").
+///
+/// Mutation: skip preparing the environment when the compiler has no MSVC
+/// toolset; this test fails.
+#[test]
+fn a_gcc_the_build_refuses_is_a_problem() {
+    let gcc = "@echo off\r\n\
+               if \"%~1\"==\"-dumpfullversion\" (echo 15.2.0& exit /b 0)\r\n\
+               if \"%~1\"==\"--version\" (echo gcc.exe ^(Rev1, Built by MSYS2 project^) 15.2.0& exit /b 0)\r\n\
+               if \"%~1\"==\"-dumpmachine\" (echo x86_64-w64-mingw32& exit /b 0)\r\n\
+               if \"%~1\"==\"-dM\" (echo #define _UCRT 1& exit /b 0)\r\n\
+               exit /b 1\r\n";
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let fake = project.path().join("fake/gcc.cmd");
+    let config = format!("[toolchain.paths]\ngcc = '{}'\n", fake.display());
+    let run = project
+        .file("fake/gcc.cmd", gcc)
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "gcc"]);
+    let selected = format!(
+        "    Selected gcc 15.2.0 (--compiler)\n             {}\n",
+        fake.display()
+    );
+    assert!(run.stderr.starts_with(&selected), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("did not say where its headers are"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+}
+
+/// A `[toolchain.paths] gcc` with no file there is reported even while
+/// another compiler is diagnosed: doctor looks for GCC whatever is asked
+/// for, and a setting the user wrote that cannot be used is a problem
+/// (commands.md, "`cuno doctor`").
+///
+/// Mutation: leave GCC's detection error unreported; this test fails.
+#[test]
+fn a_configured_gcc_with_no_file_is_a_problem_whatever_is_diagnosed() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let missing = project.path().join("nowhere/gcc.exe");
+    let config = format!("[toolchain.paths]\ngcc = '{}'\n", missing.display());
+    let run = project
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "msvc"]);
+    assert!(
+        run.stderr.contains("error: [toolchain.paths] gcc"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+}

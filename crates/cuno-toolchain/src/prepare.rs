@@ -4,14 +4,15 @@
 //! these, so they diagnose and build with the same answers.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cuno_core::Env;
 
 use crate::compiler::CompilerKind;
+use crate::gcc::Gcc;
 use crate::llvm::{ExplicitPaths, LlvmTool, find_llvm_tools};
 use crate::msvc::{self, Registry, VsInstallation, WindowsSdk};
-use crate::select::Selected;
+use crate::select::{Found, Selected};
 use crate::{HostOs, Runner, ToolchainError};
 
 /// What detection found. Each part is a result of its own, so a caller that
@@ -22,6 +23,38 @@ pub struct Detected {
     pub installs: Result<Vec<VsInstallation>, ToolchainError>,
     /// Every LLVM tool found, in search order.
     pub llvm: Result<Vec<LlvmTool>, ToolchainError>,
+    /// Every GCC, or `None` when it was not looked for: GCC is searched
+    /// only when it is wanted, or by `cuno doctor` (`toolchain.md`, "MinGW
+    /// (GCC)"). [`detect`] leaves it `None`.
+    pub gcc: Option<Result<Vec<Gcc>, ToolchainError>>,
+}
+
+impl Detected {
+    /// What selection chooses from: each part found, empty where its
+    /// search failed or did not run.
+    pub fn found<'a>(&'a self, explicit_msvc: Option<&'a Path>) -> Found<'a> {
+        Found {
+            installs: self.installs.as_deref().unwrap_or(&[]),
+            llvm: self.llvm.as_deref().unwrap_or(&[]),
+            gcc: match &self.gcc {
+                Some(Ok(gcc)) => gcc,
+                Some(Err(_)) | None => &[],
+            },
+            explicit_msvc,
+        }
+    }
+
+    /// Whether `kind` was searched for, so an empty result means it was
+    /// not found. A search that failed (a configured path with no file,
+    /// already reported) looked for nothing. Visual Studio is always
+    /// searched; whether it was found is selection's answer.
+    pub fn looked_for(&self, kind: CompilerKind) -> bool {
+        match kind {
+            CompilerKind::Msvc => true,
+            CompilerKind::Clang | CompilerKind::ClangCl => self.llvm.is_ok(),
+            CompilerKind::Gcc => matches!(self.gcc, Some(Ok(_))),
+        }
+    }
 }
 
 /// Finds Visual Studio (on Windows) and the LLVM tools, the copies
@@ -34,7 +67,11 @@ pub fn detect(env: &Env, host: HostOs, explicit: &ExplicitPaths, run: &dyn Runne
     };
     let found = installs.as_deref().unwrap_or(&[]);
     let llvm = find_llvm_tools(env, host, explicit, found, run);
-    Detected { installs, llvm }
+    Detected {
+        installs,
+        llvm,
+        gcc: None,
+    }
 }
 
 /// Variables compilers and linkers read options or include paths from by
@@ -629,5 +666,39 @@ mod tests {
             assert_eq!(prepared.env.get(name), None, "{name}");
         }
         assert_eq!(prepared.env.get("KEEP").unwrap(), "1");
+    }
+
+    /// A search that did not run, or failed, looked for nothing, so doctor
+    /// prints no line for it; Visual Studio is always looked for.
+    ///
+    /// Mutation: answer true for GCC when it was not searched, or for LLVM
+    /// when its search failed; this test fails.
+    #[test]
+    fn only_a_search_that_ran_and_succeeded_looked_for_anything() {
+        let missing = || ToolchainError::ConfiguredToolMissing {
+            setting: "[toolchain.paths] clang".to_owned(),
+            path: PathBuf::from("C:/nowhere/clang.exe"),
+        };
+        let detected = |llvm_ok: bool, gcc: Option<bool>| Detected {
+            installs: Ok(Vec::new()),
+            llvm: if llvm_ok {
+                Ok(Vec::new())
+            } else {
+                Err(missing())
+            },
+            gcc: gcc.map(|ok| if ok { Ok(Vec::new()) } else { Err(missing()) }),
+        };
+        let looked = |d: &Detected| -> Vec<bool> {
+            CompilerKind::ALL.iter().map(|&k| d.looked_for(k)).collect()
+        };
+        assert_eq!(
+            looked(&detected(true, Some(true))),
+            [true, true, true, true]
+        );
+        assert_eq!(looked(&detected(true, None)), [true, true, true, false]);
+        assert_eq!(
+            looked(&detected(false, Some(false))),
+            [true, false, false, false]
+        );
     }
 }

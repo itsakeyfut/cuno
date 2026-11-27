@@ -56,7 +56,7 @@ pub fn fmt(
     }
 
     let runner = SystemRunner::new();
-    let llvm = toolchain::detect(Some(&settings), env, host, &runner)
+    let llvm = toolchain::detect(Some(&settings), env, host, &runner, false)
         .llvm
         .map_err(boxed)?;
     let clang_format = select::select_tool(Tool::ClangFormat, &llvm, host).map_err(boxed)?;

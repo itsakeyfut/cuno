@@ -9,6 +9,7 @@
 //! architecture.md`, "Dependencies between crates"). See
 //! `docs/en/specs/toolchain.md`.
 
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use cuno_core::scratch;
@@ -16,12 +17,13 @@ use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
 use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, ToolContext, check_edition};
-use cuno_toolchain::gcc::{Gcc, find_gcc};
+use cuno_toolchain::gcc::find_gcc;
+use cuno_toolchain::llvm::LlvmTool;
 
 use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
-use cuno_toolchain::select::{self, Found, LlvmChoice, Selected};
+use cuno_toolchain::select::{self, Choices, LlvmChoice, Selected};
 use cuno_toolchain::{HostOs, Runner, ToolchainError, Version};
 
 use crate::bundled;
@@ -35,28 +37,43 @@ fn boxed(e: impl CunoError + 'static) -> Box<dyn CunoError> {
     Box::new(e)
 }
 
-/// Detects Visual Studio and the LLVM tools, the copies `[toolchain.paths]`
-/// names first; none are named when the settings could not be read.
+/// Detects Visual Studio and the LLVM tools, and GCC when `gcc` is set,
+/// the copies `[toolchain.paths]` names first; none are named when the
+/// settings could not be read. GCC is asked for, not always searched,
+/// because finding it runs each copy (`docs/en/specs/toolchain.md`, "MinGW
+/// (GCC)"): a command passes `true` only when GCC is wanted, or when it
+/// shows every compiler.
 pub fn detect(
     settings: Option<&Settings>,
     env: &Env,
     host: HostOs,
     runner: &dyn Runner,
+    gcc: bool,
 ) -> Detected {
     let explicit = settings.map(Settings::llvm_paths).unwrap_or_default();
-    prepare::detect(env, host, &explicit, runner)
+    let mut detected = prepare::detect(env, host, &explicit, runner);
+    if gcc {
+        detected.gcc = Some(find_gcc(
+            env,
+            host,
+            settings.and_then(Settings::gcc_path),
+            runner,
+        ));
+    }
+    detected
 }
 
-/// Finds every GCC, the one `[toolchain.paths] gcc` names first. Called
-/// only when GCC is wanted (`docs/en/specs/toolchain.md`, "MinGW (GCC)"):
-/// it runs each copy found.
-pub fn detect_gcc(
-    settings: Option<&Settings>,
-    env: &Env,
-    host: HostOs,
-    runner: &dyn Runner,
-) -> Result<Vec<Gcc>, ToolchainError> {
-    find_gcc(env, host, settings.and_then(Settings::gcc_path), runner)
+/// The directory of cuno's bundled headers that a build puts on the
+/// include path: under the settings' cuno home, or, when the settings
+/// could not be read, the home the environment names. `None` without a
+/// home (a problem the configuration already reported). The standard
+/// library probe and clang-tidy's check both take it from here, so they
+/// analyse with the same include path as each other and as the build.
+pub fn bundled_include(settings: Option<&Settings>, env: &Env) -> Option<PathBuf> {
+    let home = settings
+        .map(|s| s.home.clone())
+        .or_else(|| cuno_core::cuno_home(env).ok())?;
+    Some(bundled::include_dir(&home))
 }
 
 /// What the standard library probe compiles: the build's settings for a
@@ -228,17 +245,22 @@ pub struct Ready {
     pub selected: Selected,
     /// Its environment.
     pub prepared: Prepared,
+    /// Every LLVM tool detection found, for clang-format and clang-tidy.
+    pub llvm: Vec<LlvmTool>,
 }
 
 /// What a toolchain is made ready for: it names the scratch directories
-/// (`cuno-build-…`, `cuno-lint-…`), and only a build runs the compiler,
-/// which needs the temporary directory itself.
+/// (`cuno-build-…`, `cuno-lint-…`), decides whether GCC is searched for
+/// when it is not wanted, and only a build runs the compiler, which needs
+/// the temporary directory itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadyFor {
     /// `cuno build`, `run`, `check` and `test`: the compiler runs.
     Build,
     /// `cuno lint`: only clang-tidy runs.
     Lint,
+    /// `cuno doctor`: every compiler is looked for, for its `Info` line.
+    Doctor,
 }
 
 impl ReadyFor {
@@ -247,16 +269,268 @@ impl ReadyFor {
         match self {
             ReadyFor::Build => "build",
             ReadyFor::Lint => "lint",
+            ReadyFor::Doctor => "doctor",
+        }
+    }
+
+    /// Whether every compiler is searched for, not only the one wanted
+    /// (`docs/en/specs/toolchain.md`, "MinGW (GCC)": GCC is run to be
+    /// found, so a build searches for it only when it is wanted).
+    fn looks_for_every_compiler(self) -> bool {
+        match self {
+            ReadyFor::Build | ReadyFor::Lint => false,
+            ReadyFor::Doctor => true,
+        }
+    }
+
+    /// Whether the compiler itself runs afterwards, so the temporary
+    /// directory it writes in must be usable: only for a build. Lint runs
+    /// clang-tidy, and doctor runs nothing more.
+    fn runs_the_compiler(self) -> bool {
+        match self {
+            ReadyFor::Build => true,
+            ReadyFor::Lint | ReadyFor::Doctor => false,
         }
     }
 }
 
-/// Every step a build takes before compiling: detect, select, check the
-/// edition, prepare the environment, and probe the standard library. Each
-/// variable left out of the environment is warned about here, as the build
-/// prepares it; the first problem is returned for the caller to report,
-/// and no later step runs. The probe's scratch directory is made under
-/// `temp`, and the environment is resolved through `registry`.
+/// What [`steps`] tells as it goes: the build commands stop at the first
+/// problem, `cuno doctor` prints each and goes on.
+pub trait Steps {
+    /// What a step found: `Selected` (and the executable, with an empty
+    /// label), `Using`, `Accepted` (`docs/en/specs/commands.md`, "What
+    /// `cuno doctor` prints").
+    fn status(&mut self, label: &'static str, line: String);
+    /// A variable left out of the compiler's environment
+    /// (`docs/en/specs/toolchain.md`, "How it is resolved").
+    fn ignored(&mut self, name: &str);
+    /// A step failed. `Break` ends [`steps`] with the error; `Continue`
+    /// goes on with the steps that do not need the one that failed. [`ready`]
+    /// relies on its sink always answering `Break`: it has no `Ready` to
+    /// return after a problem it went on past.
+    fn problem(&mut self, error: Box<dyn CunoError>) -> ControlFlow<Box<dyn CunoError>>;
+}
+
+/// The build commands' [`Steps`]: the first problem is the result, and
+/// each ignored variable is warned about.
+struct StopAtFirst<'a> {
+    shell: &'a mut Shell,
+}
+
+impl Steps for StopAtFirst<'_> {
+    fn status(&mut self, _: &'static str, _: String) {}
+
+    fn ignored(&mut self, name: &str) {
+        self.shell
+            .warning(format!("{name} is set in the environment and is not used"));
+        self.shell.help("write the flags in cuno.toml");
+    }
+
+    fn problem(&mut self, error: Box<dyn CunoError>) -> ControlFlow<Box<dyn CunoError>> {
+        ControlFlow::Break(error)
+    }
+}
+
+/// What [`steps`] leaves for the caller.
+pub struct Surveyed {
+    /// What detection found, for the `Info` lines (`select::survey`).
+    pub detected: Detected,
+    /// The compiler wanted, if its name is one cuno knows.
+    pub wanted: Option<CompilerKind>,
+    /// Whether selection reported the Visual Studio in `[toolchain.paths]
+    /// msvc` as unusable.
+    pub vs_reported: bool,
+    /// The compiler, when it was selected and its environment prepared.
+    /// A problem the sink went on past in another step (the edition, the
+    /// probe) leaves it `Some`; one in selection or preparing leaves it
+    /// `None`, and is always reported to the sink first.
+    pub ready: Option<Ready>,
+}
+
+/// Hands `error` to `sink`: `Err` when it stops the steps.
+fn report(sink: &mut dyn Steps, error: Box<dyn CunoError>) -> Result<(), Box<dyn CunoError>> {
+    match sink.problem(error) {
+        ControlFlow::Break(error) => Err(error),
+        ControlFlow::Continue(()) => Ok(()),
+    }
+}
+
+/// Every step a compiler takes before it builds, in order: detect, select,
+/// check the edition, prepare the environment, probe the standard library,
+/// and, for a build, check the temporary directory. Each finding goes to
+/// `sink`, which decides whether a problem stops the rest; a step that
+/// needs one that failed does not run. The build commands take these
+/// through [`ready`] and `cuno doctor` directly, so the two cannot disagree
+/// about what a compiler needs. `settings` is `None` when the
+/// configuration could not be read, and `choices` is then what does not
+/// come from a file. The probe runs in `cwd` outside a project, and its
+/// scratch directory is made under `temp`. `Err` only when the sink
+/// answered `Break`; with `Continue`, every problem has gone to the sink
+/// and the result is `Ok`.
+// Each argument answers its own question; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
+pub fn steps(
+    ready_for: ReadyFor,
+    settings: Option<&Settings>,
+    choices: &Choices,
+    project: Option<(&Path, &Manifest)>,
+    profile: Profile,
+    cwd: &Path,
+    env: &Env,
+    host: HostOs,
+    temp: &Path,
+    runner: &dyn Runner,
+    registry: &dyn Registry,
+    sink: &mut dyn Steps,
+) -> Result<Surveyed, Box<dyn CunoError>> {
+    // The compiler asked for decides what it needs: one with no MSVC
+    // toolset builds without Visual Studio, and GCC is searched only when
+    // it is wanted. A name cuno does not know is selection's error, below.
+    let wanted = choices.kind(host).ok().map(|(kind, _)| kind);
+    let detected = detect(
+        settings,
+        env,
+        host,
+        runner,
+        ready_for.looks_for_every_compiler() || wanted == Some(CompilerKind::Gcc),
+    );
+    if let Err(error) = &detected.installs
+        && wanted.is_none_or(|kind| kind.uses_msvc_toolset(host))
+    {
+        report(sink, boxed(error.clone()))?;
+    }
+    if let Err(error) = &detected.llvm {
+        report(sink, boxed(error.clone()))?;
+    }
+    if let Some(Err(error)) = &detected.gcc {
+        report(sink, boxed(error.clone()))?;
+    }
+
+    let mut surveyed = Surveyed {
+        detected,
+        wanted,
+        vs_reported: false,
+        ready: None,
+    };
+    let found = surveyed
+        .detected
+        .found(settings.and_then(Settings::msvc_path));
+    let constraints = settings.map(|s| s.constraints.clone()).unwrap_or_default();
+    let selected = match select::select(choices, found, &constraints, host) {
+        Ok(selected) => selected,
+        Err(error) => {
+            let vs_reported = matches!(error, ToolchainError::VisualStudioNotAt { .. });
+            let vs_error = vs_reported || matches!(error, ToolchainError::NoVisualStudio);
+            // Already reported: no Visual Studio is what detection's
+            // failure means, and detection reported it, since selection
+            // asks for Visual Studio only for a compiler that uses a
+            // toolset, the case detection reports it for.
+            if !(surveyed.detected.installs.is_err()
+                && matches!(error, ToolchainError::NoVisualStudio))
+            {
+                report(sink, boxed(error))?;
+            }
+            // Selection stops at Visual Studio before it looks at the copy
+            // of the compiler asked for, which has no `Info` line: a
+            // configured one that cannot be used is reported here, or
+            // nowhere.
+            if vs_error
+                && let Some(kind) = wanted
+                && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
+                    select::copy_of(kind, found, &constraints, host)
+            {
+                report(sink, boxed(unusable))?;
+            }
+            surveyed.vs_reported = vs_reported;
+            return Ok(surveyed);
+        }
+    };
+    // Without a readable configuration, automatic selection is not what the
+    // configuration chose (commands.md, "`cuno doctor`").
+    let source = match (selected.source, settings) {
+        (select::Source::Automatic, None) => {
+            "automatic selection; the configuration could not be read".to_owned()
+        }
+        (source, _) => source.to_string(),
+    };
+    sink.status(
+        "Selected",
+        format!("{} {} ({source})", selected.kind.name(), selected.version),
+    );
+    // The executable, on the line under `Selected`, with no label.
+    sink.status("", selected.executable.display().to_string());
+
+    if let Some((_, manifest)) = project
+        && let Err(error) = check_edition(selected.kind, selected.version, manifest.package.edition)
+    {
+        report(sink, boxed(error))?;
+    }
+    // A Clang borrows a toolset, named here; cl's own is its `Selected`
+    // line.
+    if let Some(toolset) = &selected.msvc
+        && selected.kind.borrows_msvc_toolset()
+    {
+        sink.status(
+            "Using",
+            format!(
+                "MSVC {} ({})",
+                toolset.cl_version,
+                toolset.install_dir().display()
+            ),
+        );
+    }
+    let prepared = match prepare::prepare(&selected, env, host, registry, runner) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            report(sink, boxed(error))?;
+            return Ok(surveyed);
+        }
+    };
+    for name in &prepared.ignored {
+        sink.ignored(name);
+    }
+    if let Some(sdk) = &prepared.sdk {
+        sink.status("Using", format!("Windows SDK {}", sdk.version));
+    }
+
+    // The probe compiles with the build's include path, so its command line
+    // is the build's. The headers are written there only later, by the
+    // build, and need not exist yet: the probe includes none of them, and a
+    // missing include directory is no error to any compiler. Without a cuno
+    // home there is no such path, and no probe.
+    if let Some(bundled) = bundled_include(settings, env)
+        && stl::applies(&selected)
+        && let Some(compile) =
+            probe_compile(&selected, &prepared, project, profile, cwd, host, &bundled)
+    {
+        match probe(&selected, &compile, temp, ready_for.command(), runner) {
+            Ok(()) => sink.status("Accepted", "by the MSVC standard library".to_owned()),
+            Err(error) => report(sink, error)?,
+        }
+    }
+    // A compiler with no check still writes in the temporary directory (cl
+    // stops with D8050 when it cannot), so the build asks whether it can
+    // before compiling, and says how to fix it in cuno's words, not the
+    // compiler's (`architecture.md`, "What goes in `cuno-core`").
+    if ready_for.runs_the_compiler()
+        && !stl::applies(&selected)
+        && let Err(error) = scratch::in_temp(temp, ready_for.command(), "compile")
+    {
+        report(sink, boxed(error))?;
+    }
+    let llvm = surveyed.detected.llvm.clone().unwrap_or_default();
+    surveyed.ready = Some(Ready {
+        selected,
+        prepared,
+        llvm,
+    });
+    Ok(surveyed)
+}
+
+/// Every step a build takes before compiling ([`steps`]), stopping at the
+/// first problem, which is returned for the caller to report. Each
+/// variable left out of the environment is warned about as the build
+/// prepares it.
 // Each argument answers its own question; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn ready(
@@ -271,60 +545,23 @@ pub fn ready(
     registry: &dyn Registry,
     shell: &mut Shell,
 ) -> Result<Ready, Box<dyn CunoError>> {
-    let detected = detect(Some(settings), env, host, runner);
-    // The compiler asked for decides what it needs: one with no MSVC
-    // toolset builds without Visual Studio, and only GCC is searched for
-    // GCC. A name cuno does not know is selection's error, below.
-    let wanted = settings.compiler.kind(host).ok().map(|(kind, _)| kind);
-    let installs = match detected.installs {
-        Ok(installs) => installs,
-        Err(_) if wanted.is_some_and(|kind| !kind.uses_msvc_toolset(host)) => Vec::new(),
-        Err(error) => return Err(boxed(error)),
-    };
-    let llvm = detected.llvm.map_err(boxed)?;
-    let gcc = match wanted {
-        Some(CompilerKind::Gcc) => detect_gcc(Some(settings), env, host, runner).map_err(boxed)?,
-        _ => Vec::new(),
-    };
-    let found = Found {
-        installs: &installs,
-        llvm: &llvm,
-        gcc: &gcc,
-        explicit_msvc: settings.msvc_path(),
-    };
-    let selected =
-        select::select(&settings.compiler, found, &settings.constraints, host).map_err(boxed)?;
-    check_edition(selected.kind, selected.version, project.1.package.edition).map_err(boxed)?;
-    let prepared = prepare::prepare(&selected, env, host, registry, runner).map_err(boxed)?;
-    // Left out of the build's environment, since they add flags no command
-    // line shows (toolchain.md, "How it is resolved").
-    for name in &prepared.ignored {
-        shell.warning(format!("{name} is set in the environment and is not used"));
-        shell.help("write the flags in cuno.toml");
-    }
-    if let Some(compile) = probe_compile(
-        &selected,
-        &prepared,
+    let surveyed = steps(
+        ready_for,
+        Some(settings),
+        &settings.compiler,
         Some(project),
         profile,
         project.0,
+        env,
         host,
-        // The build's include path, so the probe's command line is the
-        // build's. The headers are written there only later, by the build,
-        // and need not exist yet: the probe includes none of them, and a
-        // missing include directory is no error to any compiler.
-        &bundled::include_dir(&settings.home),
-    ) {
-        probe(&selected, &compile, temp, ready_for.command(), runner)?;
-    }
-    // A compiler with no check still writes in the temporary directory (cl
-    // stops with D8050 when it cannot), so the build asks whether it can
-    // before compiling, and says how to fix it in cuno's words, not the
-    // compiler's (`architecture.md`, "What goes in `cuno-core`").
-    if ready_for == ReadyFor::Build && !stl::applies(&selected) {
-        scratch::in_temp(temp, ready_for.command(), "compile").map_err(boxed)?;
-    }
-    Ok(Ready { selected, prepared })
+        temp,
+        runner,
+        registry,
+        &mut StopAtFirst { shell },
+    )?;
+    Ok(surveyed
+        .ready
+        .expect("`StopAtFirst` breaks at every problem, and only a problem leaves no `Ready`"))
 }
 
 /// Runs the check of `what` with a scratch directory of this process's own
@@ -528,5 +765,145 @@ mod tests {
         assert_eq!(err.exit_class(), ExitClass::Setup);
         assert!(err.to_string().contains(" to check clang-tidy: "), "{err}");
         assert!(!missing.exists());
+    }
+
+    /// Answers as a GCC 10.2 (UCRT, MinGW) would, and records whether it
+    /// was asked where its headers are, which only preparing its
+    /// environment asks; it cannot answer that.
+    struct Gcc10 {
+        asked_headers: std::cell::Cell<bool>,
+    }
+
+    impl Runner for Gcc10 {
+        fn run(
+            &self,
+            _: &Path,
+            args: &[&std::ffi::OsStr],
+            _: &Env,
+        ) -> std::io::Result<cuno_toolchain::Output> {
+            let says = |text: &str| cuno_toolchain::Output {
+                success: true,
+                stdout: text.as_bytes().to_vec(),
+                stderr: Vec::new(),
+            };
+            Ok(match args[0].to_str().unwrap() {
+                "-dumpfullversion" => says("10.2.0\n"),
+                "--version" => says("gcc 10.2.0\n"),
+                "-dumpmachine" => says("x86_64-w64-mingw32\n"),
+                "-dM" => says("#define _UCRT 1\n"),
+                asked => {
+                    if asked == "-E" {
+                        self.asked_headers.set(true);
+                    }
+                    cuno_toolchain::Output {
+                        success: false,
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    }
+                }
+            })
+        }
+    }
+
+    /// Records the problems, and goes on after them or not.
+    struct Recording {
+        go_on: bool,
+        problems: usize,
+    }
+
+    impl Steps for Recording {
+        fn status(&mut self, _: &'static str, _: String) {}
+
+        fn ignored(&mut self, _: &str) {}
+
+        fn problem(&mut self, error: Box<dyn CunoError>) -> ControlFlow<Box<dyn CunoError>> {
+            self.problems += 1;
+            if self.go_on {
+                ControlFlow::Continue(())
+            } else {
+                ControlFlow::Break(error)
+            }
+        }
+    }
+
+    /// After a problem the sink goes on from (an edition GCC 10 cannot
+    /// build), the steps that do not need the failed one still run, so
+    /// doctor also sees the environment fail; a sink that stops (the
+    /// build's) ends at the first problem and runs nothing after it.
+    ///
+    /// Mutation: return after the edition's problem whatever the sink
+    /// answers, or go on after a `Break`; this test fails.
+    #[test]
+    fn the_steps_go_on_only_when_the_sink_does() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("gcc"), "").unwrap();
+        let env = Env::from_pairs(
+            [("PATH".into(), dir.path().as_os_str().to_owned())],
+            NameCase::host(),
+        );
+        let cxx23 =
+            manifest("[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"c++23\"\n");
+        let choices = Choices {
+            cli: Some("gcc".to_owned()),
+            ..Default::default()
+        };
+        for go_on in [true, false] {
+            let runner = Gcc10 {
+                asked_headers: false.into(),
+            };
+            let mut sink = Recording { go_on, problems: 0 };
+            let result = steps(
+                ReadyFor::Doctor,
+                None,
+                &choices,
+                Some((dir.path(), &cxx23)),
+                Profile::Dev,
+                dir.path(),
+                &env,
+                HostOs::Other,
+                dir.path(),
+                &runner,
+                &cuno_toolchain::msvc::SystemRegistry,
+                &mut sink,
+            );
+            match result {
+                Ok(surveyed) => {
+                    assert!(go_on);
+                    assert!(surveyed.ready.is_none());
+                    assert!(runner.asked_headers.get());
+                    assert_eq!(sink.problems, 2);
+                }
+                Err(error) => {
+                    assert!(!go_on);
+                    assert!(error.to_string().contains("c++23"), "{error}");
+                    assert!(!runner.asked_headers.get());
+                    assert_eq!(sink.problems, 1);
+                }
+            }
+        }
+    }
+
+    /// What each command makes ready decides whether every GCC is run to be
+    /// found, and whether the temporary directory is checked for the
+    /// compiler: only doctor looks for every compiler, only a build runs
+    /// the compiler afterwards.
+    ///
+    /// Mutation: let lint look for every compiler (or doctor not), or check
+    /// the temporary directory for lint or doctor; this test fails.
+    #[test]
+    fn what_each_command_makes_ready_for() {
+        let answers: Vec<(ReadyFor, bool, bool)> =
+            [ReadyFor::Build, ReadyFor::Lint, ReadyFor::Doctor]
+                .into_iter()
+                .map(|r| (r, r.looks_for_every_compiler(), r.runs_the_compiler()))
+                .collect();
+        assert_eq!(
+            answers,
+            [
+                (ReadyFor::Build, false, true),
+                (ReadyFor::Lint, false, false),
+                (ReadyFor::Doctor, true, false),
+            ]
+        );
     }
 }

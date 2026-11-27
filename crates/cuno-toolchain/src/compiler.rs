@@ -112,6 +112,17 @@ impl CompilerKind {
         }
     }
 
+    /// Whether it borrows an MSVC toolset it is not part of: the Clangs do,
+    /// so `cuno doctor` names the toolset they use; cl's own is its
+    /// `Selected` line, and GCC uses none (`docs/en/specs/commands.md`,
+    /// "What `cuno doctor` prints").
+    pub fn borrows_msvc_toolset(self) -> bool {
+        match self {
+            CompilerKind::Clang | CompilerKind::ClangCl => true,
+            CompilerKind::Msvc | CompilerKind::Gcc => false,
+        }
+    }
+
     /// Whether it builds against the MSVC standard library, whose switches
     /// (`_HAS_EXCEPTIONS`) cuno sets: cl and the Clangs do, MinGW's GCC uses
     /// libstdc++ (`docs/en/specs/build.md`, "Settings and flags").
@@ -359,6 +370,25 @@ mod tests {
             .map(|k| k.uses_msvc_stl())
             .collect();
         assert_eq!(msvc_stl, [true, true, true, false]);
+    }
+
+    /// Mutation: say cl or GCC borrows a toolset, or a Clang does not; this
+    /// test fails.
+    #[test]
+    fn only_the_clangs_borrow_an_msvc_toolset() {
+        let borrows: Vec<(CompilerKind, bool)> = CompilerKind::ALL
+            .iter()
+            .map(|k| (*k, k.borrows_msvc_toolset()))
+            .collect();
+        assert_eq!(
+            borrows,
+            [
+                (CompilerKind::Msvc, false),
+                (CompilerKind::Clang, true),
+                (CompilerKind::ClangCl, true),
+                (CompilerKind::Gcc, false),
+            ]
+        );
     }
 
     /// Mutation: change any answer for any compiler; this test fails.

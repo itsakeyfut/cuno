@@ -2,20 +2,17 @@
 //! and how to fix it, without stopping at the first problem. See
 //! `docs/en/specs/commands.md`, "`cuno doctor`".
 
+use std::ops::ControlFlow;
 use std::path::Path;
 
 use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{ConfigError, Profile, Settings};
-use cuno_toolchain::compiler::{CompilerKind, Family};
-use cuno_toolchain::flags::check_edition;
 use cuno_toolchain::llvm::Tool;
 use cuno_toolchain::msvc::SystemRegistry;
-use cuno_toolchain::prepare;
-use cuno_toolchain::select::{self, Choices, Found};
-use cuno_toolchain::{HostOs, SystemRunner, ToolchainError};
+use cuno_toolchain::select::{self, Availability, Choices};
+use cuno_toolchain::{HostOs, SystemRunner};
 
-use cuno_build::bundled;
-use cuno_build::toolchain::{self, TidyCompile};
+use cuno_build::toolchain::{self, ReadyFor, Steps, TidyCompile};
 
 /// Prints `error:` and `help:` and counts problems, and prints the
 /// findings that are not problems as status lines, which the shell leaves
@@ -45,7 +42,9 @@ impl Problems<'_> {
 /// Diagnoses the compiler `--compiler` (or the selection precedence) picks,
 /// printing each finding to `shell`, and returns how many problems it found.
 /// `resolved` are the settings read before dispatch; their error is one of
-/// the problems, and the diagnosis goes on without them.
+/// the problems, and the diagnosis goes on without them. The compiler goes
+/// through the build's own steps (`toolchain::steps`), which report here
+/// rather than stop.
 pub fn doctor(
     compiler: Option<String>,
     resolved: Result<Settings, ConfigError>,
@@ -66,69 +65,95 @@ pub fn doctor(
         }
     };
     let settings = settings.as_ref();
-
     let choices = choices(settings, compiler, env);
-    let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
-    let detected = toolchain::detect(settings, env, host, &runner);
-    let no_visual_studio = detected.installs.is_err();
-    let installs = detected.installs.unwrap_or_else(|error| {
-        // Visual Studio missing is a problem for a compiler that needs it,
-        // or none named; for one that does not (GCC), the MSVC `Info` line
-        // says so.
-        if attempted.is_none_or(|kind| kind.uses_msvc_toolset(host)) {
-            problems.report(&error);
-        }
-        Vec::new()
-    });
-    let no_llvm = detected.llvm.is_err();
-    let llvm = detected.llvm.unwrap_or_else(|error| {
-        problems.report(&error);
-        Vec::new()
-    });
-    // Doctor looks for GCC whichever compiler is asked for, for its `Info`
-    // line (`toolchain.md`, "MinGW (GCC)").
-    let detected_gcc = toolchain::detect_gcc(settings, env, host, &runner);
-    let no_gcc = detected_gcc.is_err();
-    let gcc = detected_gcc.unwrap_or_else(|error| {
-        problems.report(&error);
-        Vec::new()
-    });
-    let found = Found {
-        installs: &installs,
-        llvm: &llvm,
-        gcc: &gcc,
-        explicit_msvc: settings.and_then(Settings::msvc_path),
-    };
+    let project = settings
+        .and_then(|s| s.project.as_ref())
+        .map(|(p, m)| (p.root.as_path(), m));
 
-    let diagnosed = diagnose(
+    let surveyed = match toolchain::steps(
+        ReadyFor::Doctor,
         settings,
-        choices,
-        found,
-        no_visual_studio,
-        env,
+        &choices,
+        project,
+        Profile::Dev,
         cwd,
+        env,
         host,
         temp,
         &runner,
+        &SystemRegistry,
         &mut problems,
-    );
+    ) {
+        Ok(surveyed) => surveyed,
+        Err(_) => unreachable!("`Problems` goes on after every problem"),
+    };
+
     // A configured path with no file is already reported; every tool
     // missing after it would only repeat it.
-    if !no_llvm {
-        tools(
-            &llvm,
-            diagnosed.tidy.as_ref(),
-            host,
-            temp,
-            &runner,
-            &mut problems,
-        );
+    if let Ok(llvm) = &surveyed.detected.llvm {
+        // clang-tidy's standard library check analyses what the build
+        // would, so it needs the compiler ready.
+        let tidy = surveyed.ready.as_ref().and_then(|ready| {
+            // Not written by doctor, which only looks: see
+            // `toolchain::steps`.
+            let bundled = toolchain::bundled_include(settings, env)?;
+            toolchain::tidy_compile(
+                &ready.selected,
+                &ready.prepared,
+                project,
+                cwd,
+                host,
+                &bundled,
+            )
+        });
+        tools(llvm, tidy.as_ref(), host, temp, &runner, &mut problems);
     }
-    others(&diagnosed, found, !no_llvm, !no_gcc, host, &mut problems);
+    let found = surveyed
+        .detected
+        .found(settings.and_then(Settings::msvc_path));
+    for (kind, availability) in select::survey(
+        &surveyed.detected,
+        found,
+        surveyed.wanted,
+        surveyed.vs_reported,
+        host,
+    ) {
+        let line = match availability {
+            Availability::Selectable(version) => {
+                format!("{} {version} (not selected)", kind.name())
+            }
+            Availability::NotFound => format!("{} not found", kind.name()),
+            Availability::Unusable(error) => format!("{} not usable: {error}", kind.name()),
+            // The user's own setting is wrong: a problem even for a
+            // compiler not in use (commands.md, "`cuno doctor`").
+            Availability::ConfiguredUnusable(error) => {
+                problems.report(&error);
+                continue;
+            }
+        };
+        problems.status("Info", line);
+    }
 
     let count = problems.count;
     problems.status("Finished", finished(count));
     count
+}
+
+/// doctor's [`Steps`]: each problem is reported and the diagnosis goes on,
+/// so `problem` never answers `Break` (`doctor` relies on it);
+/// the variables left out of the environment are the build commands' to
+/// warn about (`docs/en/specs/toolchain.md`, "How it is resolved").
+impl Steps for Problems<'_> {
+    fn status(&mut self, label: &'static str, line: String) {
+        Problems::status(self, label, line);
+    }
+
+    fn ignored(&mut self, _: &str) {}
+
+    fn problem(&mut self, error: Box<dyn CunoError>) -> ControlFlow<Box<dyn CunoError>> {
+        self.report(&*error);
+        ControlFlow::Continue(())
+    }
 }
 
 /// The `Finished` line's message for `count` problems.
@@ -138,21 +163,6 @@ fn finished(count: usize) -> String {
         1 => "1 problem found".to_owned(),
         n => format!("{n} problems found"),
     }
-}
-
-/// What the selected compiler's diagnosis leaves for the rest.
-#[derive(Default)]
-struct Diagnosed {
-    /// The compiler asked for (selected, or reported as a problem), if the
-    /// name given was one cuno knows.
-    attempted: Option<CompilerKind>,
-    /// Whether selection already reported that the Visual Studio in
-    /// `[toolchain.paths] msvc` cannot be used, which the MSVC `Info` line
-    /// would only repeat.
-    vs_reported: bool,
-    /// What clang-tidy's standard library check analyses, when it is to be
-    /// made: a compiler, a Windows environment and a C++ project or none.
-    tidy: Option<TidyCompile>,
 }
 
 /// The compiler choices: the settings', or, when the configuration cannot
@@ -169,145 +179,6 @@ fn choices(settings: Option<&Settings>, compiler: Option<String>, env: &Env) -> 
             project: None,
             user: None,
         })
-}
-
-// Each argument answers its own question; a struct would only rename them.
-#[allow(clippy::too_many_arguments)]
-fn diagnose(
-    settings: Option<&Settings>,
-    choices: Choices,
-    found: Found<'_>,
-    no_visual_studio: bool,
-    env: &Env,
-    cwd: &Path,
-    host: HostOs,
-    temp: &Path,
-    runner: &SystemRunner,
-    problems: &mut Problems<'_>,
-) -> Diagnosed {
-    // The kind asked for is diagnosed here, and so has no `Info` line, even
-    // when its selection fails.
-    let attempted = choices.kind(host).ok().map(|(kind, _)| kind);
-    let constraints = settings.map(|s| s.constraints.clone()).unwrap_or_default();
-    let selected = match select::select(&choices, found, &constraints, host) {
-        Ok(selected) => selected,
-        Err(error) => {
-            let vs_error = matches!(
-                error,
-                ToolchainError::NoVisualStudio | ToolchainError::VisualStudioNotAt { .. }
-            );
-            // Already reported: no Visual Studio is what vswhere's failure
-            // means.
-            if !(no_visual_studio && matches!(error, ToolchainError::NoVisualStudio)) {
-                problems.report(&error);
-            }
-            // Selection stops at Visual Studio before it looks at a Clang, and
-            // the kind asked for has no `Info` line: a configured copy of it
-            // that cannot be used is reported here, or nowhere.
-            if vs_error
-                && let Some(kind) = attempted.filter(|k| match k.family() {
-                    Family::Llvm => true,
-                    Family::Msvc | Family::Gnu => false,
-                })
-                && let Err(unusable @ ToolchainError::ConfiguredToolUnusable { .. }) =
-                    select::copy_of(kind, found, &constraints, host)
-            {
-                problems.report(&unusable);
-            }
-            return Diagnosed {
-                attempted,
-                vs_reported: matches!(error, ToolchainError::VisualStudioNotAt { .. }),
-                tidy: None,
-            };
-        }
-    };
-    let mut diagnosed = Diagnosed {
-        attempted,
-        vs_reported: false,
-        tidy: None,
-    };
-    // Without a readable configuration, automatic selection is not what the
-    // configuration chose (commands.md, "`cuno doctor`").
-    let source = match (selected.source, settings) {
-        (select::Source::Automatic, None) => {
-            "automatic selection; the configuration could not be read".to_owned()
-        }
-        (source, _) => source.to_string(),
-    };
-    problems.status(
-        "Selected",
-        format!("{} {} ({source})", selected.kind.name(), selected.version),
-    );
-    problems.status("", selected.executable.display());
-
-    let project = settings.and_then(|s| s.project.as_ref());
-    if let Some((_, manifest)) = project
-        && let Err(error) = check_edition(selected.kind, selected.version, manifest.package.edition)
-    {
-        problems.report(&error);
-    }
-
-    let Some(toolset) = &selected.msvc else {
-        return diagnosed;
-    };
-    // An LLVM compiler borrows a toolset, named here, and is checked against
-    // its standard library below; MSVC's own is on its `Selected` line.
-    let borrows_msvc = match selected.kind.family() {
-        Family::Llvm => true,
-        Family::Msvc | Family::Gnu => false,
-    };
-    if borrows_msvc {
-        problems.status(
-            "Using",
-            format!(
-                "MSVC {} ({})",
-                toolset.cl_version,
-                toolset.install_dir().display()
-            ),
-        );
-    }
-    let prepared = match prepare::prepare(&selected, env, host, &SystemRegistry, runner) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            problems.report(&error);
-            return diagnosed;
-        }
-    };
-    if let Some(sdk) = &prepared.sdk {
-        problems.status("Using", format!("Windows SDK {}", sdk.version));
-    }
-
-    // The standard library probe, in C++ projects and outside a project,
-    // with the dev profile's flags (toolchain.md, "Minimum compiler
-    // versions"). Without a cuno home, already reported as a problem, there
-    // is no include path to give it that matches a build's.
-    let Ok(home) = cuno_core::cuno_home(env) else {
-        return diagnosed;
-    };
-    let project = project.map(|(p, m)| (p.root.as_path(), m));
-    // Not written by doctor, which only looks: see `toolchain::ready`.
-    let bundled = bundled::include_dir(&home);
-    let Some(stl) = toolchain::probe_compile(
-        &selected,
-        &prepared,
-        project,
-        Profile::Dev,
-        cwd,
-        host,
-        &bundled,
-    ) else {
-        return diagnosed;
-    };
-    // `Accepted` only for a compiler the check applies to: `probe` is Ok,
-    // checking nothing, for one it does not.
-    if cuno_toolchain::probe::applies(&selected) {
-        match toolchain::probe(&selected, &stl, temp, "doctor", runner) {
-            Ok(()) => problems.status("Accepted", "by the MSVC standard library"),
-            Err(error) => problems.report(&*error),
-        }
-    }
-    diagnosed.tidy = toolchain::tidy_compile(&selected, &prepared, project, cwd, host, &bundled);
-    diagnosed
 }
 
 /// `Found` lines for clang-format and clang-tidy, a problem for each that is
@@ -335,51 +206,6 @@ fn tools(
         {
             problems.report(&*error);
         }
-    }
-}
-
-/// An `Info` line for each compiler other than the one asked for: the
-/// version of the copy selecting it would use, `not found`, or `not usable`
-/// with the reason. cuno's minimum applies, `[toolchain.version]` does not
-/// (only the compiler used is held to it). Never a problem, except a copy
-/// written in `[toolchain.paths]` that cannot be used (commands.md, "`cuno
-/// doctor`"), which is reported once: no MSVC line follows selection's own
-/// report of the configured Visual Studio. Without `looked_for_llvm` or
-/// `looked_for_gcc` (a configured path had no file, already reported), no
-/// Clang or GCC line is printed: nothing was looked for.
-fn others(
-    diagnosed: &Diagnosed,
-    found: Found<'_>,
-    looked_for_llvm: bool,
-    looked_for_gcc: bool,
-    host: HostOs,
-    problems: &mut Problems<'_>,
-) {
-    for kind in CompilerKind::ALL {
-        let skip = match kind.family() {
-            Family::Llvm => !looked_for_llvm,
-            Family::Msvc => diagnosed.vs_reported,
-            Family::Gnu => !looked_for_gcc,
-        };
-
-        if Some(kind) == diagnosed.attempted || skip {
-            continue;
-        }
-        let line = match select::copy_of(kind, found, &Default::default(), host) {
-            Ok((_, version, _)) => format!("{} {version} (not selected)", kind.name()),
-            Err(
-                error @ (ToolchainError::ConfiguredToolUnusable { .. }
-                | ToolchainError::VisualStudioNotAt { .. }),
-            ) => {
-                problems.report(&error);
-                continue;
-            }
-            Err(ToolchainError::CompilerNotFound { .. } | ToolchainError::NoVisualStudio) => {
-                format!("{} not found", kind.name())
-            }
-            Err(error) => format!("{} not usable: {error}", kind.name()),
-        };
-        problems.status("Info", line);
     }
 }
 
