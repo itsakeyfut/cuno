@@ -101,7 +101,7 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
 1. **仕様を先に書く。** この文書に、探す場所と順、版の読み方、選ぶ条件、最低バージョンを書く。[build.md](build.md#設定とフラグの対応) の表すべてに列を足し、どのフラグも実際のコンパイラで確かめる。表が答えない設定（ランタイムの選び方、`check` の方式、LTO）は、理由とともに書く。
 2. **検出**（`cuno-toolchain`）。そのコンパイラの検出のモジュール（GCC は `gcc.rs`）を作る。
    - 探す順: `[toolchain.paths]` の設定、`PATH`、配布物の標準の場所。同じファイルは 1 つにまとめる。
-   - 版、プレリリースか、ビルド対象、ランタイムなど、選ぶ条件に要るものを、言語の設定によらない出力から読む（GCC は `-dumpfullversion`、`-dumpmachine`）。起動に要る環境（GCC は自分のディレクトリを `PATH` に）と、プロジェクトのファイルを読まない作業ディレクトリで起動する。
+   - 版、プレリリースか、ビルド対象、ランタイムなど、選ぶ条件に要るものを、言語の設定によらない出力から読む（GCC は `-dumpfullversion`、`-dumpmachine`）。ビルドと同じ環境（GCC は自分のディレクトリを `PATH` に加え、`TOOL_OPTION_VARIABLES` を取り除く）と、プロジェクトのファイルを読まない作業ディレクトリで起動する。
    - 使うときだけ探す。そのコンパイラを選んだとき（`cuno-build` の `toolchain::ready`）と `cuno doctor` で呼び、ほかのコンパイラのビルドや `fmt`・`lint` では起動しない。
    - `[toolchain.paths]` の設定は、`cuno-manifest` の `Settings` の読み出し（GCC は `Settings::gcc_path`）で読む。`config.rs` の `Tool` にそのツールがあることを確かめ、設定の表のテストに足す。
 3. **種類**（`cuno-toolchain` の `compiler.rs`）。`CompilerKind` に種類を、`CompilerKind::ALL` に同じ種類を足し、コンパイルエラーになった `match` をすべて答える。新しい系統（`Family`）、書き方（`Syntax`）、ヘッダ依存の取り方（`Dependencies`）が要るなら足す。主な答え:
@@ -143,7 +143,7 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
 
-- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC のインクルードパス）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC がライブラリと自分のプログラムを探す場所）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC が書くもう 1 つのヘッダ依存のファイル）は、ビルド、標準ライブラリの確認、`cuno doctor` の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
+- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC のインクルードパス）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC がライブラリと自分のプログラムを探す場所）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC が書くもう 1 つのヘッダ依存のファイル）は、ビルド、標準ライブラリの確認、`cuno doctor`、GCC の検出の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
   - 理由: これらはコマンドラインに現れずにフラグを足すため、`cuno.toml` と違うフラグで黙ってビルドし、成功と報告することになる（例: `_CL_=-DNDEBUG` で dev プロファイルにも `NDEBUG` が定義される）。`-v` の表示にも出ない。エラーにしないのは、全体に `CL=/MP` などを設定している利用者が、cuno を使うたびに消さずに済むように。
 
 - **Developer Command Prompt の変数は取り除く。** `VSINSTALLDIR`、`VCINSTALLDIR`、`VCToolsInstallDir`、`EXTERNAL_INCLUDE`、`WindowsSdkDir`、`WindowsSDKVersion`、`UniversalCRTSdkDir`、`UCRTVersion`。clang / clang-cl はこれらからツールセットとリンカーを探すため、別の Visual Studio の Developer Command Prompt から cuno を実行すると、cuno が選んだものと違うツールセットで成功してしまう。
@@ -222,6 +222,8 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
     - 理由: GCC の本体（`cc1`）は、同じディレクトリにある DLL を使う。そのディレクトリが `PATH` にないと、前処理もコンパイルも、何も表示せずに失敗する（MSYS2 は、標準では `PATH` を変えない）。
   - これらを調べるとき、GCC は、その GCC のあるディレクトリを作業ディレクトリにして起動する。
     - 理由: `-include` は、作業ディレクトリを最初に探す。プロジェクトのディレクトリで起動すると、プロジェクトにある `_mingw.h` が GCC のものの代わりに読まれ、C ランタイムの判定が変わる。
+  - 検出でも、ビルドと同じく、コンパイラが自分で読む環境変数（[Windows での環境解決](#windows-での環境解決)）を取り除いた環境で起動する。
+    - 理由: `CPATH` などが別の `_mingw.h` を指していると、UCRT の GCC を MSVCRT と判定し、入っている GCC を入れるよう案内してしまう。`GCC_EXEC_PREFIX` や `COMPILER_PATH` があると、ビルドとは別の `cc1` で調べることになる。
   - 前処理（`-dM -E`）が失敗した GCC は、実行できないものとして扱う。MSVCRT とは扱わない。
     - 理由: 前処理できない GCC はビルドもできない。MSVCRT として扱うと、UCRT の GCC を入れている利用者に、UCRT の GCC を入れるよう案内してしまう。
   - 理由: `--version` の 1 行目の最初の数字は、配布元が付けた名前の中の数字（`gcc (Buildroot 2023.02.1) 12.3.0` の `2023.02.1`）のことがある。`-v` の `gcc version` の行は、言語の設定によって訳される。

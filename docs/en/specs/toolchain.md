@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob a393f4e5b49881d317da54fe8e32be0c05bf9f40 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 3e4721a789c95ec22baafbd3ab7980837006efb7 -->
 
 # Toolchain
 
@@ -103,7 +103,7 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
 1. **Write the spec first.** In this document, write where it is looked for and in what order, how its version is read, the conditions for choosing it, and its minimum version. Add a column to every table in [build.md](build.md#settings-and-flags), and check every flag against the real compiler. What the tables do not answer (how the runtime is chosen, how `check` works, LTO) is written with its reasons.
 2. **Detection** (`cuno-toolchain`). Make a detection module for the compiler (GCC's is `gcc.rs`).
    - The search order: the `[toolchain.paths]` setting, `PATH`, then the distribution's standard places. The same file is listed once.
-   - Read what choosing it needs, such as its version, whether it is a pre-release, its target and its runtime, from output that no language setting changes (GCC's `-dumpfullversion`, `-dumpmachine`). Run it in the environment it needs (GCC with its own directory on `PATH`), and in a working directory where it reads none of the project's files.
+   - Read what choosing it needs, such as its version, whether it is a pre-release, its target and its runtime, from output that no language setting changes (GCC's `-dumpfullversion`, `-dumpmachine`). Run it in the environment the build gives it (GCC with its own directory added to `PATH` and `TOOL_OPTION_VARIABLES` removed), and in a working directory where it reads none of the project's files.
    - Look for it only when it is used: when it is chosen (`toolchain::ready` in `cuno-build`) and in `cuno doctor`. Builds with other compilers, `fmt` and `lint` do not start it.
    - The `[toolchain.paths]` setting is read through an accessor on `Settings` in `cuno-manifest` (GCC's is `Settings::gcc_path`). Check that `Tool` in `config.rs` has the tool, and add it to the settings table's test.
 3. **The kind** (`compiler.rs` in `cuno-toolchain`). Add the kind to `CompilerKind` and to `CompilerKind::ALL`, and answer every `match` that no longer compiles. Add a family (`Family`), a syntax (`Syntax`) or a way of reporting header dependencies (`Dependencies`) if it needs a new one. The main answers:
@@ -145,7 +145,7 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH` (prepended) | `<MSVC>\bin\Hostx64\x64`, `<SDK>\bin\<version>\x64` |
 
-- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (the include paths of Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (where GCC looks for libraries and its own programs), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (an additional header dependency file GCC writes) are removed from the environment of the build, the standard library check and `cuno doctor`. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in cuno.toml`).
+- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (the include paths of Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (where GCC looks for libraries and its own programs), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (an additional header dependency file GCC writes) are removed from the environment of the build, the standard library check, `cuno doctor` and GCC's detection. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in cuno.toml`).
   - Rationale: they add flags without appearing on the command line, so the build would run with flags other than `cuno.toml`'s and report success (with `_CL_=-DNDEBUG`, for example, `NDEBUG` is defined in the dev profile too), and `-v` would not show them. They are not an error so that a user who sets `CL=/MP` globally need not unset it every time they use cuno.
 
 - **Developer Command Prompt variables are removed**: `VSINSTALLDIR`, `VCINSTALLDIR`, `VCToolsInstallDir`, `EXTERNAL_INCLUDE`, `WindowsSdkDir`, `WindowsSDKVersion`, `UniversalCRTSdkDir`, `UCRTVersion`. clang / clang-cl look for the toolset and linker through them, so running cuno from another Visual Studio's Developer Command Prompt would succeed with a toolset other than the one cuno chose.
@@ -224,6 +224,8 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
     - Rationale: GCC's compiler proper (`cc1`) uses DLLs in the same directory. When that directory is not on `PATH`, preprocessing and compiling fail without printing anything (MSYS2 does not change `PATH` by default).
   - When these are read, GCC is run with that GCC's directory as its working directory.
     - Rationale: `-include` searches the working directory first. Run in the project's directory, a `_mingw.h` in the project would be read instead of GCC's, and the C runtime would be judged differently.
+  - Detection, like the build, runs GCC in an environment without the variables compilers read for themselves ([Environment resolution on Windows](#environment-resolution-on-windows)).
+    - Rationale: with `CPATH` or a similar variable pointing at another `_mingw.h`, a UCRT GCC would be judged MSVCRT, and the user told to install the GCC they already have. With `GCC_EXEC_PREFIX` or `COMPILER_PATH` set, detection would inspect a different `cc1` from the one the build runs.
   - A GCC whose preprocessing (`-dM -E`) fails is treated as one that cannot run, not as MSVCRT.
     - Rationale: a GCC that cannot preprocess cannot build either. Treating it as MSVCRT would tell a user who has a UCRT GCC installed to install a UCRT GCC.
   - Rationale: the first number on the first line of `--version` can be a number in the name the distributor gave (`2023.02.1` in `gcc (Buildroot 2023.02.1) 12.3.0`). The `gcc version` line of `-v` is translated according to the language setting.
