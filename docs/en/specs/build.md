@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob cbcc5b5f7d4b6c77a5258370a167c8c0f55b3294 -->
+<!-- translated-from: docs/ja/specs/build.md @ blob b613acf523299fc5c6da660dfdd523fdb3b02445 -->
 
 # Build
 
@@ -144,7 +144,7 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - With MinGW GCC, whatever `runtime` says, GCC's runtime (`libgcc`, `libstdc++`) and the threading library (`winpthread`) are linked statically, and the C runtime (UCRT) stays dynamic. `runtime = "static"` is the same as `dynamic`.
   - Rationale: the DLLs of GCC's runtime and of `winpthread` (`libstdc++-6.dll`, `libwinpthread-1.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
   - With `-static-libgcc -static-libstdc++` alone, `libstdc++` loads `libwinpthread-1.dll`, so `winpthread` is also named and made static. `-lstdc++` comes first because `winpthread` resolves functions that `libstdc++` uses.
-  - For C++ with GCC 14 or later, `-lstdc++exp` is linked statically too. MinGW's libstdc++ keeps the part of C++23's `std::print` / `std::println` that writes to a terminal in `libstdc++exp`, and the link fails without it (checked with GCC 16.2.0). Being a static library, it is pulled in only when used. GCC 13 and earlier have no `<print>`, so it is not given there (naming a library that does not exist would fail every C++ link).
+  - For C++ with GCC 14 or later, `-lstdc++exp` is linked statically too. MinGW's libstdc++ keeps the part of C++23's `std::print` / `std::println` that writes to a terminal in `libstdc++exp`, and the link fails without it (checked with GCC 16.2.0). Being a static library, it is pulled in only when used. `libstdc++exp` also holds experimental features such as `std::stacktrace`, so with GCC 14 or later those link too. GCC 13 and earlier have no `<print>`, so it is not given there (13.3 has the library, but nothing is gained from it).
   - Why `static` is the same as `dynamic`: MinGW cannot link UCRT statically (even with `-static`, the UCRT DLL is loaded). On top of that, `-static` makes the import libraries of the DLLs in `links` (`libfoo.dll.a`) impossible to link.
   - The libraries written in `links` are not among those made static. What `ld` finds in the order above is linked. For example, `links = ["pthread"]` finds `libpthread.dll.a`, and the built executable loads `libwinpthread-1.dll`.
 - GCC's `subsystem = "windows"` is `-mwindows`. MinGW's startup code calls `main` even for a GUI program, so no entry point needs to be given.

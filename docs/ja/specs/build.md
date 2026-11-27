@@ -142,7 +142,7 @@
 - MinGW の GCC では、`runtime` によらず、GCC のランタイム（`libgcc`、`libstdc++`）とスレッドのライブラリ（`winpthread`）を静的にリンクし、C のランタイム（UCRT）は動的のままにする。`runtime = "static"` は `dynamic` と同じ。
   - 理由: GCC のランタイムと `winpthread` の DLL（`libstdc++-6.dll`、`libwinpthread-1.dll` など）は Windows に入っておらず、動的にリンクすると、作った実行ファイルが cuno の外では起動しない。MSVC の `dynamic` と同じく、配っても動く実行ファイルにする。
   - `-static-libgcc -static-libstdc++` だけでは、`libstdc++` が `libwinpthread-1.dll` を読む。そのため `winpthread` も名前を挙げて静的にする。`-lstdc++` を先に挙げるのは、`winpthread` が、`libstdc++` の使う関数を解決するため。
-  - GCC 14 以上の C++ では、`-lstdc++exp` も静的にリンクする。MinGW の libstdc++ は、C++23 の `std::print` / `std::println` が端末に書く部分を `libstdc++exp` に置いており、ないとリンクで失敗する（GCC 16.2.0 で確認）。静的ライブラリなので、使ったときだけ取り込まれる。GCC 13 以前は `<print>` がないため付けない（ないライブラリを指定すると、すべての C++ のリンクが失敗する）。
+  - GCC 14 以上の C++ では、`-lstdc++exp` も静的にリンクする。MinGW の libstdc++ は、C++23 の `std::print` / `std::println` が端末に書く部分を `libstdc++exp` に置いており、ないとリンクで失敗する（GCC 16.2.0 で確認）。静的ライブラリなので、使ったときだけ取り込まれる。`libstdc++exp` は `std::stacktrace` などの実験的な機能も持つので、GCC 14 以上ではそれらもリンクできるようになる。GCC 13 以前は `<print>` がないため付けない（13.3 にはライブラリがあるが、付けても得るものがない）。
   - `static` を `dynamic` と同じにする理由: MinGW では UCRT を静的にリンクできない（`-static` でも UCRT の DLL を読む）。そのうえ `-static` は、`links` の DLL のインポートライブラリ（`libfoo.dll.a`）をリンクできなくする。
   - `links` に書いたライブラリは、静的にする対象に含めない。`ld` が上の順で見つけたものをリンクする。たとえば `links = ["pthread"]` は `libpthread.dll.a` を見つけ、作った実行ファイルは `libwinpthread-1.dll` を読む。
 - GCC の `subsystem = "windows"` は `-mwindows`。MinGW の起動コードは GUI のプログラムでも `main` を呼ぶため、入口の指定は要らない。

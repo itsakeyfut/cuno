@@ -60,7 +60,7 @@ pub fn library_files(kind: CompilerKind, lib: &str) -> Vec<String> {
 /// which resolves what libstdc++ uses; `-Bdynamic` after them leaves the
 /// libraries the driver adds (UCRT's) as they are. From GCC 14, C++ also
 /// links `libstdc++exp`, where MinGW's libstdc++ keeps what `std::print`
-/// writes to a terminal with; before 14 there is no such library.
+/// writes to a terminal with; before 14 there is no `<print>` to need it.
 fn gcc_runtime_args(cxx: bool, version: Version) -> Vec<&'static str> {
     let mut args = vec!["-static-libgcc"];
     if cxx {
