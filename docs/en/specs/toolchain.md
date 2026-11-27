@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 167e3bfa423f205b6d1a923309bd043ab70a226f -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 90eef693c6cc1ebb71766cf046c8a907cfcd9a87 -->
 
 # Toolchain
 
@@ -98,20 +98,22 @@ A compiler must accept a C++20 specification.
 
 ### Adding a compiler
 
-What adding GCC (MinGW-w64) needed, in order. Done in order, the build and the tests pass at every step.
+What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and the fixes after them): steps 1 and 2, 3 to 6, and 7 to 9. Adding the kind makes the `match`es of steps 3 to 6 compile errors all at once, and tests run with the real compiler fail on CI unless CI installs it, so neither group can be split further.
 
 1. **Write the spec first.** In this document, write where it is looked for and in what order, how its version is read, the conditions for choosing it, and its minimum version. Add a column to every table in [build.md](build.md#settings-and-flags), and check every flag against the real compiler. What the tables do not answer (how the runtime is chosen, how `check` works, LTO) is written with its reasons.
 2. **Detection** (`cuno-toolchain`). Make a detection module for the compiler (GCC's is `gcc.rs`).
    - The search order: the `[toolchain.paths]` setting, `PATH`, then the distribution's standard places. The same file is listed once.
    - Read what choosing it needs, such as its version, whether it is a pre-release, its target and its runtime, from output that no language setting changes (GCC's `-dumpfullversion`, `-dumpmachine`). Run it in the environment it needs (GCC with its own directory on `PATH`), and in a working directory where it reads none of the project's files.
    - Look for it only when it is used: when it is chosen (`toolchain::ready` in `cuno-build`) and in `cuno doctor`. Builds with other compilers, `fmt` and `lint` do not start it.
+   - The `[toolchain.paths]` setting is read through an accessor on `Settings` in `cuno-manifest` (GCC's is `Settings::gcc_path`). Check that `Tool` in `config.rs` has the tool, and add it to the settings table's test.
 3. **The kind** (`compiler.rs` in `cuno-toolchain`). Add the kind to `CompilerKind` and to `CompilerKind::ALL`, and answer every `match` that no longer compiles. Add a family (`Family`), a syntax (`Syntax`) or a way of reporting header dependencies (`Dependencies`) if it needs a new one. The main answers:
    - Its name, its minimum version, whether it uses the MSVC toolset and the MSVC standard library, whether `check` compiles, and the driver it links with (`g++` for GCC's C++).
    - Its mapping to `CompilerName` in `cuno-manifest`, and where its `[toolchain.version]` lives (`Constraints::slot`).
    - Remove its name from the names `CompilerKind::parse` refuses as not supported yet.
-4. **Selection** (`select.rs`). Add the detection results to `Found`, and write the conditions for choosing a copy in `copy_of`. A copy written in `[toolchain.paths]` is the only one used, and one that cannot be used is an error naming the setting. The `help:` for none found and none usable says how to install it (`error.rs`).
+4. **Selection** (`select.rs`). Add the detection results to `Found`, and write the conditions for choosing a copy in `copy_of`. A copy written in `[toolchain.paths]` is the only one used, and one that cannot be used is an error naming the setting. The `help:` for none found and none usable says how to install it (`error.rs`). For a compiler that uses no MSVC toolset, check that a missing Visual Studio does not stop its build (`toolchain::ready`) and that `cuno doctor` does not report it as a problem.
 5. **Environment** (`prepare.rs`). Build the environment it runs in. Add the environment variables it reads for itself to `TOOL_OPTION_VARIABLES`, so they are left out. Give `Prepared` what identifies its commands for deciding what changed: its standard header directories (`Prepared::include_dirs`) and the runtime files it links into every program, so that a file of the same name appearing is not missed ([build.md](build.md#deciding-what-changed)).
-6. **Flags** (`flags/`). Every row in `compile.rs` and `link.rs`, plus `library_files` (the file names its linker tries for a library, in the order it tries them), the color flags, the header dependency file, and the versions that accept each standard (`check_edition`). The command given to clang-based tools (`clang_tools.rs`) names the target and the version macro the build sees (`-fgnuc-version` for GCC).
+6. **Flags** (`flags/`). Every row in `compile.rs` and `link.rs`, plus `library_files` (the file names its linker tries for a library, in the order it tries them), the color flags, the header dependency file, and the versions that accept each standard (`check_edition`). The command given to clang-based tools (`clang_tools.rs`) names the target and the version macro the build sees (`-fgnuc-version` for GCC; the version comes through `ToolContext`, which `pipeline.rs` in `cuno-build` fills). For a compiler that does not use the MSVC standard library, clang-tidy's standard library check (`toolchain::tidy_compile`) is not made.
+
 7. **The test runtime** (`headers/cuno/` in `cuno-build`). Check that tests register with it (the `constructor` attribute, or MSVC's `.CRT$XCU`), that a normal build links without the runtime, that values such as a `long double` are shown right, and any `#pragma` it does not know.
 8. **Tests.**
    - Add the compiler's row to each module's unit test tables.
@@ -120,7 +122,6 @@ What adding GCC (MinGW-w64) needed, in order. Done in order, the build and the t
    - Add its `[build.<compiler>]` to the `examples/cpp/per-compiler-flags` example.
 9. **CI.** In the test job of `.github/workflows/ci.yml`, install it where users install it. The tests fail if it is not found.
 10. **Documents.** Correct the lists of compiler names and what is "not supported yet" in [commands.md](commands.md) and [manifest.md](manifest.md).
-
 
 ## Environment resolution on Windows
 
