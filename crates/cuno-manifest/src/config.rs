@@ -138,11 +138,11 @@ pub fn load_config(path: &Path, shown: &Path, base: &Path) -> Result<Loaded<Conf
 }
 
 /// Sets `[toolchain] compiler = name` in the user-level `config.toml` at
-/// `path`, keeping its other keys, its comments and its order, and making
-/// the file (and its directory) when there is none. Nothing is written
-/// when the file cannot be read or `[toolchain]` is not a table; the new
-/// text goes to a file beside it that then replaces it, so a failed write
-/// never leaves half a configuration (`docs/en/specs/commands.md`, "`cuno
+/// `path`, keeping its other keys, its comments, its order, its line
+/// endings and a byte order mark, and making the file (and its directory)
+/// when there is none. Nothing is written when the file cannot be read or
+/// `[toolchain]` is not a table, and a failed write never leaves half a
+/// configuration in its place (`docs/en/specs/commands.md`, "`cuno
 /// toolchain default <compiler>`").
 pub fn write_user_compiler(path: &Path, name: &str) -> Result<(), ConfigError> {
     let error = |message: String| ConfigError {
@@ -158,7 +158,15 @@ pub fn write_user_compiler(path: &Path, name: &str) -> Result<(), ConfigError> {
     // The reader's own parse first, so a broken file is reported as every
     // command reports it, with its line and column.
     Doc::parse(&text, path)?;
-    let mut doc: toml_edit::DocumentMut = text
+    // toml_edit writes every line ending as `\n` and drops the mark, which
+    // would change every line of a file written on Windows: both are put
+    // back as they were.
+    let (bom, body) = match text.strip_prefix('\u{feff}') {
+        Some(body) => ("\u{feff}", body),
+        None => ("", text.as_str()),
+    };
+    let crlf = body.contains("\r\n");
+    let mut doc: toml_edit::DocumentMut = body
         .parse()
         .map_err(|e| error(format!("cannot read {}: {e}", path.display())))?;
     let toolchain = doc
@@ -179,7 +187,11 @@ pub fn write_user_compiler(path: &Path, name: &str) -> Result<(), ConfigError> {
     let mut beside = path.as_os_str().to_owned();
     beside.push(".tmp");
     let beside = PathBuf::from(beside);
-    std::fs::write(&beside, doc.to_string()).map_err(written)?;
+    let mut out = doc.to_string().replace("\r\n", "\n");
+    if crlf {
+        out = out.replace('\n', "\r\n");
+    }
+    std::fs::write(&beside, format!("{bom}{out}")).map_err(written)?;
     std::fs::rename(&beside, path).map_err(|e| {
         let _ = std::fs::remove_file(&beside);
         written(e)
@@ -297,7 +309,8 @@ mod tests {
     /// compiler.
     ///
     /// Mutation: write the file from the new key alone, drop its comments,
-    /// or set the key at the top level; this test fails.
+    /// set the key at the top level, leave the file written beside it in
+    /// place, or not make the directory; this test fails.
     #[test]
     fn writing_the_default_keeps_the_rest_of_the_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -321,6 +334,48 @@ mod tests {
         );
     }
 
+    /// A file written on Windows keeps its CRLF line endings and its byte
+    /// order mark on every line, not only the new one.
+    ///
+    /// Mutation: write toml_edit's text as it comes, or drop the mark;
+    /// this test fails.
+    #[test]
+    fn writing_the_default_keeps_crlf_and_a_byte_order_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for before in [
+            "\u{feff}# c\r\n[build]\r\njobs = 2\r\n\r\n[toolchain]\r\ncompiler = \"clang\"\r\n",
+            "[build]\r\njobs = 2\r\n",
+        ] {
+            std::fs::write(&path, before).unwrap();
+            write_user_compiler(&path, "gcc").unwrap();
+            let after = std::fs::read_to_string(&path).unwrap();
+            let expected = if before.contains("compiler") {
+                before.replace("\"clang\"", "\"gcc\"")
+            } else {
+                format!("{before}\r\n[toolchain]\r\ncompiler = \"gcc\"\r\n")
+            };
+            assert_eq!(after, expected);
+        }
+    }
+
+    /// A `toolchain` written as an inline table is a table: the key goes in
+    /// it, and it stays inline.
+    ///
+    /// Mutation: accept only a `[toolchain]` header table; this test
+    /// fails.
+    #[test]
+    fn an_inline_toolchain_table_takes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "toolchain = { compiler = \"clang\" }\n").unwrap();
+        write_user_compiler(&path, "gcc").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "toolchain = { compiler = \"gcc\" }\n"
+        );
+    }
+
     /// A `toolchain` that is not a table, and a file that is not TOML, are
     /// errors that name the file, and the file is left as it was.
     ///
@@ -340,6 +395,13 @@ mod tests {
             assert!(err.to_string().contains("config.toml"), "{err}");
             assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         }
+        // Reported as reading reports it: with where.
+        std::fs::write(&path, "[toolchain\n").unwrap();
+        let err = write_user_compiler(&path, "gcc").unwrap_err();
+        assert!(err.to_string().contains("config.toml:1:"), "{err}");
+        std::fs::write(&path, "toolchain = \"clang\"\n").unwrap();
+        let err = write_user_compiler(&path, "gcc").unwrap_err();
+        assert!(err.to_string().contains("is not a table"), "{err}");
     }
 
     fn base() -> PathBuf {
