@@ -89,6 +89,11 @@ impl Settings {
     pub fn msvc_path(&self) -> Option<&Path> {
         self.paths.get(&Tool::Msvc).map(PathBuf::as_path)
     }
+
+    /// `[toolchain.paths] gcc`: the only GCC to use, when written.
+    pub fn gcc_path(&self) -> Option<&Path> {
+        self.paths.get(&Tool::Gcc).map(PathBuf::as_path)
+    }
 }
 
 /// The `[term]` settings, which every command applies before its work.
@@ -568,7 +573,7 @@ mod tests {
         );
         f.write(
             "home/config.toml",
-            "[build]\njobs = 8\n[term]\ncolor = \"always\"\nverbose = true\n[toolchain.paths]\nclang = \"user-clang\"\nclang-tidy = \"user-tidy\"\nmsvc = \"vs\"\n",
+            "[build]\njobs = 8\n[term]\ncolor = \"always\"\nverbose = true\n[toolchain.paths]\nclang = \"user-clang\"\nclang-tidy = \"user-tidy\"\nmsvc = \"vs\"\ngcc = \"user-gcc\"\n",
         );
         let s = f
             .resolve(&f.root, &f.env(&[]), &CliSettings::default())
@@ -581,6 +586,7 @@ mod tests {
         assert_eq!(llvm.clang_tidy, Some(f.home.join("user-tidy")));
         assert_eq!(llvm.clang_cl, None);
         assert_eq!(s.msvc_path(), Some(f.home.join("vs").as_path()));
+        assert_eq!(s.gcc_path(), Some(f.home.join("user-gcc").as_path()));
 
         let cli = CliSettings {
             jobs: NonZeroU32::new(2),

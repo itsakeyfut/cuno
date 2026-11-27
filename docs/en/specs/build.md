@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/build.md @ blob 8bc786d3d00476ec0962db3711e69966ba9e2bdb -->
+<!-- translated-from: docs/ja/specs/build.md @ blob 21fb99c540ab92909e552d5d29866da145827c5c -->
 
 # Build
 
@@ -139,6 +139,8 @@ Linking goes through the compiler driver (so that each driver adds the C runtime
 - `debug-info` does not use `/Zi`, because PDB writes conflict in parallel builds and it cannot be cached by sccache. `clang -g` emits CodeView and links as with `/DEBUG`.
 - `opt-level = 1` is `/O2` on MSVC, which has no equivalent level.
 - The debug C runtime (`/MDd`) is not the default, because mixing it with prebuilt dependencies causes link errors (the same policy as Rust).
+- With MinGW GCC, GCC's runtime (`libgcc`, `libstdc++`) is linked statically even with `runtime = "dynamic"` (`-static-libgcc -static-libstdc++`). The C runtime (UCRT) stays dynamic. `runtime = "static"` is `-static`.
+  - Rationale: GCC's runtime DLLs (`libstdc++-6.dll`, etc.) do not ship with Windows, and if they were linked dynamically, the built executable would not start outside cuno. As with MSVC's `dynamic`, the result is an executable that still runs when distributed.
 
 ## Custom build steps (three layers)
 

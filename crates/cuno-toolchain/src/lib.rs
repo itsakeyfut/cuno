@@ -6,6 +6,7 @@
 pub mod compiler;
 mod error;
 pub mod flags;
+pub mod gcc;
 mod host;
 pub mod llvm;
 pub mod msvc;
