@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::gcc::{Gcc, Origin as GccOrigin, Probe as GccProbe};
 use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
+use crate::prepare::Detected;
 use cuno_core::paths;
 
 use crate::{HostOs, ToolchainError, Version};
@@ -589,6 +590,55 @@ pub fn select_tool(
             excluded,
         }),
     }
+}
+
+/// What `cuno doctor` says of a compiler other than the one asked for.
+#[derive(Debug)]
+pub enum Other {
+    /// Selecting it would use a copy of this version.
+    Selectable(Version),
+    /// No copy was found.
+    NotFound,
+    /// Copies were found and none can be used, for this reason.
+    NotUsable(ToolchainError),
+    /// The copy written in `[toolchain.paths]` cannot be used: a problem
+    /// even though it is not the compiler asked for (`commands.md`, "`cuno
+    /// doctor`").
+    Problem(ToolchainError),
+}
+
+/// Each compiler other than `attempted` that `detected` looked for, with
+/// what selecting it would use, judged as [`copy_of`] judges it with
+/// cuno's minimum only: `[toolchain.version]` applies to the compiler used.
+/// A Visual Studio in `[toolchain.paths] msvc` that cannot be used is left
+/// out when selection has reported it (`vs_reported`), which this would
+/// only repeat.
+pub fn others(
+    detected: &Detected,
+    found: Found<'_>,
+    attempted: Option<CompilerKind>,
+    vs_reported: bool,
+    host: HostOs,
+) -> Vec<(CompilerKind, Other)> {
+    CompilerKind::ALL
+        .into_iter()
+        .filter(|&kind| Some(kind) != attempted && detected.looked_for(kind))
+        .filter_map(|kind| {
+            let other = match copy_of(kind, found, &Constraints::default(), host) {
+                Ok((_, version, _)) => Other::Selectable(version),
+                Err(ToolchainError::VisualStudioNotAt { .. }) if vs_reported => return None,
+                Err(
+                    error @ (ToolchainError::ConfiguredToolUnusable { .. }
+                    | ToolchainError::VisualStudioNotAt { .. }),
+                ) => Other::Problem(error),
+                Err(ToolchainError::CompilerNotFound { .. } | ToolchainError::NoVisualStudio) => {
+                    Other::NotFound
+                }
+                Err(error) => Other::NotUsable(error),
+            };
+            Some((kind, other))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1582,5 +1632,100 @@ mod tests {
             matches!(&err, ToolchainError::ConfiguredToolUnusable { why, .. } if why.contains("13.2.0 does not satisfy")),
             "{err:?}"
         );
+    }
+
+    fn detected(llvm: Vec<LlvmTool>, gcc: Option<Vec<Gcc>>) -> Detected {
+        Detected {
+            installs: Ok(Vec::new()),
+            llvm: Ok(llvm),
+            gcc: gcc.map(Ok),
+        }
+    }
+
+    /// A configured GCC that cannot be used is a problem in doctor, not an
+    /// `Info` line, even when GCC is not the compiler asked for.
+    ///
+    /// Mutation: map `ConfiguredToolUnusable` to `NotUsable`; this test
+    /// fails.
+    #[test]
+    fn a_configured_copy_that_cannot_be_used_is_a_problem() {
+        let old = gcc(
+            "C:/old/gcc.exe",
+            gcc_ran(v(9, 2, 0), GCC_TARGET, true),
+            GccOrigin::Configured,
+        );
+        let detected = detected(Vec::new(), Some(vec![old]));
+        let others = others(
+            &detected,
+            detected.found(None),
+            Some(CompilerKind::Msvc),
+            false,
+            HostOs::Windows,
+        );
+        let gcc = others.iter().find(|(k, _)| *k == CompilerKind::Gcc);
+        assert!(
+            matches!(
+                gcc,
+                Some((
+                    _,
+                    Other::Problem(ToolchainError::ConfiguredToolUnusable { .. })
+                ))
+            ),
+            "{others:?}"
+        );
+    }
+
+    /// The Visual Studio in `[toolchain.paths] msvc` that selection already
+    /// reported is not reported again; when selection did not report it
+    /// (another compiler was asked for), it is a problem here.
+    ///
+    /// Mutation: drop the `vs_reported` arm; this test fails.
+    #[test]
+    fn a_visual_studio_selection_reported_is_left_out() {
+        let detected = detected(Vec::new(), None);
+        let nowhere = Path::new("C:/nowhere");
+        let msvc = |vs_reported| {
+            others(
+                &detected,
+                detected.found(Some(nowhere)),
+                Some(CompilerKind::Clang),
+                vs_reported,
+                HostOs::Windows,
+            )
+            .into_iter()
+            .find(|(k, _)| *k == CompilerKind::Msvc)
+        };
+        assert!(msvc(true).is_none());
+        assert!(matches!(
+            msvc(false),
+            Some((_, Other::Problem(ToolchainError::VisualStudioNotAt { .. })))
+        ));
+    }
+
+    /// Only what was looked for has a line, the compiler asked for has
+    /// none, and one looked for and not found is `NotFound`.
+    ///
+    /// Mutation: keep `attempted`, or skip the `looked_for` filter; this
+    /// test fails.
+    #[test]
+    fn each_compiler_looked_for_but_the_one_asked_for_has_a_line() {
+        let llvm = [clang(Tool::Clang, "C:/llvm/clang.exe", v(20, 1, 0))];
+        let detected = detected(llvm.to_vec(), None);
+        let others = others(
+            &detected,
+            detected.found(None),
+            Some(CompilerKind::ClangCl),
+            false,
+            HostOs::Windows,
+        );
+        let lines: Vec<String> = others
+            .iter()
+            .map(|(k, o)| match o {
+                Other::Selectable(v) => format!("{} {v}", k.name()),
+                Other::NotFound => format!("{} not found", k.name()),
+                other => format!("{} {other:?}", k.name()),
+            })
+            .collect();
+        assert_eq!(lines, ["msvc not found", "clang 20.1.0"]);
     }
 }

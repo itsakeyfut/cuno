@@ -11,7 +11,7 @@ use crate::Version;
 const BUILD_TOOLS_HELP: &str = "install Build Tools for Visual Studio with the \"Desktop development with C++\" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/";
 
 /// A toolchain problem.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ToolchainError {
     /// vswhere.exe is not where every Visual Studio 2017+ installer puts it.
     VswhereMissing {

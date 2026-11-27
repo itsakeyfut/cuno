@@ -107,7 +107,9 @@ pub fn build(
     // The compiler, its environment, and its pairing with the standard
     // library, checked before anything is built (toolchain.md).
     let runner = SystemRunner::new();
-    let toolchain::Ready { selected, prepared } = toolchain::ready(
+    let toolchain::Ready {
+        selected, prepared, ..
+    } = toolchain::ready(
         toolchain::ReadyFor::Build,
         &settings,
         (root, manifest),
