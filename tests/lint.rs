@@ -13,10 +13,11 @@ const MANIFEST: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
 /// Code with a `modernize-use-nullptr` finding.
 const ZERO: &str = "int main() {\n    int* p = 0;\n    return p == 0 ? 0 : 1;\n}\n";
 
-const COMPILERS: [(&str, Compiler); 3] = [
+const COMPILERS: [(&str, Compiler); 4] = [
     ("msvc", Compiler::Msvc),
     ("clang", Compiler::Clang),
     ("clang-cl", Compiler::ClangCl),
+    ("gcc", Compiler::Gcc),
 ];
 
 /// The compilers here, when clang-tidy is too.

@@ -178,6 +178,7 @@ mod tests {
                 kind,
                 include: &include,
                 msvc: Some(&version),
+                gnuc: None,
             };
             let value = entries(Path::new("C:/p"), &graph, context);
             let entries = value.as_array().unwrap();
@@ -222,6 +223,7 @@ mod tests {
                 kind,
                 include: &[],
                 msvc: None,
+                gnuc: None,
             };
             let value = entries(Path::new("C:/p"), &graph, context);
             assert_eq!(arguments(&value[0])[2], read, "{kind:?} {written}");
@@ -233,6 +235,7 @@ mod tests {
             kind: CompilerKind::Msvc,
             include: &[],
             msvc: None,
+            gnuc: None,
         };
         let value = entries(Path::new("C:/p"), &graph, msvc);
         assert!(!arguments(&value[0]).contains(&"/GL"));
@@ -262,6 +265,7 @@ mod tests {
             kind: CompilerKind::Clang,
             include: &[],
             msvc: None,
+            gnuc: None,
         }
     }
 

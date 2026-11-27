@@ -505,7 +505,7 @@ fn gcc_release(gcc: &Gcc) -> Result<Version, String> {
 }
 
 /// The one target cuno builds for with GCC.
-const GCC_TARGET: &str = "x86_64-w64-mingw32";
+pub(crate) const GCC_TARGET: &str = "x86_64-w64-mingw32";
 
 /// A clang-format or clang-tidy to use.
 #[derive(Clone, Debug, PartialEq, Eq)]

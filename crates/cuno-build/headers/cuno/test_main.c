@@ -53,6 +53,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* What formats a long double, and a user's `cuno_info`, which may hold
+ * one. MinGW's is the x87's 80 bits, which the UCRT's printf family reads
+ * as a 64-bit double; MinGW's own reads it whole. */
+#if defined(__MINGW32__)
+#define cuno_test_snprintf_ld __mingw_snprintf
+#define cuno_test_vsnprintf __mingw_vsnprintf
+#else
+#define cuno_test_snprintf_ld snprintf
+#define cuno_test_vsnprintf vsnprintf
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -78,8 +89,16 @@ static cuno_test_entry *cuno_test_tail;
 static FILE *cuno_test_out;
 static int cuno_test_failed;
 
+/* Whether `a` goes after `b`: a later file, a later line, or the same
+ * place, which keeps the order they were registered in. */
+static int cuno_test_after(const cuno_test_entry *a, const cuno_test_entry *b) {
+    int order = strcmp(a->file, b->file);
+    return order > 0 || (order == 0 && a->line >= b->line);
+}
+
 static void cuno_test_add(const char *name, const char *file, int line, void (*run)(void *),
                           void *context, int from_macro) {
+
     cuno_test_entry *entry = (cuno_test_entry *)calloc(1, sizeof *entry);
     if (entry == NULL) {
         fputs("error: out of memory registering tests\n", stderr);
@@ -91,13 +110,30 @@ static void cuno_test_add(const char *name, const char *file, int line, void (*r
     entry->run = run;
     entry->context = context;
     entry->from_macro = from_macro;
-    if (cuno_test_tail == NULL) {
-        cuno_test_head = entry;
-    } else {
-        cuno_test_tail->next = entry;
+    /* Kept in order of file, then line, after any registered at the same
+     * place: compilers run a file's initialisers in different orders (GCC
+     * runs its constructors last first), and the list is the same on all.
+     * One that sorts at or after the last is appended at once, as cl and
+     * Clang register a file's tests in order. */
+    if (cuno_test_tail == NULL || cuno_test_after(entry, cuno_test_tail)) {
+        if (cuno_test_tail == NULL) {
+            cuno_test_head = entry;
+        } else {
+            cuno_test_tail->next = entry;
+        }
+        cuno_test_tail = entry;
+        return;
     }
-    cuno_test_tail = entry;
+    {
+        cuno_test_entry **at = &cuno_test_head;
+        while (*at != NULL && cuno_test_after(entry, *at)) {
+            at = &(*at)->next;
+        }
+        entry->next = *at;
+        *at = entry;
+    }
 }
+
 
 void cuno_test_register(const char *name, const char *file, int line, void (*run)(void *),
                         void *context) {
@@ -166,7 +202,7 @@ void cuno_test_infof(const char *format, ...) {
     char text[1024];
     va_list args;
     va_start(args, format);
-    vsnprintf(text, sizeof text, format, args);
+    cuno_test_vsnprintf(text, sizeof text, format, args);
     va_end(args);
     cuno_test_info(text);
 }
@@ -175,7 +211,8 @@ void cuno_test_format(cuno_test_value value, char *buffer, size_t size) {
     switch (value.kind) {
     case CUNO_TEST_SIGNED: snprintf(buffer, size, "%lld", value.as.i); break;
     case CUNO_TEST_UNSIGNED: snprintf(buffer, size, "%llu", value.as.u); break;
-    case CUNO_TEST_FLOAT: snprintf(buffer, size, "%.17Lg", value.as.f); break;
+    case CUNO_TEST_FLOAT: cuno_test_snprintf_ld(buffer, size, "%.17Lg", value.as.f); break;
+
     case CUNO_TEST_POINTER:
         if (value.as.p == NULL) {
             snprintf(buffer, size, "NULL");
@@ -278,8 +315,8 @@ void cuno_test_approx(long double a, long double b, long double epsilon,
     if (difference <= epsilon) {
         return;
     }
-    snprintf(left, sizeof left, "%.17Lg", a);
-    snprintf(right, sizeof right, "%.17Lg", b);
+    cuno_test_snprintf_ld(left, sizeof left, "%.17Lg", a);
+    cuno_test_snprintf_ld(right, sizeof right, "%.17Lg", b);
     snprintf(what, sizeof what, "approx(%s)", expression);
     cuno_test_values_failed(file, line, what, left, right, fatal);
 }
@@ -379,7 +416,11 @@ static int cuno_test_main(int argc, char **argv) {
  * duplicate the linker refuses, rather than an entry point it prefers and
  * the tests never running. */
 #include <shellapi.h>
+/* For the MSVC ABI's linkers; MinGW's GCC links shell32 by default, and
+ * warns about the pragma (an error under warnings-as-errors). */
+#if defined(_MSC_VER)
 #pragma comment(lib, "shell32")
+#endif
 int main(void) {
     int argc = 0;
     wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);

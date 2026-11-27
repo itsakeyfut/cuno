@@ -193,3 +193,56 @@ fn the_configured_gcc_is_the_one_used() {
         refused.stderr
     );
 }
+
+/// The whole flow with GCC, on a package `cuno new` makes: build, run,
+/// test, fmt and lint all succeed, the test run finds the tests the
+/// template holds, and clang-tidy reads GCC's commands as MinGW's.
+///
+/// Mutation: give clang-tidy GCC's commands without the MinGW target, keep
+/// `#pragma comment` for GCC (with `warnings-as-errors`), or register no C
+/// test under GCC; this test fails.
+#[test]
+fn the_whole_flow_works_with_gcc() {
+    if require_driver(Compiler::Gcc, Language::C).is_none()
+        || support::compilers::require_llvm_tool("clang-tidy").is_none()
+    {
+        return;
+    }
+    for lang in ["c", "c++"] {
+        let parent = Project::new();
+        let made = parent.cuno(&["new", "app", "--lang", lang, "--vcs", "none"]);
+        assert_eq!(made.code, Some(0), "{}", made.stderr);
+        let app = parent.path().join("app");
+        let manifest = app.join("cuno.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            format!("{text}\n[build]\nwarnings = \"all\"\nwarnings-as-errors = true\n"),
+        )
+        .unwrap();
+        let cuno = |args: &[&str]| {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_cuno"));
+            cmd.args(args).current_dir(&app);
+            parent.run_command(cmd)
+        };
+        for args in [
+            &["build", "--compiler", "gcc"][..],
+            &["run", "--compiler", "gcc"],
+            &["fmt", "--check"],
+            &["lint", "--compiler", "gcc"],
+        ] {
+            let run = cuno(args);
+            assert_eq!(run.code, Some(0), "{lang} {args:?}: {}", run.stderr);
+        }
+        // clang-tidy is told the `__GNUC__` the build sees.
+        let commands = std::fs::read_to_string(app.join("compile_commands.json")).unwrap();
+        assert!(commands.contains("\"-fgnuc-version="), "{commands}");
+        let tested = cuno(&["test", "--compiler", "gcc"]);
+        assert_eq!(tested.code, Some(0), "{lang}: {}", tested.stderr);
+        assert!(
+            tested.stderr.contains("test result: ok. 1 passed"),
+            "{lang}: {}",
+            tested.stderr
+        );
+    }
+}

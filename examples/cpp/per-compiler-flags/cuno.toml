@@ -10,3 +10,6 @@ flags = ["-DBUILT_BY=2"]
 
 [build.clang-cl]
 flags = ["/DBUILT_BY=3"]
+
+[build.gcc]
+flags = ["-DBUILT_BY=4"]

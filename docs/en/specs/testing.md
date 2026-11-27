@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 51b634fec7087c4034bc4214bcaba015a5069fb2 -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob f2019155efd2088cd1caccffe42d1d18beb9e7df -->
 
 # Testing
 
@@ -124,9 +124,11 @@ cuno_test(add_works) {
 
 - **Enabling define**: In test builds, cuno defines `CUNO_TEST`.
 - **Warnings in normal builds**: No warnings caused by tests (unused functions, etc.) are emitted.
+- **Normal builds and the runtime**: Normal builds do not link the bundled runtime. In normal builds, the C++20-and-later entry point carries its own do-nothing versions of the runtime's functions (because GCC, when not optimizing, also compiles the tests inside a suite that is never called, and they refer to the runtime). So linking objects compiled without `CUNO_TEST` and the runtime into one program makes the definitions of the same names collide under GCC, which is a link error. cuno's builds never produce this combination (a test build compiles every source with `CUNO_TEST`).
 - **Builds with exceptions disabled**: Game development often builds with exceptions disabled. Aborting a test via `require` / `cuno_require_*` must work even with exceptions disabled.
   - How: each test runs in its own process (see "Execution model" below), so when `require` fails, the test writes its result and ends that process. Neither exceptions nor `longjmp` are used.
-- **Registration**: Tests are registered by static initialization at program startup (the modern API through a static `suite` variable, the macro API through a function placed in the area that lists functions called at program startup (`.CRT$XCU` under the MSVC ABI)). cuno does not read sources to find tests.
+- **Registration**: Tests are registered by static initialization at program startup (the modern API through a static `suite` variable, the macro API through a function called at program startup: for MSVC's C, it is placed in the area that lists those functions, `.CRT$XCU`; for Clang and GCC, it is given the `constructor` attribute). cuno does not read sources to find tests.
+  - Registered tests are kept in order of file, then line (those at the same place in the order they were registered). The order a file's initializers run in differs between compilers (GCC runs the last first), so the order is made the same on every compiler.
   - Reason: reading sources can miss tests that go through macros or `#if`. A missed test would never run, and the run would still be reported as a success.
 - **Bundled runtime**: The registry and `main` live in a C source bundled with the headers (`cuno/test_main.c`), which is linked into every executable of a test build. Both entry points register through this C interface.
 - **Mixed languages**: Each file uses the entry point for its own language. A `.c` file in a C++ package uses `cuno/test.h`; a `.cpp` file in a C package uses the entry point that fits its standard (`cuno/test.hpp` for C++20 and later). Tests written either way register with the same runtime and run in the same test executable.

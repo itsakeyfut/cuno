@@ -13,11 +13,38 @@
 //     #endif
 //
 // Without CUNO_TEST (a normal build), a suite registers nothing and its
-// tests are never compiled into the program.
+// tests never run.
 #ifndef CUNO_TEST_HPP
 #define CUNO_TEST_HPP
 
 #include <cuno/test.h>
+
+#ifndef CUNO_TEST
+// A normal build links no runtime, yet GCC without optimisation still
+// compiles a suite's tests, which nothing calls, and their calls into the
+// runtime would not link. These do nothing and are never called.
+extern "C" {
+inline void cuno_test_register(const char *, const char *, int, void (*)(void *), void *) {}
+inline void cuno_test_register_macro(const char *, const char *, int, void (*)(void *)) {}
+inline void cuno_test_fail(const char *, int, const char *, int) {}
+inline void cuno_test_values_failed(const char *, int, const char *, const char *, const char *,
+                                    int) {}
+inline void cuno_test_info(const char *) {}
+inline void cuno_test_infof(const char *, ...) {}
+inline void cuno_test_skip(const char *) {}
+inline void cuno_test_format(cuno_test_value, char *buffer, size_t size) {
+    if (size > 0) {
+        buffer[0] = '\0';
+    }
+}
+inline void cuno_test_compare(int, cuno_test_value, cuno_test_value, const char *, const char *,
+                              int, int) {}
+inline void cuno_test_approx(long double, long double, long double, const char *, const char *,
+                             int, int) {}
+inline void cuno_test_truth(int, int, const char *, const char *, int, int) {}
+}
+#endif
+
 
 #include <concepts>
 #include <cstddef>

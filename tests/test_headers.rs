@@ -15,7 +15,12 @@ use std::process::Command;
 use support::compilers::{Compiler, Language, require_driver};
 use support::{Project, Run};
 
-const COMPILERS: [Compiler; 3] = [Compiler::Msvc, Compiler::Clang, Compiler::ClangCl];
+const COMPILERS: [Compiler; 4] = [
+    Compiler::Msvc,
+    Compiler::Clang,
+    Compiler::ClangCl,
+    Compiler::Gcc,
+];
 
 /// The headers in this repository, which cuno embeds and writes to the cuno
 /// home unchanged (`crates/cuno-build/src/bundled.rs`).
@@ -183,7 +188,6 @@ fn compile_and_link(
                 link.args(["-flto", "-fuse-ld=lld"]);
             }
         }
-        // Not in `COMPILERS` until the headers are checked with GCC (#322).
         Compiler::Gcc => {
             link.args(&objects).arg("-o").arg(format!("{exe}.exe"));
             if lto {
@@ -629,11 +633,14 @@ fn registration_survives_link_time_optimisation() {
     }
 }
 
-/// Without `CUNO_TEST`, a file holding tests compiles with no warning and no
-/// test code: it links without the runtime (testing.md, "Common rules").
+/// Without `CUNO_TEST`, a file holding tests compiles with no warning and
+/// runs no test code: it links without the runtime (testing.md, "Common
+/// rules"), and a suite's function is never called.
 ///
 /// Mutation: register in a normal build (the link fails on the runtime's
-/// missing symbols), or call the suite's function without `CUNO_TEST`.
+/// missing symbols), leave out the C++ header's no-op runtime for a normal
+/// build (GCC at `-O0` then fails to link), or call the suite's function
+/// without `CUNO_TEST` (the program prints); this test fails.
 #[test]
 fn a_normal_build_compiles_no_test() {
     let program = "int main(void) { return add(1, 2) == 3 ? 0 : 1; }\n";
@@ -641,7 +648,14 @@ fn a_normal_build_compiles_no_test() {
         let p = Project::new()
             .file("c.c", &format!("{C_TESTS}{program}"))
             .file("cxx17.cpp", &CXX17_TESTS.replace("cxx17_", "normal17_"))
-            .file("cxx20.cpp", CXX20_TESTS);
+            .file("cxx20.cpp", CXX20_TESTS)
+            .file(
+                "declares.cpp",
+                "#include <cuno/test.hpp>
+#include <cstdio>
+                 static cuno::test::suite declared = [] { std::puts(\"declared\"); };
+",
+            );
         let normal = Flags {
             test: false,
             ..TEST
@@ -665,6 +679,13 @@ fn a_normal_build_compiles_no_test() {
                         ..normal
                     },
                 ),
+                (
+                    "declares.cpp",
+                    Flags {
+                        std: Std::Cxx20,
+                        ..normal
+                    },
+                ),
             ],
             false,
             "normal",
@@ -673,6 +694,7 @@ fn a_normal_build_compiles_no_test() {
         };
         let run = p.run(&exe, &[]);
         assert_eq!(run.code, Some(0), "{}", compiler.name());
+        assert_eq!(run.stdout, "", "{}: a suite ran", compiler.name());
     }
 }
 
@@ -690,6 +712,7 @@ static cuno::test::suite tests = [] {
 
 const EDGE_C: &str = r#"#include <cuno/test.h>
 cuno_test(c_floats) {
+    cuno_info("x=%Lg", 1.5L);
     cuno_check_approx(1.5, 2.0, 0.25);
     cuno_check_eq(0.5, 0.25);
 }
@@ -702,7 +725,9 @@ cuno_test(c_floats) {
 ///   `eq(-1, UINT_MAX)` passes;
 /// - drop the escaping of a tab, CR or backslash in `cuno_test_field` (the
 ///   line splits where cuno reads a field);
-/// - show floating-point values, or `approx`'s two sides, any other way;
+/// - show floating-point values, or `approx`'s two sides, any other way
+///   (MinGW's long double through the UCRT's `snprintf`, or a `cuno_info`
+///   of one through its `vsnprintf`, shows garbage);
 /// - show a null `const char *` as an empty string;
 /// - report an exception of another type in `throws` as anything else.
 #[test]
@@ -751,8 +776,9 @@ fn failures_show_their_values_and_fields_are_escaped() {
             (
                 "c_floats",
                 1,
-                "fail edge.c:3 approx(1.5, 2.0, 0.25) failed\\n  left:  1.5\\n  right: 2\n\
-                 fail edge.c:4 eq(0.5, 0.25) failed\\n  left:  0.5\\n  right: 0.25\n\
+                "info x=1.5\n\
+                 fail edge.c:4 approx(1.5, 2.0, 0.25) failed\\n  left:  1.5\\n  right: 2\n\
+                 fail edge.c:5 eq(0.5, 0.25) failed\\n  left:  0.5\\n  right: 0.25\n\
                  done",
             ),
         ];
@@ -1136,6 +1162,37 @@ fn a_test_may_be_named_after_the_runtime() {
         assert_eq!(
             names(&p, &exe),
             "macro\nregister\ninfo\n",
+            "{}",
+            compiler.name()
+        );
+    }
+}
+
+/// Tests registered from one place keep the order they were registered in,
+/// where the registry sorts by file and line (testing.md, "Common rules").
+///
+/// Mutation: put a registration before those at the same place; this
+/// test fails.
+#[test]
+fn tests_from_one_place_keep_their_order() {
+    let source = r#"#include <cuno/test.hpp>
+#include <initializer_list>
+static cuno::test::suite tests = [] {
+    for (const char *name : {"first", "second", "third"}) cuno::test::test(name, [] {});
+};
+"#;
+    for compiler in COMPILERS {
+        let p = Project::new().file("loop.cpp", source);
+        let cxx20 = Flags {
+            std: Std::Cxx20,
+            ..TEST
+        };
+        let Some(exe) = build(&p, compiler, &[("loop.cpp", cxx20)], true, "loop") else {
+            continue;
+        };
+        assert_eq!(
+            names(&p, &exe),
+            "first\nsecond\nthird\n",
             "{}",
             compiler.name()
         );
