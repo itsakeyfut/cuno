@@ -131,6 +131,7 @@ impl TidyCompile {
             kind: self.kind,
             include: &self.include,
             msvc: self.msvc.as_ref(),
+            gnuc: None,
         }
     }
 }

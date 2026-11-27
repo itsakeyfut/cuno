@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/testing.md @ blob 0a527446d328578d02854c13bb020755b8ab071e -->
+<!-- translated-from: docs/ja/specs/testing.md @ blob f2019155efd2088cd1caccffe42d1d18beb9e7df -->
 
 # Testing
 
@@ -124,6 +124,7 @@ cuno_test(add_works) {
 
 - **Enabling define**: In test builds, cuno defines `CUNO_TEST`.
 - **Warnings in normal builds**: No warnings caused by tests (unused functions, etc.) are emitted.
+- **Normal builds and the runtime**: Normal builds do not link the bundled runtime. In normal builds, the C++20-and-later entry point carries its own do-nothing versions of the runtime's functions (because GCC, when not optimizing, also compiles the tests inside a suite that is never called, and they refer to the runtime). So linking objects compiled without `CUNO_TEST` and the runtime into one program makes the definitions of the same names collide under GCC, which is a link error. cuno's builds never produce this combination (a test build compiles every source with `CUNO_TEST`).
 - **Builds with exceptions disabled**: Game development often builds with exceptions disabled. Aborting a test via `require` / `cuno_require_*` must work even with exceptions disabled.
   - How: each test runs in its own process (see "Execution model" below), so when `require` fails, the test writes its result and ends that process. Neither exceptions nor `longjmp` are used.
 - **Registration**: Tests are registered by static initialization at program startup (the modern API through a static `suite` variable, the macro API through a function called at program startup: for MSVC's C, it is placed in the area that lists those functions, `.CRT$XCU`; for Clang and GCC, it is given the `constructor` attribute). cuno does not read sources to find tests.

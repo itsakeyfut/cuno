@@ -298,6 +298,7 @@ mod tests {
             kind,
             include: &[],
             msvc: None,
+            gnuc: None,
         }
     }
 
@@ -492,6 +493,7 @@ mod tests {
             kind,
             include: &include,
             msvc: Some(&version),
+            gnuc: None,
         };
         let msvc = input(CompilerKind::Msvc, &settings, Mode::Check);
         let err = check_tidy(

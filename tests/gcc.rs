@@ -234,6 +234,9 @@ fn the_whole_flow_works_with_gcc() {
             let run = cuno(args);
             assert_eq!(run.code, Some(0), "{lang} {args:?}: {}", run.stderr);
         }
+        // clang-tidy is told the `__GNUC__` the build sees.
+        let commands = std::fs::read_to_string(app.join("compile_commands.json")).unwrap();
+        assert!(commands.contains("\"-fgnuc-version="), "{commands}");
         let tested = cuno(&["test", "--compiler", "gcc"]);
         assert_eq!(tested.code, Some(0), "{lang}: {}", tested.stderr);
         assert!(

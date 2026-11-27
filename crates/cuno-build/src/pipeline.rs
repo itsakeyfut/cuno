@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use cuno_core::{Env, NameCase, Shell, paths};
 use cuno_manifest::{Lang, Manifest, OptLevel, Profile};
-use cuno_toolchain::compiler::CompilerKind;
+use cuno_toolchain::compiler::{CompilerKind, Family};
 use cuno_toolchain::flags::{Mode, ToolContext};
 use cuno_toolchain::prepare::Prepared;
 use cuno_toolchain::select::Selected;
@@ -84,6 +84,11 @@ fn compile_commands(
         kind: tool.kind,
         include: &tool.include,
         msvc: tool.msvc,
+        // GCC's version is the `__GNUC__` its builds see.
+        gnuc: match tool.kind.family() {
+            Family::Gnu => Some(tool.version),
+            Family::Msvc | Family::Llvm => None,
+        },
     };
     compdb::write(root, &editors, context)?;
     let mut described: Vec<PathBuf> = Vec::new();

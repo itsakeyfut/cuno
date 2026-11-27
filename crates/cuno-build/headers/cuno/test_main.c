@@ -53,12 +53,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* What formats a long double. MinGW's is the x87's 80 bits, which the
- * UCRT's snprintf reads as a 64-bit double; MinGW's own reads it whole. */
+/* What formats a long double, and a user's `cuno_info`, which may hold
+ * one. MinGW's is the x87's 80 bits, which the UCRT's printf family reads
+ * as a 64-bit double; MinGW's own reads it whole. */
 #if defined(__MINGW32__)
 #define cuno_test_snprintf_ld __mingw_snprintf
+#define cuno_test_vsnprintf __mingw_vsnprintf
 #else
 #define cuno_test_snprintf_ld snprintf
+#define cuno_test_vsnprintf vsnprintf
 #endif
 
 #ifdef _WIN32
@@ -82,11 +85,20 @@ typedef struct cuno_test_entry {
 /* Zero-initialised, so registering works from any static initialiser,
  * whatever order translation units are initialised in. */
 static cuno_test_entry *cuno_test_head;
+static cuno_test_entry *cuno_test_tail;
 static FILE *cuno_test_out;
 static int cuno_test_failed;
 
+/* Whether `a` goes after `b`: a later file, a later line, or the same
+ * place, which keeps the order they were registered in. */
+static int cuno_test_after(const cuno_test_entry *a, const cuno_test_entry *b) {
+    int order = strcmp(a->file, b->file);
+    return order > 0 || (order == 0 && a->line >= b->line);
+}
+
 static void cuno_test_add(const char *name, const char *file, int line, void (*run)(void *),
                           void *context, int from_macro) {
+
     cuno_test_entry *entry = (cuno_test_entry *)calloc(1, sizeof *entry);
     if (entry == NULL) {
         fputs("error: out of memory registering tests\n", stderr);
@@ -100,14 +112,21 @@ static void cuno_test_add(const char *name, const char *file, int line, void (*r
     entry->from_macro = from_macro;
     /* Kept in order of file, then line, after any registered at the same
      * place: compilers run a file's initialisers in different orders (GCC
-     * runs its constructors last first), and the list is the same on all. */
+     * runs its constructors last first), and the list is the same on all.
+     * One that sorts at or after the last is appended at once, as cl and
+     * Clang register a file's tests in order. */
+    if (cuno_test_tail == NULL || cuno_test_after(entry, cuno_test_tail)) {
+        if (cuno_test_tail == NULL) {
+            cuno_test_head = entry;
+        } else {
+            cuno_test_tail->next = entry;
+        }
+        cuno_test_tail = entry;
+        return;
+    }
     {
         cuno_test_entry **at = &cuno_test_head;
-        while (*at != NULL) {
-            int order = strcmp((*at)->file, file);
-            if (order > 0 || (order == 0 && (*at)->line > line)) {
-                break;
-            }
+        while (*at != NULL && cuno_test_after(entry, *at)) {
             at = &(*at)->next;
         }
         entry->next = *at;
@@ -183,7 +202,7 @@ void cuno_test_infof(const char *format, ...) {
     char text[1024];
     va_list args;
     va_start(args, format);
-    vsnprintf(text, sizeof text, format, args);
+    cuno_test_vsnprintf(text, sizeof text, format, args);
     va_end(args);
     cuno_test_info(text);
 }

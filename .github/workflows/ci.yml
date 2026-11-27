@@ -159,7 +159,7 @@ jobs:
       # the tests on CI, as any missing compiler does.
       - name: Install MinGW GCC
         run: |
-          C:/msys64/usr/bin/bash.exe -lc 'pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc'
+          C:/msys64/usr/bin/bash.exe -lc 'pacman -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-gcc'
           C:/msys64/ucrt64/bin/gcc.exe -dumpfullversion
       - run: cargo test --workspace --no-fail-fast
 

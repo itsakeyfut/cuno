@@ -201,8 +201,8 @@ C/C++ のコンパイル以外の処理（シェーダのコンパイル、コ�
   - **単体で解決できる内容にする**: MSVC / Windows SDK のインクルードパスと、使う MSVC のバージョン（`-fms-compatibility-version=<cl のバージョン>`）を明示的に書く。Developer Command Prompt の外で動く clangd でも、標準ヘッダや Windows のヘッダを見つけ、ビルドと同じ `_MSC_VER` で解析できるようにするため。
     - インクルードパスは、ツール自身の組み込みヘッダより後に探される形で書く（cl 形式は `/imsvc`、clang は `-idirafter`）。ビルドでも `INCLUDE` は組み込みヘッダの後に探されるため。また、コンパイルの引数より前に書く。ビルドでは `INCLUDE` が利用者の `flags` の `-idirafter` より先に探されるので、後に書くと利用者のディレクトリが先に探され、ビルドと違うヘッダを解析しうる。`-isystem` では Windows SDK の `stddef.h` などが clang 自身のものより先に見つかり、ビルドと違うプログラムを解析してしまう。
     - clang の形式には `-nostdlibinc` も付ける。clang は、環境変数の `INCLUDE`（ないときは自分で見つけた Visual Studio）のヘッダを `-idirafter` より先に探すため、付けないと、ツールを動かす環境によって別のツールセットの標準ヘッダを解析してしまう。`-nostdlibinc` は clang 自身の組み込みヘッダを残し、それ以外の標準の場所だけを外す。cl 形式の `/imsvc` は `INCLUDE` より先に探されるので要らない。
-    - GCC では、MSVC と Windows SDK のインクルードパスの代わりに GCC 自身のインクルードのディレクトリ（[toolchain.md](toolchain.md#mingwgcc)）を同じ形（`-nostdlibinc` と `-idirafter`）で書き、ビルド対象 `--target=x86_64-w64-mingw32` も書く。
-      - 理由: clang 系のツールは、プログラム名の `gcc` からはビルド対象を知らず、既定の `x86_64-pc-windows-msvc` として MinGW のヘッダを読むため、`stdio.h` などでエラーになる。ビルド対象を書けば、GCC のヘッダをそのまま読める（clang-tidy 22 と GCC 16 で確かめた）。
+    - GCC では、MSVC と Windows SDK のインクルードパスの代わりに GCC 自身のインクルードのディレクトリ（[toolchain.md](toolchain.md#mingwgcc)）を同じ形（`-nostdlibinc` と `-idirafter`）で書き、ビルド対象 `--target=x86_64-w64-mingw32` と、GCC のバージョン（`-fgnuc-version=<GCC のバージョン>`）も書く。
+      - 理由: clang 系のツールは、プログラム名の `gcc` からはビルド対象を知らず、既定の `x86_64-pc-windows-msvc` として MinGW のヘッダを読むため、`stdio.h` などでエラーになる。ビルド対象を書けば、GCC のヘッダをそのまま読める（clang-tidy 22 と GCC 16 で確かめた）。バージョンを書くのは、MSVC の `-fms-compatibility-version` と同じく、ビルドと同じ `__GNUC__` で解析するため。書かないと clang は GCC 4.2.1 を名乗り、`#if __GNUC__ >= 10` の中を、ビルドとは違う形で解析する。
   - **clang 系のツールが読む形で書く**: このファイルを読むのは clangd・clang-tidy で、cl のコマンドも clang-cl として読む。そのため、ビルドと同じ意味になるよう次の 3 点だけ書き換える。
     - `/c` は `-c` と書く（cl も受け付ける）。clang-cl は解析だけのとき `/c` を「使われない引数」と警告し、`warnings-as-errors` ではそれがエラーになるため。
     - MSVC の規格指定のうち clang-cl が知らないもの（`/std:c++23`、`/std:clatest`）は、同じ規格の clang-cl の指定（[コンパイル](#コンパイル)の表の clang-cl の列）に書き換える。そのままでは clang-cl が無視し、古い規格で解析するため。

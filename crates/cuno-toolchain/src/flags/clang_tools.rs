@@ -25,6 +25,9 @@ pub struct ToolContext<'a> {
     /// The cl version of the MSVC toolset, whose `_MSC_VER` the build sees;
     /// `None` without a toolset, when no version is written.
     pub msvc: Option<&'a Version>,
+    /// GCC's version, whose `__GNUC__` the build sees, for GCC; `None`
+    /// otherwise.
+    pub gnuc: Option<&'a Version>,
 }
 
 /// One compile as a Clang-based tool reads it. Only [`for_clang_tools`]
@@ -133,6 +136,11 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
     if let Some(version) = context.msvc {
         out.push(format!("-fms-compatibility-version={version}").into());
     }
+    // Clang otherwise claims GCC 4.2.1, and `#if __GNUC__ >= 10` would read
+    // otherwise than the build.
+    if let Some(version) = context.gnuc {
+        out.push(format!("-fgnuc-version={version}").into());
+    }
     ToolCommand { args: out, kind }
 }
 
@@ -185,6 +193,7 @@ mod tests {
             kind,
             include: &include,
             msvc,
+            gnuc: None,
         };
         let args = os(&["-c", "a.cpp"]);
         for kind in [CompilerKind::Msvc, CompilerKind::ClangCl] {
@@ -233,6 +242,7 @@ mod tests {
             kind: CompilerKind::Clang,
             include: &[],
             msvc: None,
+            gnuc: None,
         };
         assert_eq!(
             strings(for_clang_tools(none, &args).args()),
@@ -248,6 +258,7 @@ mod tests {
             kind,
             include: &[],
             msvc: None,
+            gnuc: None,
         };
         for (switch, as_clang_cl) in [
             ("/std:c++23", "/clang:-std=c++23"),
@@ -292,6 +303,7 @@ mod tests {
                 kind,
                 include: &[],
                 msvc: None,
+                gnuc: None,
             };
             let command = for_clang_tools(context, &os(&["-c"]));
             assert_eq!(strings(&command.after_double_dash()), want, "{kind:?}");
@@ -299,19 +311,23 @@ mod tests {
     }
 
     /// GCC's command names its target, MinGW-w64, before its include
-    /// directories, which are written as clang's are: a tool reading `gcc`
-    /// learns no target from the name and would read MinGW's headers as the
-    /// MSVC ABI's (`docs/en/specs/build.md`, "Output").
+    /// directories, which are written as clang's are, and GCC's version
+    /// after: a tool reading `gcc` learns no target from the name and would
+    /// read MinGW's headers as the MSVC ABI's, and would claim GCC 4.2.1
+    /// (`docs/en/specs/build.md`, "Output").
     ///
-    /// Mutation: leave the target out, write it for another driver, or
-    /// write GCC's directories otherwise than clang's; this test fails.
+    /// Mutation: leave the target or the version out, write the target for
+    /// another driver, or write GCC's directories otherwise than clang's;
+    /// this test fails.
     #[test]
     fn gcc_s_command_names_its_target() {
         let include = [PathBuf::from("C:/m/include")];
+        let gcc = Version::find_in("16.2.0").unwrap();
         let context = |kind| ToolContext {
             kind,
             include: &include,
             msvc: None,
+            gnuc: (kind == CompilerKind::Gcc).then_some(&gcc),
         };
         let args = os(&["-c", "a.c"]);
         assert_eq!(
@@ -322,7 +338,8 @@ mod tests {
                 "-idirafter",
                 "C:/m/include",
                 "-c",
-                "a.c"
+                "a.c",
+                "-fgnuc-version=16.2.0"
             ]
         );
         for kind in [
