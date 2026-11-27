@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob faeba13dfdd3371883c55fa95964a697d0709528 -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 08ace767b55a94002bb511bcdb7283a7c65fed41 -->
 
 # Toolchain
 
@@ -74,6 +74,8 @@ A compiler must accept a C++20 specification.
   | Build commands | The selected Clang | Not checked (the C++ standard library is not used) |
   | `cuno lint` | clang-tidy | Not checked |
   | `cuno doctor` (inside or outside a project) | The selected Clang and clang-tidy | Not checked |
+
+  - When GCC is selected, none of these checks run, because GCC does not use the MSVC standard library.
 
   - A Clang that is not selected (Clang while MSVC is selected, etc.) is not checked.
 - The minimum versions and the check above are one decision, used by both `cuno doctor` and the build commands. `cuno doctor` reports a "problem" when it is not met or cannot be decided (exit code 1); the build commands and `cuno lint` make it an error before doing anything (exit code 3).

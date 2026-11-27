@@ -59,9 +59,8 @@ impl ToolCommand {
         }
         match self.kind.family() {
             Family::Msvc => out.push(TARGET_SWITCH.into()),
-            Family::Llvm => {}
-            // GCC's flags name no target either, and it builds for MinGW-w64.
-            Family::Gnu => out.push("--target=x86_64-w64-mingw32".into()),
+            // GCC's is in the command itself (`for_clang_tools`).
+            Family::Llvm | Family::Gnu => {}
         }
         out.extend(self.args.iter().cloned());
         out
@@ -123,6 +122,12 @@ pub fn for_clang_tools(context: ToolContext<'_>, args: &[OsString]) -> ToolComma
             }
         }
         CompilerKind::ClangCl | CompilerKind::Clang | CompilerKind::Gcc => {}
+    }
+    // A tool reading `gcc`'s command learns no target from its name, and
+    // reads MinGW's headers as the MSVC ABI's otherwise (build.md, "Output").
+    match kind.family() {
+        Family::Gnu => include.insert(0, format!("--target={}", crate::select::GCC_TARGET).into()),
+        Family::Msvc | Family::Llvm => {}
     }
     out.splice(0..0, include);
     if let Some(version) = context.msvc {
@@ -272,13 +277,15 @@ mod tests {
     /// driver, or put them after the arguments; this test fails.
     #[test]
     fn after_double_dash_names_the_driver_and_target_a_program_would() {
-        let expected: [(CompilerKind, &[&str]); 3] = [
+        let expected: [(CompilerKind, &[&str]); 4] = [
             (
                 CompilerKind::Msvc,
                 &["--driver-mode=cl", TARGET_SWITCH, "-c"],
             ),
             (CompilerKind::ClangCl, &["--driver-mode=cl", "-c"]),
             (CompilerKind::Clang, &["-c"]),
+            // GCC's target is in its command, once.
+            (CompilerKind::Gcc, &["--target=x86_64-w64-mingw32", "-c"]),
         ];
         for (kind, want) in expected {
             let context = ToolContext {
@@ -288,6 +295,46 @@ mod tests {
             };
             let command = for_clang_tools(context, &os(&["-c"]));
             assert_eq!(strings(&command.after_double_dash()), want, "{kind:?}");
+        }
+    }
+
+    /// GCC's command names its target, MinGW-w64, before its include
+    /// directories, which are written as clang's are: a tool reading `gcc`
+    /// learns no target from the name and would read MinGW's headers as the
+    /// MSVC ABI's (`docs/en/specs/build.md`, "Output").
+    ///
+    /// Mutation: leave the target out, write it for another driver, or
+    /// write GCC's directories otherwise than clang's; this test fails.
+    #[test]
+    fn gcc_s_command_names_its_target() {
+        let include = [PathBuf::from("C:/m/include")];
+        let context = |kind| ToolContext {
+            kind,
+            include: &include,
+            msvc: None,
+        };
+        let args = os(&["-c", "a.c"]);
+        assert_eq!(
+            strings(for_clang_tools(context(CompilerKind::Gcc), &args).args()),
+            [
+                "--target=x86_64-w64-mingw32",
+                "-nostdlibinc",
+                "-idirafter",
+                "C:/m/include",
+                "-c",
+                "a.c"
+            ]
+        );
+        for kind in [
+            CompilerKind::Msvc,
+            CompilerKind::ClangCl,
+            CompilerKind::Clang,
+        ] {
+            let args = strings(for_clang_tools(context(kind), &args).args());
+            assert!(
+                !args.iter().any(|a| a.contains("mingw32")),
+                "{kind:?} {args:?}"
+            );
         }
     }
 
