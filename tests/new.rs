@@ -102,7 +102,16 @@ fn every_generated_package_builds_tests_and_runs() {
             let made = p.cuno(&["new", "app", "--edition", edition, "--vcs", "none"]);
             assert_eq!(made.code, Some(0), "{edition}: {}", made.stderr);
             let app = p.path().join("app");
-            let manifest = std::fs::read_to_string(app.join("cuno.toml")).unwrap();
+            // Listed, not opened: the file system here opens either case.
+            let names: Vec<String> = std::fs::read_dir(&app)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(
+                names.contains(&"Cuno.toml".to_owned()),
+                "{edition}: {names:?}"
+            );
+            let manifest = std::fs::read_to_string(app.join("Cuno.toml")).unwrap();
             assert!(
                 manifest.contains(&format!("edition = \"{edition}\"\n")),
                 "{edition}: {manifest}"
@@ -112,7 +121,7 @@ fn every_generated_package_builds_tests_and_runs() {
             } else {
                 "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\n"
             };
-            std::fs::write(app.join("cuno.toml"), format!("{manifest}{strict}")).unwrap();
+            std::fs::write(app.join("Cuno.toml"), format!("{manifest}{strict}")).unwrap();
             let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
             assert_eq!(test.code, Some(0), "{edition} {name}:\n{}", test.stderr);
             let out = lf(&test.stderr);
@@ -169,7 +178,7 @@ fn git_is_initialised_where_it_should_be() {
     );
     assert!(!p.path().join("nogit/.git").exists());
     assert!(!p.path().join("nogit/.gitignore").exists());
-    assert!(p.path().join("nogit/cuno.toml").is_file());
+    assert!(p.path().join("nogit/Cuno.toml").is_file());
 }
 
 /// `-q` leaves out the `Created` line.
@@ -186,14 +195,14 @@ fn quiet_creates_silently() {
 /// package's directory is found with `..` resolved, so it is not taken to
 /// be inside a repository it only passes through on the way.
 ///
-/// Mutation: write the directory's name into `cuno.toml`, or walk up the
+/// Mutation: write the directory's name into `Cuno.toml`, or walk up the
 /// path as written; this test fails.
 #[test]
 fn the_name_and_the_place_are_the_packages() {
     let p = Project::new();
     let named = p.cuno(&["new", "dir", "--name", "other", "--vcs", "none"]);
     assert_eq!(lf(&named.stderr), "     Created `other` package\n");
-    let manifest = std::fs::read_to_string(p.path().join("dir/cuno.toml")).unwrap();
+    let manifest = std::fs::read_to_string(p.path().join("dir/Cuno.toml")).unwrap();
     assert!(manifest.contains("name = \"other\"\n"), "{manifest}");
 
     std::fs::create_dir_all(p.path().join("repo/.git")).unwrap();
@@ -272,17 +281,17 @@ fn the_users_term_color_applies() {
     assert!(run.stderr.contains("\u{1b}["), "{:?}", run.stderr);
 }
 
-/// `cuno new` reads no project: inside one whose `cuno.toml` is broken it
+/// `cuno new` reads no project: inside one whose `Cuno.toml` is broken it
 /// still creates the package.
 ///
 /// Mutation: resolve every layer for `new`, the surrounding project
 /// included; this test fails.
 #[test]
 fn a_surrounding_project_is_not_read() {
-    let p = Project::new().file("cuno.toml", "[package\n");
+    let p = Project::new().file("Cuno.toml", "[package\n");
     let run = p.cuno(&["new", "app", "--vcs", "none"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert!(p.path().join("app").join("cuno.toml").is_file());
+    assert!(p.path().join("app").join("Cuno.toml").is_file());
 }
 
 /// A user `config.toml` that cannot be read stops `cuno new` with exit 3,

@@ -42,7 +42,7 @@ fn here(compiler: Compiler) -> bool {
 const LANGUAGES: [&str; 2] = ["c", "cpp"];
 
 /// Every example directory, as `<language>/<example>`, sorted. A directory
-/// beside the language directories, or one holding no `cuno.toml`, is
+/// beside the language directories, or one holding no `Cuno.toml`, is
 /// named too, so an example put in the wrong place is not left unrun.
 fn examples() -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
@@ -279,7 +279,7 @@ fn each_example_sits_under_its_language() {
         let Some((language, _)) = example.split_once('/') else {
             continue;
         };
-        let manifest = std::fs::read_to_string(root.join(&example).join("cuno.toml"))
+        let manifest = std::fs::read_to_string(root.join(&example).join("Cuno.toml"))
             .unwrap_or_else(|e| panic!("{example}: {e}"));
         let c = manifest.lines().any(|line| line.trim() == "lang = \"c\"");
         let want = if c { "c" } else { "cpp" };

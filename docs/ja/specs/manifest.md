@@ -4,16 +4,23 @@
 
 | ファイル | 役割 | cargo での対応 |
 |---|---|---|
-| `cuno.toml` | プロジェクト設定。言語・規格・コンパイラ・テストフレームワーク・依存などを記述 | `Cargo.toml` |
+| `Cuno.toml` | プロジェクト設定。言語・規格・コンパイラ・テストフレームワーク・依存などを記述 | `Cargo.toml` |
 | `.cuno/config.toml` | マシン固有の設定（コンパイラのパス、出力先など） | `.cargo/config.toml` |
 
 利用者が書く設定ファイルはこの 2 つに限る（[overview.md](overview.md) のアンチゴール参照）。ただし次は例外とする。
 
 - ユーザー単位の `<管理ディレクトリ>/config.toml`（既定は `~/.cuno/config.toml`）: `.cuno/config.toml` と同じ形式で、そのマシンの全プロジェクトに効く（下記「2 階層の設定」）。
 - ビルドスクリプト（Lua）: 宣言的な設定で書けない処理のための逃げ道。必要な場合だけ置く（[build.md](build.md)）。
-- `cuno.lock`: cuno が生成するファイルで、利用者は書かない（[dependencies.md](dependencies.md)）。
+- `Cuno.lock`: cuno が生成するファイルで、利用者は書かない（[dependencies.md](dependencies.md)）。
 
-## cuno.toml（MVP 範囲）
+プロジェクトの設定ファイルの名前は `Cuno.toml`（先頭が大文字）。
+
+- 大文字と小文字を区別するファイルシステムで、`Cuno.toml` がなく、大文字と小文字だけが違う名前のファイル（`cuno.toml`、`CUNO.TOML` など）があるディレクトリに出会うと、プロジェクトを探すのをそこで止めてエラーにする（終了コード 3）。`error: found <ファイル> in <ディレクトリ>; the manifest is named Cuno.toml` と `help: rename it to Cuno.toml`。`cuno init` も、そのディレクトリでは同じエラーにする。ソースを集めるときに別のパッケージの境界を見分けるのも同じ判定により、メッセージは実際のファイル名を示す。
+  - ディレクトリの中身を一覧できないときは、`Cuno.toml` を開けるかどうかで判断する。
+  - 理由: 無視すると、さらに上のディレクトリにある別のプロジェクトを黙って使い、違うパッケージをビルドしてしまう。
+  - Windows ではファイルシステムが `cuno.toml` を `Cuno.toml` として開くため、小文字のままでも読める。
+
+## Cuno.toml（MVP 範囲）
 
 全体像。コメントは項目の説明と、取りうる値（選択肢がある場合）。
 
@@ -107,15 +114,15 @@ MVP 外の項目・値は、指定されたときの挙動で 2 種類に分け�
 
 ### 未知のキー
 
-- `cuno.toml` / `config.toml` に cuno が知らないキーがあれば、**警告**を出して続行する（エラーにしない）。
+- `Cuno.toml` / `config.toml` に cuno が知らないキーがあれば、**警告**を出して続行する（エラーにしない）。
 - 理由: 新しい cuno で追加された項目を古い cuno で読んでも止まらないようにするため（cargo と同じ）。
-- 設定ファイルについての警告とエラーには、ファイルと行・列を示す（例: `--> cuno.toml:12:1`）。綴りの誤りなどをすぐ直せるようにするため。
+- 設定ファイルについての警告とエラーには、ファイルと行・列を示す（例: `--> Cuno.toml:12:1`）。綴りの誤りなどをすぐ直せるようにするため。
 
 ### プロジェクトの探し方とパスの基準
 
-- cuno はカレントディレクトリから親ディレクトリへさかのぼって `cuno.toml` を探し、最初に見つかった場所をプロジェクトのルートとする（cargo と同じ）。サブディレクトリから `cuno build` 等を実行できる。
+- cuno はカレントディレクトリから親ディレクトリへさかのぼって `Cuno.toml` を探し、最初に見つかった場所をプロジェクトのルートとする（cargo と同じ）。サブディレクトリから `cuno build` 等を実行できる。
 - 設定ファイルに書いた相対パスは、**そのファイルが置かれている場所**を基準に解決する。
-  - `cuno.toml` の `include-dirs` / `lib-dirs` 等: プロジェクトのルート基準。
+  - `Cuno.toml` の `include-dirs` / `lib-dirs` 等: プロジェクトのルート基準。
   - `.cuno/config.toml` の `target-dir` 等: `.cuno/` の親（プロジェクトのルート）基準。
   - ユーザー単位の config.toml: `<管理ディレクトリ>` 基準。
 - Windows で、ドライブを書かずに `\` や `/` で始まるパス（例: `/inc`）と、ドライブの後に区切りがないパス（例: `C:inc`）はエラー（終了コード 3）。絶対パスか相対パスで書く。
@@ -375,16 +382,16 @@ MVP では使わない。項目名のみ予約。
 | プロジェクト単位 | `<プロジェクト>/.cuno/config.toml` | そのプロジェクト | 入れない（`cuno new` が `.gitignore` に追加） |
 | ユーザー単位 | `<管理ディレクトリ>/config.toml` | そのマシンの全プロジェクト | — |
 
-- どちらもマシン固有の設定を書く。チームで共有する設定は `cuno.toml` に書く。
+- どちらもマシン固有の設定を書く。チームで共有する設定は `Cuno.toml` に書く。
 - ユーザー単位の config の `[toolchain] compiler` は、`cuno toolchain default` でも書ける（[commands.md](commands.md#cuno-toolchain-default-コンパイラ)）。
 - 優先順位（上ほど優先）:
   1. コマンド引数
   2. 環境変数
   3. プロジェクト単位の `.cuno/config.toml`
-  4. `cuno.toml`（`cuno.toml` でも設定できる項目の場合。例: `compiler`）
+  4. `Cuno.toml`（`Cuno.toml` でも設定できる項目の場合。例: `compiler`）
   5. ユーザー単位の `<管理ディレクトリ>/config.toml`
   6. 既定値
-- プロジェクトで決めた設定（`cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
+- プロジェクトで決めた設定（`Cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
 - 例外: 色付けでは、設定ファイルの `[term] color` が環境変数 `NO_COLOR` より優先する（[commands.md](commands.md#全コマンドで使えるもの)）。
 - cuno の環境変数（`CUNO_HOME`・`CUNO_COMPILER`・`CUNO_TARGET_DIR`）は、値が空なら設定されていないものとして扱う。`NO_COLOR` は例外で、値が空でも設定されていれば有効（[commands.md](commands.md#全コマンドで使えるもの)）。
   - 理由: POSIX のシェルでは、`CUNO_TARGET_DIR= cuno build` のように書いて、その実行だけ変数を外す使い方をする。`NO_COLOR` は、ツールをまたいだ慣習で空でも有効と決まっている。
@@ -392,9 +399,9 @@ MVP では使わない。項目名のみ予約。
 
 ### プロジェクトの設定と信用
 
-- `cuno build` などのビルド系コマンド、`cuno doctor`、`cuno toolchain` は、プロジェクトに置かれた設定（`cuno.toml`、`.cuno/config.toml`）を信用する。`.cuno/config.toml` の `[toolchain.paths]` に書いたツールも、そのまま実行する。
+- `cuno build` などのビルド系コマンド、`cuno doctor`、`cuno toolchain` は、プロジェクトに置かれた設定（`Cuno.toml`、`.cuno/config.toml`）を信用する。`.cuno/config.toml` の `[toolchain.paths]` に書いたツールも、そのまま実行する。
   - 理由: `[build.<compiler>]` の生フラグだけでも、コンパイラにプラグインを読ませるなどして任意のコードを実行させられる。ビルドする時点で、そのプロジェクトはすでに信用されている。ツールのパスだけを制限しても安全にはならず、リポジトリに LLVM を同梱するプロジェクトが使えなくなる。
-  - 他人のプロジェクトをビルドする前に、`cuno.toml` と `.cuno/config.toml` を確かめるのは利用者の責任とする。
+  - 他人のプロジェクトをビルドする前に、`Cuno.toml` と `.cuno/config.toml` を確かめるのは利用者の責任とする。
   - `cuno doctor` と `cuno toolchain` も、その場所のビルドが選ぶものを示すために、同じ設定でツールを実行して版を調べる。プロジェクトの層を外すと、示すものが実際のビルドと食い違うため。他人のプロジェクトの中でこれらを実行する前にも、設定を確かめる。
 - 例外として、プロジェクトに置かれた層の `target-dir` はプロジェクトの中に限る（[build.md](build.md#出力先ディレクトリ)）。`cuno clean` は何も実行せずに出力先を削除するため、ビルドとは別の扱いにする。
 
@@ -445,7 +452,7 @@ rr = "run --release"
 
 | 項目 | 既定値 | 説明 |
 |---|---|---|
-| `compiler` | なし | このマシンで使うコンパイラ。値は `cuno.toml` の `compiler` と同じ。プロジェクト単位なら `cuno.toml` より優先、ユーザー単位なら `cuno.toml` より劣後する（[toolchain.md](toolchain.md)） |
+| `compiler` | なし | このマシンで使うコンパイラ。値は `Cuno.toml` の `compiler` と同じ。プロジェクト単位なら `Cuno.toml` より優先、ユーザー単位なら `Cuno.toml` より劣後する（[toolchain.md](toolchain.md)） |
 
 #### `[toolchain.paths]`
 

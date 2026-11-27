@@ -1,4 +1,4 @@
-//! Loading and validating `cuno.toml` and `config.toml`.
+//! Loading and validating `Cuno.toml` and `config.toml`.
 //!
 //! See `docs/en/specs/manifest.md`.
 
@@ -20,5 +20,7 @@ pub use manifest::{
     Bin, BuildTable, CompilerName, Fmt, FmtStyle, Framework, Lint, LintPreset, Loaded, Manifest,
     Os, Package, Profile, ProfileTable, Test, load_manifest, parse_manifest, valid_package_name,
 };
-pub use project::{Project, find_project, resolve_path};
+pub use project::{
+    MANIFEST, ManifestIn, Project, find_project, manifest_in, resolve_path, wrong_case,
+};
 pub use settings::{CliSettings, Inputs, Settings, Term, resolve, resolve_user};

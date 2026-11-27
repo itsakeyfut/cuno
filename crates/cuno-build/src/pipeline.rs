@@ -164,7 +164,7 @@ pub enum Goal<'a> {
 pub struct Request<'a> {
     /// The project's root, where every step runs.
     pub root: &'a Path,
-    /// Its `cuno.toml`.
+    /// Its `Cuno.toml`.
     pub manifest: &'a Manifest,
     /// The output directory, normalized as `Settings::target_dir` is.
     pub target_dir: &'a Path,
@@ -665,7 +665,7 @@ mod tests {
     }
 
     /// A package of `src/main.cpp` and the `sources` named besides it, with
-    /// `extra` appended to its `cuno.toml`, dated an hour back so a build
+    /// `extra` appended to its `Cuno.toml`, dated an hour back so a build
     /// may record it (`build.md`, "Deciding what changed").
     fn package_with(extra: &str, sources: &[&str]) -> (tempfile::TempDir, Manifest) {
         let root = tempfile::tempdir().unwrap();
@@ -682,7 +682,7 @@ mod tests {
         }
         let toml = format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n{extra}");
         let manifest =
-            cuno_manifest::parse_manifest(&toml, &root.path().join("cuno.toml"), root.path())
+            cuno_manifest::parse_manifest(&toml, &root.path().join("Cuno.toml"), root.path())
                 .unwrap()
                 .value;
         (root, manifest)

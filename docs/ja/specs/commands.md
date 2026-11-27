@@ -52,7 +52,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - `-v` と `-q` は同時に指定できない（使い方の誤り、終了コード 2）。設定ファイルの `[term] verbose = true` と `-q` では、`-q` に従う。
   - 理由: `--color` と同じく、コマンド引数で明示した指定を設定ファイルより優先する。
 - 設定ファイル（[manifest.md](manifest.md)）は、引数を解釈した後、どのコマンドもそのコマンドの処理を始める前に読む。そのため `[term] color` と `[term] verbose` はすべてのコマンドに効く（`--help`、コマンドを指定しない `cuno`、使い方の誤りは、下のとおり設定ファイルを読む前に出す）。読めない、または誤りのある設定ファイルはエラー（終了コード 3）で、コマンドの処理は始めない。ただし `cuno doctor` はそれを問題として示して診断を続ける（[`cuno doctor`](#cuno-doctor)）。
-  - `cuno new` だけは、利用者の `<cuno home>/config.toml` だけを読み、カレントディレクトリの周りのプロジェクトの `cuno.toml` と `.cuno/config.toml` は読まない。利用者の `config.toml` が読めない、または誤りがあるときは、ほかのコマンドと同じくエラー（終了コード 3）で、何も作らない。
+  - `cuno new` だけは、利用者の `<cuno home>/config.toml` だけを読み、カレントディレクトリの周りのプロジェクトの `Cuno.toml` と `.cuno/config.toml` は読まない。利用者の `config.toml` が読めない、または誤りがあるときは、ほかのコマンドと同じくエラー（終了コード 3）で、何も作らない。
   - 理由: `cuno new` が作るのは新しいパッケージで、周りのプロジェクトの設定はそのパッケージのものではない。そのプロジェクトの設定が壊れていても、新しいパッケージを作るのを止める理由にならない。
 
 ### ビルド系コマンド（`build` / `run` / `check` / `test`）で使えるもの
@@ -130,7 +130,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 | ファイル | 内容 |
 |---|---|
-| `cuno.toml` | `[package]` の `name` / `version`（`0.1.0`）/ `lang` / `edition` のみ。コンパイラは書かない（自動選択に任せる） |
+| `Cuno.toml` | `[package]` の `name` / `version`（`0.1.0`）/ `lang` / `edition` のみ。コンパイラは書かない（自動選択に任せる） |
 | `src/main.cpp`（C は `src/main.c`） | `src/calc.cpp` の関数を呼ぶ `main` |
 | `src/calc.cpp` / `src/calc.h`（C は `.c` / `.h`） | 小さな関数と、そのソース内テスト（[testing.md](testing.md)）。標準ヘッダ（`math.h` 等）と同じ名前を避ける（`src/` はインクルードパスに入るため、衝突すると標準ライブラリ側の `#include <math.h>` がこちらを読み込んでしまう） |
 | `.gitignore` | `target/`、`.cuno/`、`compile_commands.json`、`.clang-format`、`.clang-tidy`（後の 3 つは cuno の生成物。[dev-tools.md](dev-tools.md)） |
@@ -159,12 +159,12 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 
 | ディレクトリの中 | 書くもの |
 |---|---|
-| `src/` にエントリファイル（`src/main.*` か `src/bin/` 直下のソース。[project-layout.md](project-layout.md#エントリファイルとパッケージ本体)）がある | `cuno.toml` だけ |
-| ソース（`.c` / `.cpp` / `.cc` / `.cxx`）が 1 つもない | `cuno.toml` と、`cuno new` と同じ `src/main.*`・`src/calc.*` |
+| `src/` にエントリファイル（`src/main.*` か `src/bin/` 直下のソース。[project-layout.md](project-layout.md#エントリファイルとパッケージ本体)）がある | `Cuno.toml` だけ |
+| ソース（`.c` / `.cpp` / `.cc` / `.cxx`）が 1 つもない | `Cuno.toml` と、`cuno new` と同じ `src/main.*`・`src/calc.*` |
 | ソースはあるが、上のどちらでもない（`src/` の外にだけある、`src/` にエントリファイルがない） | 何も書かずにエラー（終了コード 2） |
 
 - 言語は、`--lang` / `--edition` がなければ、`src/` のソースから決める。C++ のソースが 1 つでもあれば C++、`.c` だけなら C、ソースがなければ C++（`cuno new` と同じ）。
-- `cuno.toml` の中身は `cuno new` と同じ（`[package]` の `name` / `version` / `lang` / `edition` のみ）。
+- `Cuno.toml` の中身は `cuno new` と同じ（`[package]` の `name` / `version` / `lang` / `edition` のみ）。
 - **既存のファイルは上書きしない。** 書くファイルのどれかがすでにあれば、何も書かずにエラーにする。ただし `.gitignore` は例外で、下のとおり足りない行を足す。
 - `--vcs git`（既定）では、`cuno new` の `.gitignore` の行（`target/` など）のうち、すでにある `.gitignore` に書かれていないものを末尾に足す（既存の行、改行の形、BOM はそのまま残す）。`.gitignore` がなければ作る。
   - 理由: 既存のプロジェクトをパッケージにすると、cuno の生成物（`target/` など）が新たにできる。足さないと誤ってコミットしやすい。
@@ -175,14 +175,14 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 |---|---|
 | ディレクトリがない | `` error: `<パス>` does not exist `` と `help: use cuno new to create a package in a new directory` |
 | パスがディレクトリでない | `` error: `<パス>` is not a directory `` |
-| `cuno.toml` がすでにある | `` error: `<パス>` already has a cuno.toml `` |
+| `Cuno.toml` がすでにある | `` error: `<パス>` already has a Cuno.toml `` |
 | ソースが `src/` の外にだけある | `` error: sources found outside src/: <見つけたソース> `` と `help: move them under src/, with the program's main in src/main.cpp (or src/main.c)` |
 | `src/` にソースはあるが、実行ファイルになるもの（エントリファイル）がない | `` error: src/ has no executable to build `` と `help: put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/` |
-| 書くファイル、またはその上のディレクトリの場所に、別のものがすでにある（`src/main.cpp` を書くのに `src` がファイル、など） | `` error: <ファイル> already exists `` と `help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand` |
+| 書くファイル、またはその上のディレクトリの場所に、別のものがすでにある（`src/main.cpp` を書くのに `src` がファイル、など） | `` error: <ファイル> already exists `` と `help: cuno init writes no file that is there; move it aside, or add Cuno.toml by hand` |
 | `--vcs git` で、すでにある `.gitignore` に足せない（ファイルでない、リンク、UTF-8 として読めない） | `` error: cannot add to .gitignore: <理由> `` と `help: make it a text file in UTF-8, or use --vcs none` |
 
 - 見つけたソースは、多ければ最初の 5 つと残りの数を示す（`and 2 more`）。
-- ソースは、`target/`、名前が `.` で始まるディレクトリ、自前の `cuno.toml` を持つディレクトリ（別のパッケージ）、リンクの中は探さない。`src/` かどうかは、ビルドと同じくファイルシステムの規則で決める（Windows では `Src/` も `src/`）。
+- ソースは、`target/`、名前が `.` で始まるディレクトリ、自前の `Cuno.toml` を持つディレクトリ（別のパッケージ）、リンクの中は探さない。`src/` かどうかは、ビルドと同じくファイルシステムの規則で決める（Windows では `Src/` も `src/`）。
 - エラーはすべて、何かを書く前に判断する。エラーで止まったときに、書きかけのものは残らない。
 - 理由（`src/` の外のソースを `[[bin]]` に書かない）: cuno はパッケージ本体を `src/` からしか集めないので、入口だけを書いても、ほかのソースはビルドされずにリンクで失敗する。
 
@@ -193,7 +193,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `--bin <名前>` | 実行する実行ファイル（複数ある場合は必須。省略するとエラーで候補を表示） |
 | `-- <引数...>` | `--` 以降をプログラムに渡す |
 
-- 実行時の作業ディレクトリは**プロジェクトのルート**（`cuno.toml` のある場所）。ゲームのアセットを相対パスで読む場合の基準になる。
+- 実行時の作業ディレクトリは**プロジェクトのルート**（`Cuno.toml` のある場所）。ゲームのアセットを相対パスで読む場合の基準になる。
 - `cuno build` と同じようにビルドしてから（表示と失敗時の扱いも同じ）、選んだ実行ファイルを実行する。
 - 実行ファイルの選び方: 1 つだけならそれ。`--bin` があればその名前のもの。Windows では、実行ファイル名の重複を確かめるときと同じく、大文字と小文字を区別せずに比べる（`--bin APP` で `app` を実行する。[project-layout.md](project-layout.md#エントリファイルとパッケージ本体)）。どちらもビルドの前に確かめる。
   - 理由: 重複の確かめ方と同じ比べ方なら、当てはまる実行ファイルは必ず 1 つで、出力先でも同じファイルになる。
@@ -230,7 +230,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | `--target-dir <パス>` | 削除対象の出力先（[build.md](build.md) の優先順位に従う） |
 
 - プロファイルの指定がなければ出力先全体を、あれば `<出力先>/<プロファイルのディレクトリ>`（`dev` は `debug`）だけを削除する。出力先の外のものは削除しない。
-- 削除の前に、出力先を [build.md](build.md#出力先ディレクトリ) の規則で確かめる。プロジェクトそのものやその上を指す出力先と、プロジェクトの設定（`cuno.toml`、`.cuno/config.toml`）がプロジェクトの外を指す出力先はエラー（終了コード 3）で、何も削除しない。
+- 削除の前に、出力先を [build.md](build.md#出力先ディレクトリ) の規則で確かめる。プロジェクトそのものやその上を指す出力先と、プロジェクトの設定（`Cuno.toml`、`.cuno/config.toml`）がプロジェクトの外を指す出力先はエラー（終了コード 3）で、何も削除しない。
 - プロジェクトの外で実行した場合は、`cuno build` と同じエラー（終了コード 3）。
 - 出力先があって、その直下に cuno の印（`.cuno-target`、[build.md](build.md#出力先ディレクトリ)）がなければ、何も削除せずにエラー。プロファイルを指定したときも、確かめるのは出力先の直下の印（``error: `<出力先>` was not made by cuno; not removing it``、`help: remove it yourself, or set target-dir to a directory cuno builds into`、終了コード 3）。
 - 削除するディレクトリがなければ何もせず成功する。
@@ -295,7 +295,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 - `--tests` と `--all-targets` を両方指定した場合は `--all-targets` と同じ。
 - テストのビルドの確認は、`cuno test` と同じ出力先（テストのビルドの場所）を使う。MSVC では `cuno test` と同じコンパイルを行うので、続く `cuno test` はリンクと実行だけを行う。
 
-- プロジェクトの外で実行した場合はエラー（`error: could not find cuno.toml in <directory> or any parent directory`、終了コード 3）。設定にも誤りがあるとき（出力先の指定の誤り、読めない、または誤りのある利用者の `config.toml` など）も、プロジェクトがないことだけを示す。`cuno run`、`cuno test`、`cuno clean` も同じ。
+- プロジェクトの外で実行した場合はエラー（`error: could not find Cuno.toml in <directory> or any parent directory`、終了コード 3）。設定にも誤りがあるとき（出力先の指定の誤り、読めない、または誤りのある利用者の `config.toml` など）も、プロジェクトがないことだけを示す。`cuno run`、`cuno test`、`cuno clean` も同じ。
   - 理由: プロジェクトの外では、これらのコマンドは何もできない。直すべきこと（プロジェクトの中で実行する）を 1 つだけ示す。
 - ビルドの前に、コンパイラの選択と標準ライブラリとの組み合わせを確かめる（[toolchain.md](toolchain.md#コンパイラの最低バージョン)）。満たさなければ何もビルドせずにエラー（終了コード 3）。
 - 表示（[出力](#出力) の形式）:
@@ -325,8 +325,8 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 |---|---|
 | `--compiler <名前>` | 診断するコンパイラ。ビルド系コマンドの `--compiler` と同じ。指定しなければ、ビルド系コマンドと同じ選択の優先順位で選ばれるコンパイラを診断する（[toolchain.md](toolchain.md#選択)） |
 
-- プロジェクトの外（`cuno.toml` が見つからない場所）でも実行できる。その場合はプロジェクトの層がない優先順位で選ぶ（[toolchain.md](toolchain.md#選択)）。
-- 設定ファイル（`cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、まだ対応していないコンパイラ（`safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
+- プロジェクトの外（`Cuno.toml` が見つからない場所）でも実行できる。その場合はプロジェクトの層がない優先順位で選ぶ（[toolchain.md](toolchain.md#選択)）。
+- 設定ファイル（`Cuno.toml`、`.cuno/config.toml`、ユーザー単位の config）に誤りがあっても、まだ対応していないコンパイラ（`safec`）が選ばれていても、`doctor` は止まらずに問題として報告し（終了コード `1`）、ほかの項目の診断を続ける。
   - 設定ファイルを読めないときは、`--compiler`、`CUNO_COMPILER` と自動選択だけでコンパイラを選ぶ。自動選択になった場合は、設定で選んだコンパイラと取り違えないよう、`Selected` の理由に `automatic selection; the configuration could not be read` と書く。
   - 理由: `doctor` は環境や設定がおかしいときに実行するものなので、設定の誤りで止まると役に立たない。
 
@@ -406,7 +406,7 @@ clang-tidy    22.1.8       C:\Program Files\LLVM\bin\clang-tidy.exe
 ```
 
 - 次の場合は、書いたうえで警告する（終了コード `0`）。
-  - 実行した場所では、より優先される層（`--compiler`、`CUNO_COMPILER`、プロジェクトの `.cuno/config.toml`・`cuno.toml`）が別のコンパイラを選んでいる: `warning: gcc is the default, but here [toolchain] compiler in cuno.toml selects clang`。
+  - 実行した場所では、より優先される層（`--compiler`、`CUNO_COMPILER`、プロジェクトの `.cuno/config.toml`・`Cuno.toml`）が別のコンパイラを選んでいる: `warning: gcc is the default, but here [toolchain] compiler in Cuno.toml selects clang`。
   - そのコンパイラが、このマシンで見つからない、または使えない: `warning:` に、ビルドしたときと同じ理由を書き、`help:` に入れ方を書く。
   - 理由: 既定はそのユーザーのすべてのビルドに効く設定で、これから入れるコンパイラを先に選んでおく使い方もあるため、書くこと自体は止めない。ただ、次のビルドが選ぶものと違うことには、書いた時点で気づけるようにする。
 
@@ -451,7 +451,7 @@ cargo に倣う。
 | `0` | 成功 | |
 | `1` | 利用者のコード・成果物の問題 | コンパイルエラー、テスト失敗、`fmt --check` で未整形あり、lint の `deny` 違反、`doctor` で問題あり |
 | `2` | コマンドの使い方の誤り | 不明なオプション、引数不足 |
-| `3` | 設定・環境の問題 | `cuno.toml` の誤り、コンパイラが見つからない、コンパイラのバージョンが条件に合わない |
+| `3` | 設定・環境の問題 | `Cuno.toml` の誤り、コンパイラが見つからない、コンパイラのバージョンが条件に合わない |
 | `101` | cuno 自身の内部エラー（バグ） | 想定外の失敗。Rust のパニックと同じ値 |
 
 - `cuno run` は、実行したプログラムの終了コードをそのまま返す（cargo と同じ）。ビルドに失敗した場合は上の表に従う。

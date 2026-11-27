@@ -2,7 +2,7 @@
 //! (`docs/en/specs/manifest.md`, ".cuno/config.toml";
 //! `docs/en/specs/manifest.md`, "Two levels of settings";
 //! `docs/en/specs/build.md`, "Output directory") gives:
-//! command line, environment, `.cuno/config.toml`, `cuno.toml`, the
+//! command line, environment, `.cuno/config.toml`, `Cuno.toml`, the
 //! user-level `config.toml`, defaults.
 
 use std::collections::BTreeMap;
@@ -48,13 +48,13 @@ pub struct CliSettings {
 /// Every setting, resolved once for the commands to share.
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// The project and its `cuno.toml`; `None` outside a project.
+    /// The project and its `Cuno.toml`; `None` outside a project.
     pub project: Option<(Project, Manifest)>,
     /// The cuno home.
     pub home: PathBuf,
     /// The compiler named by each layer, for the selector to rank.
     pub compiler: Choices,
-    /// `[toolchain.version]` of `cuno.toml`.
+    /// `[toolchain.version]` of `Cuno.toml`.
     pub constraints: Constraints,
     /// `[toolchain.paths]`, merged per tool: the project's over the user's.
     pub paths: BTreeMap<Tool, PathBuf>,
@@ -133,7 +133,7 @@ pub fn resolve_user(env: &Env, cwd: &Path) -> Result<Loaded<Term>, ConfigError> 
 }
 
 /// Reads every layer and resolves every setting. Warnings from all files
-/// come back together: `cuno.toml`'s, then `.cuno/config.toml`'s, then the
+/// come back together: `Cuno.toml`'s, then `.cuno/config.toml`'s, then the
 /// user-level file's.
 pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let Inputs {
@@ -146,7 +146,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let home = home_dir(env)?;
     let mut warnings: Vec<ConfigWarning> = Vec::new();
 
-    let project = match find_project(cwd) {
+    let project = match find_project(cwd, case)? {
         Some(project) => {
             let manifest = load_manifest(&project, cwd)?;
             warnings.extend(manifest.warnings);
@@ -177,7 +177,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Loaded<Settings>, ConfigError> {
     let from_env = |name| env.set_value(name).map(|value| value.to_owned());
 
     // Every layer that sets an output directory, highest first: command
-    // line, environment, project config, cuno.toml, user config. Each is
+    // line, environment, project config, Cuno.toml, user config. Each is
     // checked, winning or not, and the first wins (build.md, "Output
     // directory"): the order they are pushed in is the precedence.
     let guarded = project.as_ref().map_or(cwd, |(p, _, _)| &p.root);
@@ -459,7 +459,7 @@ mod tests {
                 home,
                 outside,
             };
-            fixture.write("project/cuno.toml", MANIFEST);
+            fixture.write("project/Cuno.toml", MANIFEST);
             fixture
         }
 
@@ -519,7 +519,7 @@ mod tests {
                 );
             }
             f.write(
-                "project/cuno.toml",
+                "project/Cuno.toml",
                 &if set(3) {
                     format!("{MANIFEST}[build]\ntarget-dir = \"manifest\"\n")
                 } else {
@@ -609,12 +609,12 @@ mod tests {
 
     /// Mutation: put any layer's compiler in another layer's place, read an
     /// empty `CUNO_COMPILER` as a name, or take `[toolchain.version]` from
-    /// anywhere but `cuno.toml`; this test fails.
+    /// anywhere but `Cuno.toml`; this test fails.
     #[test]
     fn every_layer_gives_its_compiler_to_the_selector() {
         let f = Fixture::new();
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!(
                 "{MANIFEST}[toolchain]\ncompiler = \"msvc\"\n[toolchain.version]\nclang = \">=18\"\n"
             ),
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn warnings_from_every_file_come_back_in_order() {
         let f = Fixture::new();
-        f.write("project/cuno.toml", &format!("{MANIFEST}a = 1\n"));
+        f.write("project/Cuno.toml", &format!("{MANIFEST}a = 1\n"));
         f.write("project/.cuno/config.toml", "b = 1\n");
         f.write("home/config.toml", "c = 1\n");
         let warnings = f
@@ -724,7 +724,7 @@ mod tests {
             "[profile.release.build]\ndefines = [\"R\"]\nwarnings = \"all\"\n",
             "[profile.release]\nopt-level = 2\nlto = true\n",
         );
-        crate::parse_manifest(text, Path::new("cuno.toml"), Path::new("r"))
+        crate::parse_manifest(text, Path::new("Cuno.toml"), Path::new("r"))
             .unwrap()
             .value
     }
@@ -751,7 +751,7 @@ mod tests {
         assert_eq!(windows_dev.warnings, Warnings::Default);
         assert!(windows_dev.flags.is_empty());
 
-        let bare = crate::parse_manifest(MANIFEST, Path::new("cuno.toml"), Path::new("r"))
+        let bare = crate::parse_manifest(MANIFEST, Path::new("Cuno.toml"), Path::new("r"))
             .unwrap()
             .value;
         assert_eq!(
@@ -795,7 +795,7 @@ mod tests {
                 lto: true,
             }
         );
-        let bare = crate::parse_manifest(MANIFEST, Path::new("cuno.toml"), Path::new("r"))
+        let bare = crate::parse_manifest(MANIFEST, Path::new("Cuno.toml"), Path::new("r"))
             .unwrap()
             .value;
         assert_eq!(
@@ -830,17 +830,17 @@ mod tests {
         let none = CliSettings::default();
 
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \".\"\n"),
         );
         let err = resolve_err(&f, &f.root, &f.env(&[]), &none);
         assert!(
             err.message
-                .contains("(`build.target-dir` in cuno.toml) is the project root"),
+                .contains("(`build.target-dir` in Cuno.toml) is the project root"),
             "{err}"
         );
         assert!(err.help.unwrap().contains("cuno clean"));
-        f.write("project/cuno.toml", MANIFEST);
+        f.write("project/Cuno.toml", MANIFEST);
 
         f.write(
             "project/.cuno/config.toml",
@@ -910,12 +910,12 @@ mod tests {
         assert_eq!(s.target_dir, f.root.join("target"));
 
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \"\"\n"),
         );
         let err = resolve_err(&f, &f.root, &f.env(&[]), &CliSettings::default());
         assert_eq!(err.location.unwrap().line, 5);
-        f.write("project/cuno.toml", MANIFEST);
+        f.write("project/Cuno.toml", MANIFEST);
 
         if cfg!(windows) {
             let err = resolve_err(
@@ -986,7 +986,7 @@ mod tests {
             "[platform.windows.build]\ninclude-dirs = [\"i2\"]\nlinks = [\"l2\"]\nlib-dirs = [\"d2\"]\nlink-flags = [\"f2\"]\n",
             "[profile.dev.build]\ninclude-dirs = [\"i3\"]\nwarnings-as-errors = false\nexceptions = true\n",
         );
-        let m = crate::parse_manifest(text, Path::new("cuno.toml"), Path::new("r"))
+        let m = crate::parse_manifest(text, Path::new("Cuno.toml"), Path::new("r"))
             .unwrap()
             .value;
         let r = Path::new("r");
@@ -1012,7 +1012,7 @@ mod tests {
             "[profile.dev]\nopt-level = 3\ndebug-info = false\ndebug-assertions = false\n",
             "[profile.release]\ndebug-info = true\ndebug-assertions = true\n",
         );
-        let m = crate::parse_manifest(text, Path::new("cuno.toml"), Path::new("r"))
+        let m = crate::parse_manifest(text, Path::new("Cuno.toml"), Path::new("r"))
             .unwrap()
             .value;
         let dev = m.profile_settings(Profile::Dev);
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     /// Every layer that sets an output directory is checked, winning or not:
-    /// `"."` in `cuno.toml` and `""` in `.cuno/config.toml` are errors even
+    /// `"."` in `Cuno.toml` and `""` in `.cuno/config.toml` are errors even
     /// when the command line or the environment wins.
     ///
     /// Mutation: check only the winning layer, or stop at the first layer
@@ -1038,17 +1038,17 @@ mod tests {
             ..Default::default()
         };
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \".\"\n"),
         );
         let err = resolve_err(&f, &f.root, &f.env(&[]), &cli);
         assert!(
             err.message
-                .contains("(`build.target-dir` in cuno.toml) is the project root"),
+                .contains("(`build.target-dir` in Cuno.toml) is the project root"),
             "{err}"
         );
         assert_eq!(err.location.unwrap().line, 5);
-        f.write("project/cuno.toml", MANIFEST);
+        f.write("project/Cuno.toml", MANIFEST);
 
         f.write("project/.cuno/config.toml", "[build]\ntarget-dir = \"\"\n");
         let err = resolve_err(
@@ -1062,7 +1062,7 @@ mod tests {
     }
 
     /// A file the project carries may not put the output outside the project,
-    /// from `cuno.toml` or `.cuno/config.toml`, winning or not; the user's own
+    /// from `Cuno.toml` or `.cuno/config.toml`, winning or not; the user's own
     /// config, the environment and the command line may.
     ///
     /// Mutation: accept a project file's directory outside the project, check
@@ -1073,7 +1073,7 @@ mod tests {
         let none = CliSettings::default();
         for (file, text) in [
             (
-                "project/cuno.toml",
+                "project/Cuno.toml",
                 format!("{MANIFEST}[build]\ntarget-dir = \"../out\"\n"),
             ),
             (
@@ -1095,7 +1095,7 @@ mod tests {
                     .contains("user-level config, CUNO_TARGET_DIR or --target-dir"),
                 "{file}"
             );
-            if file.ends_with("cuno.toml") {
+            if file.ends_with("Cuno.toml") {
                 f.write(file, MANIFEST);
             } else {
                 std::fs::remove_file(f.root.join(".cuno/config.toml")).unwrap();
@@ -1131,11 +1131,11 @@ mod tests {
     /// files are, winning or not: a user config naming a directory above the
     /// project is refused with its file and line, and so is `CUNO_TARGET_DIR`
     /// at the root when the command line wins. An empty `target-dir` in
-    /// `cuno.toml` says it is empty.
+    /// `Cuno.toml` says it is empty.
     ///
     /// Mutation: check only the project's files, skip the environment when the
     /// command line is given, name no file for the user config, or let an
-    /// empty `cuno.toml` value fall through to the root check; this test fails.
+    /// empty `Cuno.toml` value fall through to the root check; this test fails.
     #[test]
     fn the_users_layers_are_checked_too() {
         let f = Fixture::new();
@@ -1166,11 +1166,11 @@ mod tests {
         assert!(err.message.contains("(CUNO_TARGET_DIR)"), "{err}");
 
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \"\"\n"),
         );
         let err = resolve_err(&f, &f.root, &f.env(&[]), &cli);
-        assert_eq!(err.message, "`build.target-dir` in cuno.toml is empty");
+        assert_eq!(err.message, "`build.target-dir` in Cuno.toml is empty");
     }
 
     /// A directory inside the project, spelled in another case or not made
@@ -1190,7 +1190,7 @@ mod tests {
             .replace('\\', "/")
             .to_uppercase();
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \"{upper}/out\"\n"),
         );
         let s = f.resolve(&f.root, &f.env(&[]), &CliSettings::default());
@@ -1226,7 +1226,7 @@ mod tests {
         let f = Fixture::new();
         junction(&f.root.join("link"), &f.outside);
         f.write(
-            "project/cuno.toml",
+            "project/Cuno.toml",
             &format!(
                 "{MANIFEST}[build]
 target-dir = \"link/out\"

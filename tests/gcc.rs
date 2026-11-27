@@ -16,7 +16,7 @@ use support::compilers::{Compiler, Language, require_driver};
 fn hello(lang: &str, runtime: &str, file: &str, source: &str) -> Project {
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!(
                 "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nlang = \"{lang}\"\n\n[build]\nruntime = \"{runtime}\"\n"
             ),
@@ -145,7 +145,7 @@ fn a_header_put_in_front_of_gcc_s_own_recompiles() {
     let source = "#include <stdio.h>\n#include <sys/stat.h>\nint main(void) {\n#ifdef SHADOWED\n    puts(\"shadowed\");\n#else\n    puts(\"gcc's\");\n#endif\n    return 0;\n}\n";
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nlang = \"c\"\n\n[build]\ninclude-dirs = [\"inc\"]\n",
         )
         .file("src/main.c", source);
@@ -213,7 +213,7 @@ fn the_whole_flow_works_with_gcc() {
         let made = parent.cuno(&["new", "app", "--lang", lang, "--vcs", "none"]);
         assert_eq!(made.code, Some(0), "{}", made.stderr);
         let app = parent.path().join("app");
-        let manifest = app.join("cuno.toml");
+        let manifest = app.join("Cuno.toml");
         let text = std::fs::read_to_string(&manifest).unwrap();
         std::fs::write(
             &manifest,
@@ -317,8 +317,8 @@ fn paths_that_are_not_ascii_build_or_are_refused() {
     );
 
     std::fs::write(
-        app.join("cuno.toml"),
-        std::fs::read_to_string(app.join("cuno.toml")).unwrap()
+        app.join("Cuno.toml"),
+        std::fs::read_to_string(app.join("Cuno.toml")).unwrap()
             + "\n[profile.release]\nlto = true\n",
     )
     .unwrap();

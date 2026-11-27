@@ -1,6 +1,6 @@
 //! The migration guide (`docs/en/guides/migration.md`) is held to cuno as it
 //! is: every command it names exists or is planned, every command that
-//! exists has a row, and every `cuno.toml` table it names is one the specs
+//! exists has a row, and every `Cuno.toml` table it names is one the specs
 //! define. A new command fails here until the guide says how it replaces
 //! what somebody used before, which is how the guide stays current.
 
@@ -175,7 +175,7 @@ fn every_command_is_named_in_the_guide() {
     );
 }
 
-/// Every `cuno.toml` table the guide names is one the specs write,
+/// Every `Cuno.toml` table the guide names is one the specs write,
 /// directly or as a pattern (`[build.<compiler>]`).
 ///
 /// Mutation: write `` `[buidl]` `` in the guide; this test fails.

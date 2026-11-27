@@ -1,5 +1,5 @@
 //! The settings a compile and a link are made from, resolved from
-//! `cuno.toml` by `cuno-manifest` (`docs/en/specs/manifest.md`). They live
+//! `Cuno.toml` by `cuno-manifest` (`docs/en/specs/manifest.md`). They live
 //! here because turning them into flags is this crate's job
 //! (`docs/en/specs/architecture.md`).
 
@@ -12,15 +12,15 @@ macro_rules! choices {
         pub enum $name { $($(#[$vdoc])* $variant),+ }
 
         impl $name {
-            /// Every value, as written in `cuno.toml`.
+            /// Every value, as written in `Cuno.toml`.
             pub const ALL: &[($name, &str)] = &[$(($name::$variant, $text)),+];
 
-            /// The value as written in `cuno.toml`.
+            /// The value as written in `Cuno.toml`.
             pub fn as_str(self) -> &'static str {
                 match self { $($name::$variant => $text),+ }
             }
 
-            /// The value `text` names in `cuno.toml`.
+            /// The value `text` names in `Cuno.toml`.
             pub fn parse(text: &str) -> Option<$name> {
                 Self::ALL.iter().find(|(_, t)| *t == text).map(|(v, _)| *v)
             }
@@ -79,8 +79,8 @@ pub enum OptLevel {
 }
 
 impl Lang {
-    /// The entry file a package of this language has when `cuno.toml` names
-    /// none, relative to the package root as `cuno.toml` writes paths
+    /// The entry file a package of this language has when `Cuno.toml` names
+    /// none, relative to the package root as `Cuno.toml` writes paths
     /// (`docs/en/specs/project-layout.md`).
     pub fn default_entry(self) -> &'static str {
         match self {

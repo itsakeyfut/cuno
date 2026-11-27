@@ -916,7 +916,7 @@ fn a_build_finds_the_bundled_headers() {
         }
         let p = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c\"\n",
             )
             .file(

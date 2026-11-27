@@ -86,13 +86,13 @@ C++20 の指定を受け付けるものとする。
 
   clang-tidy の場合は `error: clang-tidy 20.1.8 is not accepted by ...`、`help: install clang-tidy 22 or newer` とする。
 
-- cuno 内部および `cuno.toml` の `[toolchain.version]`、出力メッセージでは、MSVC のバージョンを **cl.exe のバージョン**（例: `19.29`）で表す。Visual Studio の製品バージョン（例: `16.11`）は使わない。
+- cuno 内部および `Cuno.toml` の `[toolchain.version]`、出力メッセージでは、MSVC のバージョンを **cl.exe のバージョン**（例: `19.29`）で表す。Visual Studio の製品バージョン（例: `16.11`）は使わない。
 
 ## コンパイラ抽象化
 
-- コンパイラ系統ごとの差（検出、`cuno.toml` 設定からフラグへの翻訳、依存ヘッダ情報の取得、診断出力の解釈）を **1 つのインターフェースの背後に閉じ込める**。
+- コンパイラ系統ごとの差（検出、`Cuno.toml` 設定からフラグへの翻訳、依存ヘッダ情報の取得、診断出力の解釈）を **1 つのインターフェースの背後に閉じ込める**。
 - コンパイラの種類は 1 つの列挙（`CompilerKind`）で表し、種類ごとの答えは、すべての種類を名指しする `match` に書く。新しいコンパイラは、種類を 1 つ足すと、答えるべき箇所がコンパイルエラーとして挙がる。他の開発者による追加を想定し、手順を下に書く。
-- `cuno.toml` の `[build]` 設定（例: `warnings-as-errors = true`）を各系統のフラグ（`-Werror` / `/WX`）に翻訳する。
+- `Cuno.toml` の `[build]` 設定（例: `warnings-as-errors = true`）を各系統のフラグ（`-Werror` / `/WX`）に翻訳する。
 
 ### コンパイラを追加する手順
 
@@ -145,8 +145,8 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH`（先頭に足す） | `<MSVC>\bin\Hostx64\x64`、`<SDK>\bin\<バージョン>\x64` |
 
-- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC のインクルードパス）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC がライブラリと自分のプログラムを探す場所）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC が書くもう 1 つのヘッダ依存のファイル）は、ビルド、標準ライブラリの確認、`cuno doctor`、GCC の検出の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in cuno.toml`）。
-  - 理由: これらはコマンドラインに現れずにフラグを足すため、`cuno.toml` と違うフラグで黙ってビルドし、成功と報告することになる（例: `_CL_=-DNDEBUG` で dev プロファイルにも `NDEBUG` が定義される）。`-v` の表示にも出ない。エラーにしないのは、全体に `CL=/MP` などを設定している利用者が、cuno を使うたびに消さずに済むように。
+- **コンパイラやリンカが自分で読む環境変数は渡さない。** `CL` / `_CL_`（cl.exe と clang-cl のオプション）、`LINK` / `_LINK_`（link.exe と lld-link のオプション）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC のインクルードパス）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC がライブラリと自分のプログラムを探す場所）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC が書くもう 1 つのヘッダ依存のファイル）は、ビルド、標準ライブラリの確認、`cuno doctor`、GCC の検出の環境から取り除く。ビルド系コマンドは、設定されていたものを 1 つずつ警告する（`warning: CL is set in the environment and is not used`、`help: write the flags in Cuno.toml`）。
+  - 理由: これらはコマンドラインに現れずにフラグを足すため、`Cuno.toml` と違うフラグで黙ってビルドし、成功と報告することになる（例: `_CL_=-DNDEBUG` で dev プロファイルにも `NDEBUG` が定義される）。`-v` の表示にも出ない。エラーにしないのは、全体に `CL=/MP` などを設定している利用者が、cuno を使うたびに消さずに済むように。
 
 - **Developer Command Prompt の変数は取り除く。** `VSINSTALLDIR`、`VCINSTALLDIR`、`VCToolsInstallDir`、`EXTERNAL_INCLUDE`、`WindowsSdkDir`、`WindowsSDKVersion`、`UniversalCRTSdkDir`、`UCRTVersion`。clang / clang-cl はこれらからツールセットとリンカーを探すため、別の Visual Studio の Developer Command Prompt から cuno を実行すると、cuno が選んだものと違うツールセットで成功してしまう。
 - `vcvars64.bat` が設定するもののうち、次は設定しない（使えばエラーで分かる）。
@@ -261,12 +261,12 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
 1. コマンド引数 `--compiler`
 2. 環境変数 `CUNO_COMPILER`
 3. プロジェクト単位の `.cuno/config.toml`
-4. `cuno.toml` の `[toolchain]`
+4. `Cuno.toml` の `[toolchain]`
 5. ユーザー単位の `<管理ディレクトリ>/config.toml`
 6. 自動選択
 
-- プロジェクトで決めた設定（`cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
-- プロジェクトの外（`cuno doctor` をプロジェクトの外で実行した場合など）では、プロジェクトの層（`.cuno/config.toml` と `cuno.toml` の `[toolchain]`）がないので、`--compiler` → `CUNO_COMPILER` → ユーザー単位の config → 自動選択 の順で選ぶ。
+- プロジェクトで決めた設定（`Cuno.toml`）は、個人の全体設定（ユーザー単位の config）より優先する。
+- プロジェクトの外（`cuno doctor` をプロジェクトの外で実行した場合など）では、プロジェクトの層（`.cuno/config.toml` と `Cuno.toml` の `[toolchain]`）がないので、`--compiler` → `CUNO_COMPILER` → ユーザー単位の config → 自動選択 の順で選ぶ。
   - 理由: 新しいプロジェクトで `cuno build` したときに使われるコンパイラと一致させるため。自動選択だけを見ると、ユーザー単位の config で clang を選んでいる人に MSVC を診断して「問題なし」と答え、その後のビルドが失敗しうる。
 - まだ対応していないコンパイラ（`safec`）が選ばれた場合はエラー（終了コード 3）。警告して別のコンパイラでビルドすることはしない（黙って別のコンパイラでビルドされるのを防ぐため）。
 
@@ -278,7 +278,7 @@ GCC（MinGW-w64）を追加したときに要ったものの一覧。プルリ�
 
 ## バージョン固定
 
-- `cuno.toml` の `[toolchain.version]` に、コンパイラごとの範囲または厳密なバージョンを書く（[manifest.md](manifest.md)）。
+- `Cuno.toml` の `[toolchain.version]` に、コンパイラごとの範囲または厳密なバージョンを書く（[manifest.md](manifest.md)）。
 - 実際に使用するコンパイラの制約だけを確認する。
 - 満たさない場合はエラーにし、対処法を案内する。
 - rust-toolchain.toml のような別ファイルは作らない（設定ファイルを増やさない方針）。

@@ -18,7 +18,7 @@ const UGLY: &str = "int  main( ){int* p=0;return 0;}\n";
 fn package() -> Project {
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!(
                 "{MANIFEST}[[bin]]\nname = \"app\"\npath = \"src/main.cpp\"\n\
                  [[bin]]\nname = \"tool\"\npath = \"tools/tool.cpp\"\n\
@@ -86,7 +86,7 @@ fn fmt_styles_in_the_package_s_language_from_cuno_toml() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", &format!("{MANIFEST}lang = \"c\"\n"))
+        .file("Cuno.toml", &format!("{MANIFEST}lang = \"c\"\n"))
         .file("src/main.c", "int  main(void){int* p=0;return 0;}\n")
         .file("src/util.h", "int* f(void);\n")
         .file(".clang-format", "BasedOnStyle: Google\n");
@@ -114,7 +114,7 @@ fn exclude_matches_without_regard_to_case_on_windows() {
     }
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!(
                 "{MANIFEST}[fmt]
 exclude = [\"SRC/Third_Party/**\"]
@@ -145,7 +145,7 @@ fn fmt_leaves_a_link_and_says_so() {
     let target = outside.path().join("shared.cpp");
     std::fs::write(&target, UGLY).unwrap();
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() { return 0; }\n");
     if std::os::windows::fs::symlink_file(&target, project.path().join("src/shared.cpp")).is_err() {
         eprintln!("skipped: this account cannot make file links");
@@ -159,7 +159,7 @@ fn fmt_leaves_a_link_and_says_so() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), UGLY);
 }
 
-/// A directory under `src/` with its own `cuno.toml` is another package:
+/// A directory under `src/` with its own `Cuno.toml` is another package:
 /// fmt names it with the build's warning and leaves its files alone
 /// (`project-layout.md`, "Source collection and linking").
 ///
@@ -171,18 +171,18 @@ fn fmt_leaves_a_nested_package_and_says_so() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file(
             "src/main.cpp",
             "int main() { return 0; }
 ",
         )
-        .file("src/sub/cuno.toml", MANIFEST)
+        .file("src/sub/Cuno.toml", MANIFEST)
         .file("src/sub/x.cpp", UGLY);
     project.cuno(&["fmt", "--check"]).assert(
         0,
         "",
-        "warning: src/sub is not built: it has its own cuno.toml (another package)
+        "warning: src/sub is not built: it has its own Cuno.toml (another package)
 ",
     );
 }
@@ -234,7 +234,7 @@ fn a_refused_configuration_is_exit_3_before_formatting() {
     }
     let project = package().file(".cuno/config.toml", "");
     std::fs::write(
-        project.path().join("cuno.toml"),
+        project.path().join("Cuno.toml"),
         format!("{MANIFEST}[fmt.clang-format]\nBogusKey = 1\n"),
     )
     .unwrap();
@@ -242,7 +242,7 @@ fn a_refused_configuration_is_exit_3_before_formatting() {
     assert_eq!(run.code, Some(3), "{}", run.stderr);
     assert!(
         run.stderr
-            .starts_with("error: clang-format refuses the configuration from [fmt] in cuno.toml: "),
+            .starts_with("error: clang-format refuses the configuration from [fmt] in Cuno.toml: "),
         "{}",
         run.stderr
     );
@@ -250,7 +250,7 @@ fn a_refused_configuration_is_exit_3_before_formatting() {
     assert!(!run.stderr.contains("cuno-fmt-"), "{}", run.stderr);
     assert!(
         run.stderr
-            .ends_with("help: correct [fmt.clang-format] in cuno.toml\n"),
+            .ends_with("help: correct [fmt.clang-format] in Cuno.toml\n"),
         "{}",
         run.stderr
     );

@@ -13,7 +13,7 @@ pub enum ExitClass {
     /// Incorrect usage of the command (an unknown option, a missing argument).
     Usage,
     /// A configuration or environment problem: the setup cuno runs in is
-    /// wrong, not the user's code (an error in `cuno.toml`, no compiler found,
+    /// wrong, not the user's code (an error in `Cuno.toml`, no compiler found,
     /// a compiler version that does not satisfy a constraint).
     Setup,
     /// A bug in cuno itself.

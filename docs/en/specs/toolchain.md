@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/toolchain.md @ blob 5cb8869fb60fa2079e3cfcc0253cca09d8096bba -->
+<!-- translated-from: docs/ja/specs/toolchain.md @ blob 2098ce63af89b14c827be61a076d0af68a353f01 -->
 
 # Toolchain
 
@@ -88,13 +88,13 @@ A compiler must accept a C++20 specification.
 
   For clang-tidy: `error: clang-tidy 20.1.8 is not accepted by ...` and `help: install clang-tidy 22 or newer`.
 
-- Inside cuno, in `[toolchain.version]` of `cuno.toml`, and in output messages, MSVC versions are expressed as the **cl.exe version** (e.g. `19.29`). The Visual Studio product version (e.g. `16.11`) is not used.
+- Inside cuno, in `[toolchain.version]` of `Cuno.toml`, and in output messages, MSVC versions are expressed as the **cl.exe version** (e.g. `19.29`). The Visual Studio product version (e.g. `16.11`) is not used.
 
 ## Compiler abstraction
 
-- Differences between compiler families (detection, translating `cuno.toml` settings into flags, obtaining header dependency information, parsing diagnostic output) are **confined behind a single interface**.
+- Differences between compiler families (detection, translating `Cuno.toml` settings into flags, obtaining header dependency information, parsing diagnostic output) are **confined behind a single interface**.
 - The kinds of compiler are one enumeration (`CompilerKind`), and each kind's answers are written in `match`es that name every kind. Adding a kind makes every place that must answer for it a compile error. Since additions by other developers are expected, the steps are written below.
-- `[build]` settings in `cuno.toml` (e.g. `warnings-as-errors = true`) are translated into each family's flags (`-Werror` / `/WX`).
+- `[build]` settings in `Cuno.toml` (e.g. `warnings-as-errors = true`) are translated into each family's flags (`-Werror` / `/WX`).
 
 ### Adding a compiler
 
@@ -147,8 +147,8 @@ What adding GCC (MinGW-w64) needed, in order. The pull requests were three (and 
   | `LIBPATH` | `<MSVC>\lib\x64` |
   | `PATH` (prepended) | `<MSVC>\bin\Hostx64\x64`, `<SDK>\bin\<version>\x64` |
 
-- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (the include paths of Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (where GCC looks for libraries and its own programs), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (an additional header dependency file GCC writes) are removed from the environment of the build, the standard library check, `cuno doctor` and GCC's detection. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in cuno.toml`).
-  - Rationale: they add flags without appearing on the command line, so the build would run with flags other than `cuno.toml`'s and report success (with `_CL_=-DNDEBUG`, for example, `NDEBUG` is defined in the dev profile too), and `-v` would not show them. They are not an error so that a user who sets `CL=/MP` globally need not unset it every time they use cuno.
+- **Environment variables compilers and linkers read for themselves are not passed on.** `CL` / `_CL_` (options of cl.exe and clang-cl), `LINK` / `_LINK_` (options of link.exe and lld-link), and `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (the include paths of Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (where GCC looks for libraries and its own programs), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (an additional header dependency file GCC writes) are removed from the environment of the build, the standard library check, `cuno doctor` and GCC's detection. The build commands warn about each one that was set (`warning: CL is set in the environment and is not used`, `help: write the flags in Cuno.toml`).
+  - Rationale: they add flags without appearing on the command line, so the build would run with flags other than `Cuno.toml`'s and report success (with `_CL_=-DNDEBUG`, for example, `NDEBUG` is defined in the dev profile too), and `-v` would not show them. They are not an error so that a user who sets `CL=/MP` globally need not unset it every time they use cuno.
 
 - **Developer Command Prompt variables are removed**: `VSINSTALLDIR`, `VCINSTALLDIR`, `VCToolsInstallDir`, `EXTERNAL_INCLUDE`, `WindowsSdkDir`, `WindowsSDKVersion`, `UniversalCRTSdkDir`, `UCRTVersion`. clang / clang-cl look for the toolset and linker through them, so running cuno from another Visual Studio's Developer Command Prompt would succeed with a toolset other than the one cuno chose.
 - Of what `vcvars64.bat` sets, the following is not set (using it fails with an error):
@@ -262,12 +262,12 @@ Precedence (higher wins):
 1. Command-line argument `--compiler`
 2. Environment variable `CUNO_COMPILER`
 3. Project-level `.cuno/config.toml`
-4. `[toolchain]` in `cuno.toml`
+4. `[toolchain]` in `Cuno.toml`
 5. User-level `<cuno home>/config.toml`
 6. Automatic selection
 
-- Settings decided by the project (`cuno.toml`) take precedence over personal global settings (user-level config).
-- Outside a project (for example when `cuno doctor` runs outside one), there are no project layers (`.cuno/config.toml` and `[toolchain]` in `cuno.toml`), so the compiler is chosen in the order `--compiler` → `CUNO_COMPILER` → user-level config → automatic selection.
+- Settings decided by the project (`Cuno.toml`) take precedence over personal global settings (user-level config).
+- Outside a project (for example when `cuno doctor` runs outside one), there are no project layers (`.cuno/config.toml` and `[toolchain]` in `Cuno.toml`), so the compiler is chosen in the order `--compiler` → `CUNO_COMPILER` → user-level config → automatic selection.
   - Rationale: to match the compiler a `cuno build` in a new project would use. Looking only at automatic selection could diagnose MSVC for a user whose user-level config selects clang, answer "no problem", and leave the following build to fail.
 - If a compiler not supported yet (`safec`) is selected, it is an error (exit code 3). cuno does not warn and build with another compiler (to prevent silently building with a different compiler).
 
@@ -279,7 +279,7 @@ Automatic selection defaults: MSVC on Windows, GCC on Linux, Apple Clang on macO
 
 ## Version pinning
 
-- Write a per-compiler range or exact version in `[toolchain.version]` of `cuno.toml` ([manifest.md](manifest.md)).
+- Write a per-compiler range or exact version in `[toolchain.version]` of `Cuno.toml` ([manifest.md](manifest.md)).
 - Only the constraint for the compiler actually used is checked.
 - If it is not satisfied, it is an error, and cuno indicates how to resolve it.
 - No separate file like rust-toolchain.toml is created (policy of not adding configuration files).

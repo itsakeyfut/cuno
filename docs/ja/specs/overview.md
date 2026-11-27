@@ -52,7 +52,7 @@ cuno run          # ビルドして実行
 ## アンチゴール（動いても失敗とみなすもの）
 
 - 利用者が CMake や他のビルド DSL を書く必要がある
-- 設定が `cuno.toml` + `.cuno/config.toml` を超えて多数のファイルに分散する（ユーザー単位の `<管理ディレクトリ>/config.toml` と、逃げ道のビルドスクリプトは例外。[manifest.md](manifest.md)）
+- 設定が `Cuno.toml` + `.cuno/config.toml` を超えて多数のファイルに分散する（ユーザー単位の `<管理ディレクトリ>/config.toml` と、逃げ道のビルドスクリプトは例外。[manifest.md](manifest.md)）
 - 始めるのに IDE が必要
 - 依存のハッシュ値を利用者が手で調べる必要がある
 - コンパイラ固有のフラグ（`/WX`, `-Werror` 等）を利用者が覚える必要がある

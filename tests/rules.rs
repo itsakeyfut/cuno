@@ -116,7 +116,7 @@ const RULES: &[(&str, &[(&str, Row)])] = &[
 fn package() -> Project {
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
         )
         .file("src/main.cpp", "int main() { return 0; }\n")
@@ -207,7 +207,7 @@ fn outside_a_project_the_missing_project_is_the_error() {
         assert_eq!(run.code, Some(3), "{command}: {}", run.stderr);
         assert!(
             run.stderr
-                .starts_with("error: could not find cuno.toml in "),
+                .starts_with("error: could not find Cuno.toml in "),
             "{command}: {}",
             run.stderr
         );

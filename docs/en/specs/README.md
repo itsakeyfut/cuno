@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/README.md @ blob 29efefec96b62b46ac58e0f53dab9db77e0ef47e -->
+<!-- translated-from: docs/ja/specs/README.md @ blob 4faaca1d9a548043c0267347d912edb0cbc91050 -->
 
 # cuno Specification
 
@@ -22,7 +22,7 @@ This set of documents describes the decided specifications of cuno. Design and i
 | [overview.md](overview.md) | Purpose, users, goals / non-goals / anti-goals, MVP scope |
 | [commands.md](commands.md) | Command structure, options, output, exit codes |
 | [project-layout.md](project-layout.md) | Project kinds and layout |
-| [manifest.md](manifest.md) | Configuration files (`cuno.toml` / `.cuno/config.toml`) |
+| [manifest.md](manifest.md) | Configuration files (`Cuno.toml` / `.cuno/config.toml`) |
 | [toolchain.md](toolchain.md) | Supported compilers, language standards, compiler abstraction |
 | [build.md](build.md) | Build engine |
 | [dependencies.md](dependencies.md) | Dependency management |

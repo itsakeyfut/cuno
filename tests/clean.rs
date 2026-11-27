@@ -15,7 +15,7 @@ const MARKER: &str = "target/.cuno-target";
 /// marker.
 fn built() -> Project {
     Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() {}\n")
         .file(MARKER, "")
         .file("target/debug/app.exe", "")
@@ -60,7 +60,7 @@ fn a_profile_removes_only_its_own_output() {
     assert!(project.path().join("target/debug/app.exe").is_file());
 
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file(MARKER, "")
         .file("target/debug/app.exe", "")
         .file("target/release/app.exe", "");
@@ -86,7 +86,7 @@ fn target_dir_names_what_is_removed() {
     assert!(project.path().join("target/debug/app.exe").is_file());
 }
 
-/// A project whose `cuno.toml` puts the output outside it, or at its root,
+/// A project whose `Cuno.toml` puts the output outside it, or at its root,
 /// is refused with exit 3 before anything is removed, even when the
 /// command line names another directory.
 ///
@@ -95,7 +95,7 @@ fn target_dir_names_what_is_removed() {
 #[test]
 fn a_refused_output_directory_removes_nothing() {
     let project = built().file(
-        "cuno.toml",
+        "Cuno.toml",
         &format!("{MANIFEST}[build]\ntarget-dir = \"../out\"\n"),
     );
     let outside = project.path().parent().unwrap().join("out");
@@ -113,24 +113,24 @@ fn a_refused_output_directory_removes_nothing() {
     assert!(project.path().join("target/debug/app.exe").is_file());
 
     let project = built().file(
-        "cuno.toml",
+        "Cuno.toml",
         &format!("{MANIFEST}[build]\ntarget-dir = \".\"\n"),
     );
     let run = project.cuno(&["clean", "--target-dir", "target"]);
     assert_eq!(run.code, Some(3), "{}", run.stderr);
-    assert!(project.path().join("cuno.toml").is_file());
+    assert!(project.path().join("Cuno.toml").is_file());
     assert!(project.path().join("target/debug/app.exe").is_file());
 }
 
 /// An output directory without the marker is not cuno's: `cuno clean`
 /// removes nothing, says so, and exits 3, whether it is a `target` made by
-/// hand or the sources a project's `cuno.toml` names.
+/// hand or the sources a project's `Cuno.toml` names.
 ///
 /// Mutation: remove an unmarked directory; this test fails.
 #[test]
 fn an_unmarked_output_directory_is_not_removed() {
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("target/notes.txt", "");
     let run = project.cuno(&["clean"]);
     assert_eq!(run.code, Some(3), "{}", run.stderr);
@@ -146,7 +146,7 @@ fn an_unmarked_output_directory_is_not_removed() {
 
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!("{MANIFEST}[build]\ntarget-dir = \"src\"\n"),
         )
         .file("src/main.cpp", "int main() {}\n");
@@ -170,15 +170,15 @@ fn clean_outside_a_project_exits_3() {
         3,
         "",
         &format!(
-            "error: could not find cuno.toml in {} or any parent directory\n\
-             help: run it in a directory that holds a cuno.toml, or below one\n",
+            "error: could not find Cuno.toml in {} or any parent directory\n\
+             help: run it in a directory that holds a Cuno.toml, or below one\n",
             outside.path().display()
         ),
     );
     assert!(outside.path().join("target/x").is_file());
     let run = outside.cuno(&["clean", "--target-dir", "."]);
     assert!(
-        run.stderr.starts_with("error: could not find cuno.toml"),
+        run.stderr.starts_with("error: could not find Cuno.toml"),
         "{}",
         run.stderr
     );
@@ -208,7 +208,7 @@ fn a_profile_that_is_not_one_is_refused() {
 /// Mutation: drop the settings' warnings; this test fails.
 #[test]
 fn clean_shows_the_settings_warnings() {
-    let project = built().file("cuno.toml", &format!("{MANIFEST}nope = 1\n"));
+    let project = built().file("Cuno.toml", &format!("{MANIFEST}nope = 1\n"));
     let run = project.cuno(&["clean"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(
@@ -259,7 +259,7 @@ fn clean_outside_a_project_colors_as_configured() {
     let run = outside.cuno(&["clean"]);
     assert!(
         run.stderr
-            .starts_with("\x1b[1;31merror\x1b[0m: could not find cuno.toml"),
+            .starts_with("\x1b[1;31merror\x1b[0m: could not find Cuno.toml"),
         "{}",
         run.stderr
     );

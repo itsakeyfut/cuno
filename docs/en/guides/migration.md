@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/guides/migration.md @ blob a78d80634c26187b5d35e13c50c425a1163bde76 -->
+<!-- translated-from: docs/ja/guides/migration.md @ blob 2ab1b426a0233ded78956254b041c127439094d1 -->
 
 # Migrating from other tools
 
@@ -8,18 +8,18 @@ When you move to cuno from CMake, Visual Studio, ctest, clang-format and the lik
 
 The right-hand column of each table is one of the following three kinds.
 
-- **Available now**: gives the cuno command, option or `cuno.toml` entry as is.
+- **Available now**: gives the cuno command, option or `Cuno.toml` entry as is.
 - **Not yet supported (Mn)**: something cuno does not have yet. Says what to do in the meantime and the milestone in which it is planned ([roadmap](../roadmap.md)).
 - **No equivalent**: a concept cuno does not have. Says what to do in cuno instead.
 
-cuno's configuration goes into a single `cuno.toml`. See [manifest.md](../specs/manifest.md) for details of the entries and [commands.md](../specs/commands.md) for details of the commands.
+cuno's configuration goes into a single `Cuno.toml`. See [manifest.md](../specs/manifest.md) for details of the entries and [commands.md](../specs/commands.md) for details of the commands.
 
 ## From CMake
 
 | In CMake | In cuno |
 |---|---|
-| Write `CMakeLists.txt` | Write `cuno.toml`. `cuno new <path>` creates a package that builds with no configuration |
-| Add `CMakeLists.txt` to an existing directory | Not yet supported (M5, `cuno init`). In the meantime, place `cuno.toml` by hand |
+| Write `CMakeLists.txt` | Write `Cuno.toml`. `cuno new <path>` creates a package that builds with no configuration |
+| Add `CMakeLists.txt` to an existing directory | Not yet supported (M5, `cuno init`). In the meantime, place `Cuno.toml` by hand |
 | `cmake -S . -B build` → `cmake --build build` | `cuno build`. There is no generate step |
 | `add_executable(app src/main.cpp)` | Write nothing. `src/main.cpp` (or `.c`) becomes the default executable. To change its name or path, use `[[bin]]` |
 | Build several executables | Put sources in `src/bin/` (one per file), or write several `[[bin]]` |
@@ -34,7 +34,7 @@ cuno's configuration goes into a single `cuno.toml`. See [manifest.md](../specs/
 | `-DCMAKE_BUILD_TYPE=Release` | `cuno build --release`. Settings go in `[profile.release]` |
 | Generator expressions such as `$<CONFIG:Debug>` | No equivalent. Write per-configuration settings in `[profile.dev.build]` / `[profile.release.build]`, per-compiler settings in tables such as `[build.msvc]`, and per-OS settings in tables such as `[platform.windows.build]` |
 | `if(WIN32)` / `if(MSVC)` | `[platform.windows.build]`, `[build.msvc]` |
-| `option()` and cache variables | No equivalent. Write values in `cuno.toml`. Per-machine settings go in `.cuno/config.toml` |
+| `option()` and cache variables | No equivalent. Write values in `Cuno.toml`. Per-machine settings go in `.cuno/config.toml` |
 | `CMakePresets.json` | No equivalent. `.cuno/config.toml`, and options such as `--release` and `--compiler` |
 | `-G "Visual Studio 17 2022"` / `-T ClangCL` | `compiler` in `[toolchain]`, or `cuno build --compiler clang-cl` |
 | `find_package(Foo)` | Not yet supported (M6 / M7, `cuno add`). In the meantime, specify them by hand with `include-dirs`, `links` and `lib-dirs` |
@@ -61,7 +61,7 @@ cuno's configuration goes into a single `cuno.toml`. See [manifest.md](../specs/
 | "Additional Dependencies" (`d3d12.lib`) | `links` in `[build]` (`d3d12`, without `.lib`) |
 | "Additional Options" (compiler) | `flags` in `[build.msvc]` |
 | "SubSystem" (Console / Windows) | `subsystem` in `[[bin]]` (`console` / `windows`) |
-| Share settings through property sheets (`.props`) | No equivalent. Write settings in `cuno.toml`, and per-machine settings in `.cuno/config.toml` |
+| Share settings through property sheets (`.props`) | No equivalent. Write settings in `Cuno.toml`, and per-machine settings in `.cuno/config.toml` |
 | Debug with F5 | Not yet supported (M9, `cuno ide vs`). In the meantime, you can open the executable from `cuno build` in Visual Studio and debug it |
 | Run (Ctrl+F5) | `cuno run`. The working directory is the project root |
 | "Command Arguments" | `cuno run -- <args>` |
@@ -106,23 +106,23 @@ cuno tests are written with the bundled headers and run with `cuno test`. How to
 
 | In clang-format | In cuno |
 |---|---|
-| Write `.clang-format` | Write `[fmt]` in `cuno.toml`: `style` (`cuno`, `llvm`, `google`, `microsoft`, etc.), `indent-width`, `column-limit`, `use-tabs` |
+| Write `.clang-format` | Write `[fmt]` in `Cuno.toml`: `style` (`cuno`, `llvm`, `google`, `microsoft`, etc.), `indent-width`, `column-limit`, `use-tabs` |
 | Other `.clang-format` options | Write clang-format options as they are in `[fmt.clang-format]` |
 | `clang-format -i $(git ls-files '*.cpp' '*.h')` | `cuno fmt`. It covers the package's code (`src/`, `tests/`, `examples/`, `benches/`, etc.) |
 | `clang-format --dry-run --Werror` in CI | `cuno fmt --check` (exit code 1 if any file is not formatted) |
 | Exclude files from formatting | `exclude` in `[fmt]` |
-| The editor reads `.clang-format` | Nothing to do. `cuno build`, `cuno fmt` and `cuno lint` write `.clang-format` from `cuno.toml` to the project root |
+| The editor reads `.clang-format` | Nothing to do. `cuno build`, `cuno fmt` and `cuno lint` write `.clang-format` from `Cuno.toml` to the project root |
 
 ## From clang-tidy
 
 | In clang-tidy | In cuno |
 |---|---|
-| Write `Checks:` in `.clang-tidy` | `[lint]` in `cuno.toml`. Choose a `preset` (`recommended` / `strict` / `none`) and adjust it with `allow` / `warn` / `deny` |
+| Write `Checks:` in `.clang-tidy` | `[lint]` in `Cuno.toml`. Choose a `preset` (`recommended` / `strict` / `none`) and adjust it with `allow` / `warn` / `deny` |
 | `WarningsAsErrors:` | `deny` in `[lint]` |
 | `run-clang-tidy -p build` | `cuno lint`. cuno provides `compile_commands.json` |
 | `clang-tidy --fix` | `cuno lint --fix` |
 | Exclude files from analysis | `exclude` in `[lint]` |
-| The editor reads `.clang-tidy` | Nothing to do. `cuno build`, `cuno fmt` and `cuno lint` write `.clang-tidy` from `cuno.toml` to the project root |
+| The editor reads `.clang-tidy` | Nothing to do. `cuno build`, `cuno fmt` and `cuno lint` write `.clang-tidy` from `Cuno.toml` to the project root |
 
 ## From vcpkg / Conan
 
@@ -130,9 +130,9 @@ Dependency management arrives in M6 and M7. Until then, use a library by writing
 
 | In vcpkg / Conan | In cuno |
 |---|---|
-| Declare dependencies in `vcpkg.json` / `conanfile.txt` | Not yet supported (M6, `[dependencies]` in `cuno.toml`) |
+| Declare dependencies in `vcpkg.json` / `conanfile.txt` | Not yet supported (M6, `[dependencies]` in `Cuno.toml`) |
 | `vcpkg install sdl3` / `conan install` | Not yet supported (Git / URL in M6, `cuno add sdl3` in M7) |
-| The baseline in `vcpkg-configuration.json`, `conan.lock` | Not yet supported (M6, `cuno.lock`) |
+| The baseline in `vcpkg-configuration.json`, `conan.lock` | Not yet supported (M6, `Cuno.lock`) |
 | features (vcpkg) / options (Conan) | Not yet supported (M7) |
 | Binary caching | Not yet supported. A cache on the machine comes with dependency management (no milestone yet); one shared across a team or CI is future |
 | Keep dependency sources in the repository | Not yet supported (M7, `cuno vendor`). In the meantime, sources placed under `src/` are built along with the package |
@@ -153,7 +153,7 @@ cuno takes Cargo as its model, so many things work the same way.
 | `cargo fmt` / `cargo fmt --check` | `cuno fmt` / `cuno fmt --check` |
 | `cargo clippy` / `cargo clippy --fix` | `cuno lint` / `cuno lint --fix` |
 | `cargo clean` | `cuno clean` |
-| `[package]`, `[[bin]]`, `[profile.release]` in `Cargo.toml` | The tables of the same name in `cuno.toml` |
+| `[package]`, `[[bin]]`, `[profile.release]` in `Cargo.toml` | The tables of the same name in `Cuno.toml` |
 | `.cargo/config.toml` | `.cuno/config.toml` |
 | `[dependencies]` | Not yet supported (M6) |
 | `build.rs` | Not yet supported (M7, `[[build.rule]]` and Lua build scripts) |
@@ -166,7 +166,7 @@ cuno takes Cargo as its model, so many things work the same way.
 
 | In Premake | In cuno |
 |---|---|
-| Write `premake5.lua` | Write `cuno.toml`. No Lua script is needed |
+| Write `premake5.lua` | Write `Cuno.toml`. No Lua script is needed |
 | Generate projects with `premake5 vs2022` and build them | `cuno build`. There is no generate step. Generating Visual Studio projects is not yet supported (M9, `cuno ide vs`) |
 | `kind "ConsoleApp"` / `"WindowedApp"` | `subsystem` in `[[bin]]` (`console` / `windows`) |
 | `kind "StaticLib"` / `"SharedLib"` | Not yet supported (M6, `kind` in `[lib]`) |
@@ -183,14 +183,14 @@ cuno takes Cargo as its model, so many things work the same way.
 
 | In Meson | In cuno |
 |---|---|
-| Write `meson.build` | Write `cuno.toml` |
+| Write `meson.build` | Write `Cuno.toml` |
 | `meson setup builddir` → `meson compile -C builddir` | `cuno build`. There is no setup step |
 | `executable('app', sources)` | Write nothing. `src/main.cpp` becomes the default executable |
 | `meson test` | `cuno test` |
 | `--buildtype=release` | `cuno build --release` |
 | `default_options: ['cpp_std=c++20']` | `edition` in `[package]` |
 | `warning_level=3`, `werror=true` | `warnings`, `warnings-as-errors` in `[build]` |
-| `meson_options.txt` | No equivalent. Write values in `cuno.toml`, and per-machine settings in `.cuno/config.toml` |
+| `meson_options.txt` | No equivalent. Write values in `Cuno.toml`, and per-machine settings in `.cuno/config.toml` |
 | `dependency('zlib')`, wraps | Not yet supported (M6 / M7) |
 | `custom_target` | Not yet supported (M7, `[[build.rule]]`) |
 | Cross files (`--cross-file`) | Not yet supported (M8, `--target`) |
@@ -199,7 +199,7 @@ cuno takes Cargo as its model, so many things work the same way.
 
 | In Bazel | In cuno |
 |---|---|
-| Write `BUILD` and `MODULE.bazel` | Write `cuno.toml` |
+| Write `BUILD` and `MODULE.bazel` | Write `Cuno.toml` |
 | `bazel build //app:main` | `cuno build` |
 | `bazel run //app:main -- args` | `cuno run -- args` |
 | `bazel test //...` | `cuno test` |

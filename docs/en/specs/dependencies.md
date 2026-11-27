@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/dependencies.md @ blob 7d9fa8b2dd97715b86f830df4f15131a5cb0a77d -->
+<!-- translated-from: docs/ja/specs/dependencies.md @ blob 7ed62f7b915414e53e8df1e4fbe7e6f302331b6d -->
 
 # Dependency Management
 
@@ -6,7 +6,7 @@
 
 ## Policy: hybrid
 
-- **cuno-format packages** (those with a `cuno.toml`) are built by cuno itself.
+- **cuno-format packages** (those with a `Cuno.toml`) are built by cuno itself.
 - **Existing libraries** (SDL3, FFmpeg, etc.) are built by cuno invoking the existing build system (CMake, etc.) behind the scenes, following the build method described in a recipe.
 - Users never see CMake.
 
@@ -32,7 +32,7 @@
 
 ## Lockfile
 
-- `cuno.lock` (TOML). Records the resolved versions, sources, and hashes.
+- `Cuno.lock` (TOML). Records the resolved versions, sources, and hashes.
 - Committing it to Git is recommended.
 
 ## Linking
@@ -75,6 +75,6 @@
 
 - Recipe format (including how to split the declarative part from the Lua escape hatch)
 - Version resolution algorithm, and error display on conflicts
-- Concrete format of `cuno.lock`
+- Concrete format of `Cuno.lock`
 - Rules for deciding license warnings
 - Binary cache storage location and cache key (compiler, version, flags, features, etc.)

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob 6e3a1dc33d2ccef2cb861fe60cdab7fae51ab7a9 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob f198420e9457a882707bc4d0366e466d7964214b -->
 
 # Internal Structure of cuno Itself
 
@@ -11,7 +11,7 @@ A Rust workspace, with crates split by role.
 | `cuno` | The main body of the single binary. Collects input from the process, calls `cuno-cli`, and exits with the exit code it returns (`src/main.rs` only) | MVP |
 | `cuno-cli` | The CLI. Interprets command-line arguments, resolves settings, dispatches to each command, displays errors and decides the exit code. A module per command combines the crates ([What goes in `src/` and `cuno-cli`](#what-goes-in-src-and-cuno-cli)) | MVP |
 | `cuno-core` | Only the seven things several crates share: classifying errors and exit codes, output (cargo-style display, color, verbosity), resolving the cuno home, the list of environment variables, path identity, starting a built program, and the scratch directory | MVP |
-| `cuno-manifest` | Loading and validating `cuno.toml` / `config.toml` ([manifest.md](manifest.md)) | MVP |
+| `cuno-manifest` | Loading and validating `Cuno.toml` / `config.toml` ([manifest.md](manifest.md)) | MVP |
 | `cuno-toolchain` | Compiler abstraction (interface), detection, per-compiler implementations, flag translation ([toolchain.md](toolchain.md)) | MVP |
 | `cuno-build` | Building and executing the build graph, change detection, outputting compile_commands.json ([build.md](build.md)) | MVP |
 | `cuno-test` | Test discovery, execution, and result output ([testing.md](testing.md)) | MVP |
@@ -91,7 +91,7 @@ The allowed directions of dependency are limited to the following. `tests/archit
 
 - **`cuno-manifest` depends on `cuno-toolchain`, not the reverse.** `cuno-toolchain` defines the kinds of compiler and the types of the settings that flag translation receives, and `cuno-manifest` reads TOML into those types (`[build.<compiler>]` is also looked up by the kind of compiler).
   - Every decision that branches on the kind of compiler (how its command line is written, whether it is of the MSVC or the LLVM family, which LLVM tool it is) is answered in one place in `cuno-toolchain`, covering every kind. Other code does not compare kinds but uses those answers, so a new compiler does not compile while any decision is unanswered for it.
-  - The names `cuno.toml` can be written with (the keys of `[build.<compiler>]` and `[toolchain.version]`) belong to `cuno-manifest`, since they include compilers cuno recognises but cannot build with (`gcc` / `safec`). The mapping from a kind of compiler to its name is made in one place in `cuno-manifest`.
+  - The names `Cuno.toml` can be written with (the keys of `[build.<compiler>]` and `[toolchain.version]`) belong to `cuno-manifest`, since they include compilers cuno recognises but cannot build with (`gcc` / `safec`). The mapping from a kind of compiler to its name is made in one place in `cuno-manifest`.
   - Rationale: to keep the structure of TOML out of the compiler abstraction. Adding a compiler then takes a change to `cuno-toolchain` alone (design principle 5 in [concept.md](../concept.md)).
 - `cuno-test` holds only running tests and displaying their results. Building tests is one mode of `cuno-build`.
   - Rationale: it only runs the executables it is given and collects the results, so it needs no knowledge of settings or compilers.
@@ -111,7 +111,7 @@ A rule used by several commands is held in one place, by the crate below. Each c
 | Interpreting command-line arguments, resolving settings, dispatching to each command, displaying errors and deciding the exit code | `cuno-cli` (using `cuno-core`'s classification) |
 | Collecting input from the process, and ending the process | `cuno` |
 | Error classification, output, cuno home, list of environment variables, path identity, starting a built program, scratch directory | `cuno-core` |
-| Finding the project, resolving paths the user wrote (in configuration files and command-line arguments), reading and validating `cuno.toml` and the configuration files, the precedence of each value, layering the settings for the selected compiler, target and profile | `cuno-manifest` |
+| Finding the project, resolving paths the user wrote (in configuration files and command-line arguments), reading and validating `Cuno.toml` and the configuration files, the precedence of each value, layering the settings for the selected compiler, target and profile | `cuno-manifest` |
 | Kinds of compiler, detection, selection precedence, environment resolution on Windows, version conditions, flag translation, how the target and the host are represented | `cuno-toolchain` |
 | Classifying sources (entry files, package body, tests), the output paths cuno decides, the build graph, building tests, compile_commands.json, bundled headers, preparing the compiler used for the build (connecting `cuno-toolchain`'s detection, selection and environment resolution with the check of the standard library against the build settings) | `cuno-build` |
 | Running tests and displaying results | `cuno-test` |

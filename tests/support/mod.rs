@@ -5,7 +5,7 @@
 //! exact result:
 //!
 //! ```ignore
-//! let project = Project::new().file("cuno.toml", "[package]\nname = \"demo\"\n");
+//! let project = Project::new().file("Cuno.toml", "[package]\nname = \"demo\"\n");
 //! project.cuno(&["--version"]).assert(0, "cuno 0.1.0\n", "");
 //! ```
 //!

@@ -36,7 +36,7 @@ pub enum BuildError {
         /// The path.
         path: PathBuf,
     },
-    /// An entry file inside a directory with its own `cuno.toml`.
+    /// An entry file inside a directory with its own `Cuno.toml`.
     InAnotherPackage {
         /// The executable's name.
         name: String,
@@ -44,11 +44,15 @@ pub enum BuildError {
         path: String,
         /// The other package's directory, as shown.
         package: String,
+        /// Its manifest's name, as on disk.
+        manifest: String,
     },
-    /// `src/` or `tests/` holding its own `cuno.toml`.
+    /// `src/` or `tests/` holding its own `Cuno.toml`.
     CodeDirIsPackage {
         /// The directory, as shown (`src`).
         dir: String,
+        /// Its manifest's name, as on disk.
+        manifest: String,
     },
     /// Two executables with the same name.
     DuplicateName {
@@ -137,13 +141,14 @@ impl fmt::Display for BuildError {
                 name,
                 path,
                 package,
+                manifest,
             } => write!(
                 f,
-                "the entry file of `{name}` is in another package: {path} ({package} has its own cuno.toml)"
+                "the entry file of `{name}` is in another package: {path} ({package} has its own {manifest})"
             ),
-            BuildError::CodeDirIsPackage { dir } => write!(
+            BuildError::CodeDirIsPackage { dir, manifest } => write!(
                 f,
-                "{dir}/ has its own cuno.toml, which would make it another package"
+                "{dir}/ has its own {manifest}, which would make it another package"
             ),
             BuildError::DuplicateName { name, entries } => write!(
                 f,
@@ -223,8 +228,8 @@ impl CunoError for BuildError {
             BuildError::InAnotherPackage { package, .. } => Some(format!(
                 "move it out of {package}, or point [[bin]] path at a file of this package"
             )),
-            BuildError::CodeDirIsPackage { dir } => Some(format!(
-                "remove {dir}/cuno.toml, or move that package out of {dir}/"
+            BuildError::CodeDirIsPackage { dir, manifest } => Some(format!(
+                "remove {dir}/{manifest}, or move that package out of {dir}/"
             )),
             BuildError::DuplicateName { .. } => {
                 Some("give one of them another name with [[bin]] name".to_owned())

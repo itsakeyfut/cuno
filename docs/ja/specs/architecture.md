@@ -9,7 +9,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `cuno` | 単一バイナリの本体。プロセスから入力を集めて `cuno-cli` を呼び、返った終了コードで終わる（`src/main.rs` だけ） | MVP |
 | `cuno-cli` | CLI。コマンド引数の解釈、設定の解決、各コマンドへの振り分け、エラーの表示と終了コードの決定。コマンドごとのモジュールが各クレートを組み合わせる（[`src/` と `cuno-cli` に置くもの](#src-と-cuno-cli-に置くもの)） | MVP |
 | `cuno-core` | 複数のクレートが共通で使う 7 つだけ：エラーと終了コードの分類、出力（cargo 風の表示・色・詳細度）、cuno home の解決、環境変数の一覧、パスの同一性、ビルドしたプログラムの起動、作業用ディレクトリ | MVP |
-| `cuno-manifest` | `cuno.toml` / `config.toml` の読み込みと検証（[manifest.md](manifest.md)） | MVP |
+| `cuno-manifest` | `Cuno.toml` / `config.toml` の読み込みと検証（[manifest.md](manifest.md)） | MVP |
 | `cuno-toolchain` | コンパイラ抽象化（インターフェース）、検出、各コンパイラの実装、フラグ翻訳（[toolchain.md](toolchain.md)） | MVP |
 | `cuno-build` | ビルドグラフの構築・実行、差分判定、compile_commands.json の出力（[build.md](build.md)） | MVP |
 | `cuno-test` | テストの検出・実行・結果表示（[testing.md](testing.md)） | MVP |
@@ -89,7 +89,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 
 - **`cuno-manifest` が `cuno-toolchain` に依存し、逆はない。** コンパイラの種類と、フラグ翻訳が受け取る設定の型は `cuno-toolchain` が定義し、`cuno-manifest` は TOML をその型へ読み込む（`[build.<compiler>]` もコンパイラの種類で引く）。
   - コンパイラの種類について分岐する判断（引数の書き方、MSVC 系か LLVM 系か、LLVM のどのツールか）は、`cuno-toolchain` の 1 か所が、すべての種類を網羅する形で答える。ほかのコードは種類どうしを比べず、その答えを使う。新しいコンパイラは、答えていない判断があればコンパイルが通らない。
-  - `cuno.toml` に書ける名前（`[build.<compiler>]`、`[toolchain.version]` のキー）は `cuno-manifest` が持つ。ビルドできないが名前として認めるコンパイラ（`gcc` / `safec`）を含むため。コンパイラの種類からこの名前への対応は `cuno-manifest` の 1 か所で行う。
+  - `Cuno.toml` に書ける名前（`[build.<compiler>]`、`[toolchain.version]` のキー）は `cuno-manifest` が持つ。ビルドできないが名前として認めるコンパイラ（`gcc` / `safec`）を含むため。コンパイラの種類からこの名前への対応は `cuno-manifest` の 1 か所で行う。
   - 理由: コンパイラの抽象化に TOML の構造を持ち込まないため。コンパイラの追加が `cuno-toolchain` の変更だけで済む（[concept.md](../concept.md) の設計原則 5）。
 - `cuno-test` はテストの実行と結果の表示だけを持つ。テストのビルドは `cuno-build` の 1 つのモードとする。
   - 理由: 渡された実行ファイルを動かして結果を集めるだけなので、設定やコンパイラを知る必要がない。
@@ -109,7 +109,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | コマンド引数の解釈、設定の解決、各コマンドへの振り分け、エラーの表示と終了コードの決定 | `cuno-cli`（`cuno-core` の分類を使う） |
 | プロセスからの入力の収集と、プロセスの終了 | `cuno` |
 | エラーの分類、出力、cuno home、環境変数の一覧、パスの同一性、ビルドしたプログラムの起動、作業用ディレクトリ | `cuno-core` |
-| プロジェクトの探し方、利用者が書いたパス（設定ファイルとコマンド引数）の解決、`cuno.toml` と設定ファイルの読み込み・検証、値ごとの優先順位、選ばれたコンパイラ・ターゲット・プロファイルに対する設定の重ね合わせ | `cuno-manifest` |
+| プロジェクトの探し方、利用者が書いたパス（設定ファイルとコマンド引数）の解決、`Cuno.toml` と設定ファイルの読み込み・検証、値ごとの優先順位、選ばれたコンパイラ・ターゲット・プロファイルに対する設定の重ね合わせ | `cuno-manifest` |
 | コンパイラの種類、検出、選択の優先順位、Windows での環境解決、バージョンの条件、フラグ翻訳、ターゲットとホストの表し方 | `cuno-toolchain` |
 | ソースの分類（エントリファイル・パッケージ本体・テスト）、cuno が決める出力先のパス、ビルドグラフ、テストのビルド、compile_commands.json、同梱ヘッダ、ビルドに使うコンパイラの準備（`cuno-toolchain` の検出・選択・環境の解決と、ビルドの設定による標準ライブラリの確認をつなぐこと） | `cuno-build` |
 | テストの実行と結果の表示 | `cuno-test` |

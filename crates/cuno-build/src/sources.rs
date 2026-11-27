@@ -104,20 +104,20 @@ pub struct SourceWarning {
 }
 
 /// Why something under `src/` is not built.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NotBuilt {
     /// A `src/main.*` or `src/bin/` source a written `[[bin]]` does not list.
     NotListed,
     /// A link to a directory, which is not read.
     DirectoryLink,
-    /// A directory under `src/` or `tests/` with its own `cuno.toml`,
-    /// another package, which is not read.
-    AnotherPackage,
+    /// A directory under `src/` or `tests/` with its own manifest (its
+    /// name as on disk), another package, which is not read.
+    AnotherPackage(String),
 }
 
 impl fmt::Display for SourceWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.why {
+        match &self.why {
             NotBuilt::NotListed => write!(
                 f,
                 "{} is not built: [[bin]] is written and does not list it",
@@ -126,9 +126,9 @@ impl fmt::Display for SourceWarning {
             NotBuilt::DirectoryLink => {
                 write!(f, "{} is not read: it is a link to a directory", self.path)
             }
-            NotBuilt::AnotherPackage => write!(
+            NotBuilt::AnotherPackage(manifest) => write!(
                 f,
-                "{} is not built: it has its own cuno.toml (another package)",
+                "{} is not built: it has its own {manifest} (another package)",
                 self.path
             ),
         }
@@ -152,7 +152,7 @@ fn code_language(path: &Path, package: Lang) -> Option<Lang> {
 /// The files of the package's code at `root`: every C or C++ file under
 /// [`CODE_DIRS`], and directly in the directory of each `[[bin]] path`
 /// outside them, leaving out `target_dir` and any directory but the root
-/// holding its own `cuno.toml` (another package), walked as [`classify`]
+/// holding its own `Cuno.toml` (another package), walked as [`classify`]
 /// walks (`docs/en/specs/project-layout.md`, "Where the package's code
 /// lives").
 pub fn code_files(
@@ -163,7 +163,7 @@ pub fn code_files(
 ) -> Result<Code, BuildError> {
     let case = host.name_case();
     let root = paths::lexical(root);
-    code_dir_is_package(&root)?;
+    code_dir_is_package(&root, case)?;
     let dirs: Vec<PathBuf> = CODE_DIRS.iter().map(|d| root.join(d)).collect();
     // The directory of a `[[bin]] path` outside them gives only the files
     // directly in it: at the root, the whole tree would be `.git/` and
@@ -182,11 +182,12 @@ pub fn code_files(
                 path,
             });
         }
-        if let Some(package) = another_package(&root, &path) {
+        if let Some((package, manifest)) = another_package(&root, &path, case) {
             return Err(BuildError::InAnotherPackage {
                 name: bin.name.clone(),
                 path: shown(&root, &path),
                 package: shown(&root, &package),
+                manifest,
             });
         }
         if !code_places.iter().any(|dir| place.within(dir))
@@ -198,12 +199,12 @@ pub fn code_files(
     let mut found = Vec::new();
     let mut warnings = Vec::new();
     // A place that is itself a link is followed, as `src/` is; one holding
-    // its own cuno.toml is another package, unless it is the root.
+    // its own Cuno.toml is another package, unless it is the root.
     let places = dirs.iter().map(|d| (d, true));
     let places = places.chain(bin_dirs.iter().map(|d| (d, false)));
     for (dir, below) in places {
         let another_package =
-            dir.join("cuno.toml").is_file() && !Place::of(dir, case).same(&root_place);
+            manifest_name(dir, case).is_some() && !Place::of(dir, case).same(&root_place);
         if !dir.is_dir() || another_package {
             continue;
         }
@@ -270,7 +271,7 @@ pub fn classify(
     // `src/` is the project's own even when it is a link that leads out of
     // it (`project-layout.md`, "Source collection and linking").
     let in_project = |p: &Place| p.within(&root_place) || p.within(&src_place);
-    code_dir_is_package(&root)?;
+    code_dir_is_package(&root, case)?;
     let mut found = Vec::new();
     let mut warnings = Vec::new();
     if src.is_dir() {
@@ -358,11 +359,12 @@ pub fn classify(
                         path,
                     });
                 }
-                if let Some(package) = another_package(&root, &path) {
+                if let Some((package, manifest)) = another_package(&root, &path, case) {
                     return Err(BuildError::InAnotherPackage {
                         name: bin.name.clone(),
                         path: shown(&root, &path),
                         package: shown(&root, &package),
+                        manifest,
                     });
                 }
                 if !path.is_file() {
@@ -591,12 +593,12 @@ impl Walk<'_> {
                     why: NotBuilt::DirectoryLink,
                 });
             } else if kind.is_dir() {
-                // A directory with its own cuno.toml is another package, for
+                // A directory with its own Cuno.toml is another package, for
                 // the build and for fmt and lint alike: built by one and not
                 // the others, its code would ship unformatted and unanalysed
                 // while both report success (`docs/en/specs/project-layout.md`,
                 // "Source collection and linking").
-                if path.join("cuno.toml").is_file() {
+                if let Some(manifest) = manifest_name(&path, self.case) {
                     let place = Place::of(&path, self.case);
                     if [SRC_DIR, TESTS_DIR]
                         .iter()
@@ -604,7 +606,7 @@ impl Walk<'_> {
                     {
                         self.warnings.push(SourceWarning {
                             path: shown(self.root, &path),
-                            why: NotBuilt::AnotherPackage,
+                            why: NotBuilt::AnotherPackage(manifest),
                         });
                     }
                 } else {
@@ -618,28 +620,36 @@ impl Walk<'_> {
     }
 }
 
-/// The directory below `root` holding its own `cuno.toml` that `path` lies
+/// The name of the manifest `dir` holds, as on disk, when it is a
+/// package's: one named in another case on a file system that tells names
+/// apart included, as finding the project judges it
+/// (`docs/en/specs/manifest.md`, "File layout").
+fn manifest_name(dir: &Path, case: NameCase) -> Option<String> {
+    cuno_manifest::manifest_in(dir, case).file_name()
+}
+
+/// The directory below `root` holding its own `Cuno.toml` that `path` lies
 /// in (another package), the nearest first, if there is one
 /// (`docs/en/specs/project-layout.md`, "Entry files and package body").
-fn another_package(root: &Path, path: &Path) -> Option<PathBuf> {
+fn another_package(root: &Path, path: &Path, case: NameCase) -> Option<(PathBuf, String)> {
     path.ancestors()
         .skip(1)
         .take_while(|dir| *dir != root && dir.starts_with(root))
-        .find(|dir| dir.join("cuno.toml").is_file())
-        .map(Path::to_owned)
+        .find_map(|dir| manifest_name(dir, case).map(|m| (dir.to_owned(), m)))
 }
 
-/// An error if `src/` or `tests/` holds its own `cuno.toml`: the package's
+/// An error if `src/` or `tests/` holds its own `Cuno.toml`: the package's
 /// code would be another package, which the build would compile and fmt and
 /// lint leave out (`docs/en/specs/project-layout.md`, "Entry files and
 /// package body").
-fn code_dir_is_package(root: &Path) -> Result<(), BuildError> {
+fn code_dir_is_package(root: &Path, case: NameCase) -> Result<(), BuildError> {
     match [SRC_DIR, TESTS_DIR]
         .into_iter()
-        .find(|d| root.join(d).join("cuno.toml").is_file())
+        .find_map(|d| manifest_name(&root.join(d), case).map(|m| (d, m)))
     {
-        Some(dir) => Err(BuildError::CodeDirIsPackage {
+        Some((dir, manifest)) => Err(BuildError::CodeDirIsPackage {
             dir: dir.to_owned(),
+            manifest,
         }),
         None => Ok(()),
     }
@@ -661,7 +671,7 @@ mod tests {
     use cuno_toolchain::HostOs;
 
     /// A project at a temporary root with `files` (each empty) and a
-    /// `cuno.toml` of `[package]` plus `extra`.
+    /// `Cuno.toml` of `[package]` plus `extra`.
     fn project(lang: &str, extra: &str, files: &[&str]) -> (tempfile::TempDir, PathBuf, Manifest) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_owned();
@@ -672,7 +682,7 @@ mod tests {
         }
         let toml =
             format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"{lang}\"\n{extra}");
-        let manifest = cuno_manifest::parse_manifest(&toml, &root.join("cuno.toml"), &root)
+        let manifest = cuno_manifest::parse_manifest(&toml, &root.join("Cuno.toml"), &root)
             .unwrap()
             .value;
         (dir, root, manifest)
@@ -836,7 +846,7 @@ path = \"tools/tool.c\"
     /// under `examples/` are not the package's code.
     ///
     /// Mutation: compare the output directory by spelling, or walk into a
-    /// directory with its own `cuno.toml`; this test fails.
+    /// directory with its own `Cuno.toml`; this test fails.
     #[test]
     fn the_code_leaves_out_the_output_directory_and_other_packages() {
         let (_d, root, m) = project(
@@ -845,7 +855,7 @@ path = \"tools/tool.c\"
             &[
                 "src/main.cpp",
                 "src/out/stale.cpp",
-                "examples/other/cuno.toml",
+                "examples/other/Cuno.toml",
                 "examples/other/src/main.cpp",
             ],
         );
@@ -902,10 +912,10 @@ path = \"main.cpp\"
     }
 
     /// A code directory other than `src/` and `tests/` that holds its own
-    /// `cuno.toml` is another package and is left out; the root's own
-    /// `cuno.toml` does not leave out the files beside it.
+    /// `Cuno.toml` is another package and is left out; the root's own
+    /// `Cuno.toml` does not leave out the files beside it.
     ///
-    /// Mutation: check `cuno.toml` only below the directories walked, or
+    /// Mutation: check `Cuno.toml` only below the directories walked, or
     /// leave out the root for its own; this test fails.
     #[test]
     fn a_place_holding_its_own_manifest_is_another_package() {
@@ -918,15 +928,34 @@ path = \"main.cpp\"
             &[
                 "main.cpp",
                 "src/a.cpp",
-                "examples/cuno.toml",
+                "examples/Cuno.toml",
                 "examples/e.cpp",
             ],
         );
         // The project's own manifest is on disk, as it is in a real project.
-        std::fs::write(root.join("cuno.toml"), "").unwrap();
+        std::fs::write(root.join("Cuno.toml"), "").unwrap();
         let code = code_files(&root, &m, &root.join("target"), HostOs::Windows).unwrap();
         let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
         assert_eq!(got, ["main.cpp", "src/a.cpp"]);
+    }
+
+    /// Where names differ by case, a lowercase `cuno.toml` marks another
+    /// package too, as finding the project judges it: its code is not
+    /// gathered as this package's (`manifest.md`, "File layout").
+    ///
+    /// Mutation: look only for `Cuno.toml` at a package's boundary; this
+    /// test fails.
+    #[test]
+    fn a_lowercase_manifest_marks_another_package_where_case_matters() {
+        let (_d, root, m) = project(
+            "c++",
+            "[[bin]]\nname = \"app\"\npath = \"main.cpp\"\n",
+            &["main.cpp", "examples/cuno.toml", "examples/e.cpp"],
+        );
+        std::fs::write(root.join("Cuno.toml"), "").unwrap();
+        let code = code_files(&root, &m, &root.join("target"), HostOs::Other).unwrap();
+        let got: Vec<String> = code.files.iter().map(|f| shown(&root, &f.path)).collect();
+        assert_eq!(got, ["main.cpp"]);
     }
 
     /// Two `[[bin]] path`s in one directory bring its files once.
@@ -1499,7 +1528,7 @@ path = \"src/main.cpp\"
         );
     }
 
-    /// A directory under `src/` or `tests/` with its own `cuno.toml` is
+    /// A directory under `src/` or `tests/` with its own `Cuno.toml` is
     /// another package: the build does not compile it, and says so once
     /// for each (`project-layout.md`, "Source collection and linking").
     ///
@@ -1512,10 +1541,10 @@ path = \"src/main.cpp\"
             "",
             &[
                 "src/main.cpp",
-                "src/sub/cuno.toml",
+                "src/sub/Cuno.toml",
                 "src/sub/x.cpp",
                 "tests/t.cpp",
-                "tests/pkg/cuno.toml",
+                "tests/pkg/Cuno.toml",
                 "tests/pkg/h.cpp",
             ],
         );
@@ -1524,12 +1553,12 @@ path = \"src/main.cpp\"
         assert!(s.test_helpers.is_empty(), "{:?}", s.test_helpers);
         let warned = |path: &str| SourceWarning {
             path: path.to_owned(),
-            why: NotBuilt::AnotherPackage,
+            why: NotBuilt::AnotherPackage("Cuno.toml".to_owned()),
         };
         assert_eq!(s.warnings, [warned("src/sub"), warned("tests/pkg")]);
         assert_eq!(
             s.warnings[0].to_string(),
-            "src/sub is not built: it has its own cuno.toml (another package)"
+            "src/sub is not built: it has its own Cuno.toml (another package)"
         );
     }
 
@@ -1546,9 +1575,9 @@ path = \"src/main.cpp\"
             "",
             &[
                 "src/main.cpp",
-                "src/sub/cuno.toml",
+                "src/sub/Cuno.toml",
                 "src/sub/x.cpp",
-                "examples/other/cuno.toml",
+                "examples/other/Cuno.toml",
                 "examples/other/src/main.cpp",
             ],
         );
@@ -1559,7 +1588,7 @@ path = \"src/main.cpp\"
             code.warnings,
             [SourceWarning {
                 path: "src/sub".to_owned(),
-                why: NotBuilt::AnotherPackage,
+                why: NotBuilt::AnotherPackage("Cuno.toml".to_owned()),
             }]
         );
     }
@@ -1578,7 +1607,7 @@ path = \"src/main.cpp\"
 name = \"t\"
 path = \"src/sub/deep/main.cpp\"
 ",
-            &["src/sub/cuno.toml", "src/sub/deep/main.cpp"],
+            &["src/sub/Cuno.toml", "src/sub/deep/main.cpp"],
         );
         let target = root.join("target");
         let errors = [
@@ -1588,7 +1617,7 @@ path = \"src/sub/deep/main.cpp\"
         for err in errors {
             assert_eq!(
                 err.to_string(),
-                "the entry file of `t` is in another package: src/sub/deep/main.cpp (src/sub has its own cuno.toml)"
+                "the entry file of `t` is in another package: src/sub/deep/main.cpp (src/sub has its own Cuno.toml)"
             );
             assert_eq!(
                 cuno_core::CunoError::exit_class(&err),
@@ -1597,7 +1626,7 @@ path = \"src/sub/deep/main.cpp\"
         }
     }
 
-    /// `src/` or `tests/` holding its own `cuno.toml` is refused by the build
+    /// `src/` or `tests/` holding its own `Cuno.toml` is refused by the build
     /// and by fmt and lint alike; before, the build compiled it and fmt and
     /// lint left it out (`project-layout.md`, "Entry files and package body").
     ///
@@ -1606,7 +1635,7 @@ path = \"src/sub/deep/main.cpp\"
     #[test]
     fn src_or_tests_holding_a_manifest_is_an_error() {
         for dir in ["src", "tests"] {
-            let manifest = format!("{dir}/cuno.toml");
+            let manifest = format!("{dir}/Cuno.toml");
             let (_d, root, m) = project("c++", "", &["src/main.cpp", "tests/t.cpp", &manifest]);
             let target = root.join("target");
             let errors = [
@@ -1616,7 +1645,7 @@ path = \"src/sub/deep/main.cpp\"
             for err in errors {
                 assert_eq!(
                     err.to_string(),
-                    format!("{dir}/ has its own cuno.toml, which would make it another package")
+                    format!("{dir}/ has its own Cuno.toml, which would make it another package")
                 );
                 assert_eq!(
                     cuno_core::CunoError::exit_class(&err),
@@ -1624,5 +1653,24 @@ path = \"src/sub/deep/main.cpp\"
                 );
             }
         }
+    }
+
+    /// Where names differ by case, `src/` holding a manifest in another
+    /// case is refused as another package, and the message and its help
+    /// name the file as it is.
+    ///
+    /// Mutation: name it `Cuno.toml` whatever is on disk; this test fails.
+    #[test]
+    fn a_code_dir_package_is_named_by_its_file_as_it_is() {
+        let (_d, root, m) = project("c++", "", &["src/main.cpp", "src/cuno.toml"]);
+        let err = code_files(&root, &m, &root.join("target"), HostOs::Other).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "src/ has its own cuno.toml, which would make it another package"
+        );
+        assert_eq!(
+            cuno_core::CunoError::help(&err).as_deref(),
+            Some("remove src/cuno.toml, or move that package out of src/")
+        );
     }
 }

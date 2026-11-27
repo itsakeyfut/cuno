@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/project-layout.md @ blob da2db1abcc5ffc898ef1087fe422414d1c7a8246 -->
+<!-- translated-from: docs/ja/specs/project-layout.md @ blob 6a2203e38ae316290700c9727a891b2f07b9a400 -->
 
 # Project Kinds and Layout
 
@@ -6,17 +6,17 @@
 
 - The directory layout and coding rules of C/C++ code are **freely decided by the developer**. cuno does not enforce a particular layout.
   - Examples: people who separate public headers into `include/`, people who keep headers and implementation together in `src/`, people who split into `Public/` / `Private/` in the Unreal Engine style. All of these are supported.
-- Developers can **freely impose constraints** on their own project in `cuno.toml` (location of public headers, location of sources, etc.).
+- Developers can **freely impose constraints** on their own project in `Cuno.toml` (location of public headers, location of sources, etc.).
 
 ## Default layout + overridable
 
 This reconciles "nothing is enforced" with "works without configuration (the cargo experience)".
 
-- If nothing is written in `cuno.toml`, the project is **interpreted** as the following default layout (rules for what each location is treated as). For the files that `cuno new` actually generates, see "Generated files" in [commands.md](commands.md) (not everything in this diagram is generated).
+- If nothing is written in `Cuno.toml`, the project is **interpreted** as the following default layout (rules for what each location is treated as). For the files that `cuno new` actually generates, see "Generated files" in [commands.md](commands.md) (not everything in this diagram is generated).
 
 ```
 mygame/
-├── cuno.toml
+├── Cuno.toml
 ├── include/mygame/   # public headers (libraries only)
 ├── src/
 │   ├── main.cpp      # executable (default)
@@ -27,7 +27,7 @@ mygame/
 └── benches/
 ```
 
-- Every location can be overridden in `cuno.toml` (overriding via the library's `sources` / `public-headers` comes "Later", together with library support; in the MVP, only `[[bin]] path` and `include-dirs` can be overridden). Example (Unreal Engine style):
+- Every location can be overridden in `Cuno.toml` (overriding via the library's `sources` / `public-headers` comes "Later", together with library support; in the MVP, only `[[bin]] path` and `include-dirs` can be overridden). Example (Unreal Engine style):
 
 ```toml
 [lib]
@@ -48,7 +48,7 @@ sources = ["Private"]
 
 ### Target files
 
-- All sources under `src/` are compiled, except that a directory with its own `cuno.toml` (another package) is not read (see below).
+- All sources under `src/` are compiled, except that a directory with its own `Cuno.toml` (another package) is not read (see below).
 - The language is determined by file extension.
   - `.c`: compiled as C.
   - `.cpp` / `.cc` / `.cxx`: compiled as C++.
@@ -70,9 +70,9 @@ sources = ["Private"]
   - There is no executable (no default entry file, nothing in `src/bin/`, and no `[[bin]]` written).
   - A `[[bin]]` `path` has no file, or is not a C/C++ source (`.c` / `.cpp` / `.cc` / `.cxx`).
   - An entry file is outside the project, since where its object file goes is decided from the source's place in the project ([build.md](build.md#output-directory)).
-  - A `[[bin]]` `path` is inside a directory with its own `cuno.toml` (another package) (``error: the entry file of `t` is in another package: src/sub/main.cpp (src/sub has its own cuno.toml)``). `cuno fmt` and `cuno lint` make it the same error.
+  - A `[[bin]]` `path` is inside a directory with its own `Cuno.toml` (another package) (``error: the entry file of `t` is in another package: src/sub/main.cpp (src/sub has its own Cuno.toml)``). `cuno fmt` and `cuno lint` make it the same error.
     - Rationale: cuno does not read inside another package (see below), so if only the entry file were built, the build would use that file while `cuno fmt` / `cuno lint` skipped it as another package. Code that is neither formatted nor analyzed would end up in the executable while both report success.
-  - `src/` or `tests/` itself has its own `cuno.toml` (`error: src/ has its own cuno.toml, which would make it another package`). `cuno fmt` and `cuno lint` make it the same error.
+  - `src/` or `tests/` itself has its own `Cuno.toml` (`error: src/ has its own Cuno.toml, which would make it another package`). `cuno fmt` and `cuno lint` make it the same error.
     - Rationale: the place where the package's code lives being another package is almost certainly a mistake. Read silently, it would again leave the build alone using that code, as above.
   - Two executables get the same name (a `[[bin]]` `name` written twice, or an auto-detected `src/bin/app.cpp` beside the default executable `app`, for example), since they would be the same file in the output directory. On Windows names are compared without regard to case (`Tool` and `tool` are the same file too).
 - On Windows, file and directory names are handled without regard to case: `src/Main.cpp` is the default entry file too, and a `[[bin]]` `path` written `SRC/Main.cpp` is the same file as `src/main.cpp`.
@@ -87,7 +87,7 @@ sources = ["Private"]
   - An object file's place is decided by where the source's directory leads and where the source file's name sits. A source file that is itself a link pointing outside the project is still compiled as a source in `src/`. A `[[bin]]` `path` naming a link to a file outside the project, on the other hand, is an error, since the entry file is outside the project.
 - A link to a directory inside `src/` or `tests/` (a symbolic link or a junction) is not read, and cuno warns about it.
   - Rationale: a link cycle would never let the search end, and files outside the project would silently join the package body.
-- A directory inside `src/` or `tests/` with its own `cuno.toml` is another package: cuno does not read it and prints `warning: src/sub is not built: it has its own cuno.toml (another package)`. The build, `cuno fmt` and `cuno lint` all treat it the same way ([Where the package's code lives](#where-the-packages-code-lives)).
+- A directory inside `src/` or `tests/` with its own `Cuno.toml` is another package: cuno does not read it and prints `warning: src/sub is not built: it has its own Cuno.toml (another package)`. The build, `cuno fmt` and `cuno lint` all treat it the same way ([Where the package's code lives](#where-the-packages-code-lives)).
   - Rationale: if only the build linked the sources in it while `cuno fmt` / `cuno lint` skipped it as another package, code that is neither formatted nor analyzed would end up in the executable while both report success.
 
 ### Where the package's code lives
@@ -101,7 +101,7 @@ The places where the package's code (the C/C++ sources and headers the user writ
 The following are excluded:
 
 - The output directory (judged by the absolute path of the output directory actually used, including when it is changed with `--target-dir` and the like; [build.md](build.md#output-directory))
-- A directory with its own `cuno.toml` (another package). This includes one of the places listed above that has one itself. The project root is not excluded. When `src/` or `tests/` itself has one, it is an error ([Entry files and package body](#entry-files-and-package-body)).
+- A directory with its own `Cuno.toml` (another package). This includes one of the places listed above that has one itself. The project root is not excluded. When `src/` or `tests/` itself has one, it is an error ([Entry files and package body](#entry-files-and-package-body)).
 
 - `include-dirs` is not part of these places.
   - Rationale: `include-dirs` often points at third-party headers (`third_party/include` and the like), and formatting them would rewrite files that do not belong to the user. Also, `include-dirs` can be added in `[platform.<OS>.build]` / `[profile.<name>.build]`, so deciding its value needs the compiler and profile selected, whereas `cuno fmt` must work without a compiler.
@@ -124,10 +124,10 @@ The following are excluded:
 - **Every file of the test build is compiled with `CUNO_TEST` defined, and the package body is compiled once and shared by every test executable.** The in-source tests are therefore registered in the executables in `tests/` as well, but cuno does not run them there ("Execution" in [testing.md](testing.md)).
   - Rationale: compiling the files in `tests/` and the body with different definitions makes a type or inline function whose shape changes under `#ifdef CUNO_TEST` exist two ways in one program, so tests of correct code fail or tests of wrong code pass. No compiler or linker detects this.
   - Helper functions written inside `#ifdef CUNO_TEST` can be used from files in `tests/` as well.
-- The library kind (static / shared / header-only) is specified with `[lib] kind` in `cuno.toml`.
+- The library kind (static / shared / header-only) is specified with `[lib] kind` in `Cuno.toml`.
 
 ## Open questions
 
-- The full set of `cuno.toml` keys for specifying the layout
+- The full set of `Cuno.toml` keys for specifying the layout
 - How to describe workspaces
 - Handling of DLLs for hot reloading (to be handled Later as shared libraries + reload support on the executable side)
