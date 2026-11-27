@@ -66,7 +66,7 @@ pub fn fmt(
             shell.warning(warning);
         }
     }
-    // Formatted with cuno.toml's configuration whatever `.clang-format` the
+    // Formatted with Cuno.toml's configuration whatever `.clang-format` the
     // root holds (a hand-written one is kept, not used), from a scratch
     // directory, since `--check` writes nothing in the project.
     let scratch = cuno_core::scratch::in_temp(temp, "fmt", "format").map_err(boxed)?;

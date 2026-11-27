@@ -212,7 +212,7 @@ mod tests {
     /// test fails.
     #[test]
     fn keys_nothing_reads_are_listed_by_dotted_path() {
-        let doc = Doc::parse(TEXT, Path::new("cuno.toml")).unwrap();
+        let doc = Doc::parse(TEXT, Path::new("Cuno.toml")).unwrap();
         let (_, unknown): (Shape, _) = doc.deserialize().unwrap();
         assert_eq!(unknown, ["build.wanings", "bin.1.nmae"]);
     }
@@ -222,7 +222,7 @@ mod tests {
     /// fails.
     #[test]
     fn a_key_is_located_where_it_is_written() {
-        let doc = Doc::parse(TEXT, Path::new("cuno.toml")).unwrap();
+        let doc = Doc::parse(TEXT, Path::new("Cuno.toml")).unwrap();
         let line = |path| doc.locate(path).line;
         assert_eq!(line("build.wanings"), 2);
         assert_eq!(line("bin.0.name"), 5);
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(line("nothing.here"), 1);
         assert_eq!(
             doc.unknown("build.wanings").to_string(),
-            "unknown key `build.wanings` in cuno.toml, ignored\n --> cuno.toml:2:1"
+            "unknown key `build.wanings` in Cuno.toml, ignored\n --> Cuno.toml:2:1"
         );
     }
 
@@ -245,7 +245,7 @@ mod tests {
 \"?\" = 2
 plain-key = 3
 ";
-        let doc = Doc::parse(text, Path::new("cuno.toml")).unwrap();
+        let doc = Doc::parse(text, Path::new("Cuno.toml")).unwrap();
         let (_, unknown): (Shape, _) = doc.deserialize().unwrap();
         assert_eq!(unknown, ["build.\"a.b\"", "build.\"?\"", "build.plain-key"]);
         let lines: Vec<usize> = unknown.iter().map(|p| doc.locate(p).line).collect();
@@ -262,13 +262,13 @@ plain-key = 3
     /// fails.
     #[test]
     fn syntax_and_type_errors_point_at_their_place() {
-        let err = Doc::parse("[build]\nrtti = \n", Path::new("cuno.toml"))
+        let err = Doc::parse("[build]\nrtti = \n", Path::new("Cuno.toml"))
             .err()
             .unwrap();
         assert_eq!(err.location.unwrap().line, 2, "{}", err.message);
-        let doc = Doc::parse("\n[build]\nrtti = \"yes\"\n", Path::new("cuno.toml")).unwrap();
+        let doc = Doc::parse("\n[build]\nrtti = \"yes\"\n", Path::new("Cuno.toml")).unwrap();
         let err = doc.deserialize::<Shape>().err().unwrap();
         assert_eq!(err.location.as_ref().unwrap().line, 3);
-        assert!(err.message.contains("cuno.toml"), "{}", err.message);
+        assert!(err.message.contains("Cuno.toml"), "{}", err.message);
     }
 }

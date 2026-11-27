@@ -14,7 +14,7 @@ const MANIFEST: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
 /// in `src/bin/`, each printing what the body computes.
 fn package(extra: &str) -> Project {
     Project::new()
-        .file("cuno.toml", &format!("{MANIFEST}{extra}"))
+        .file("Cuno.toml", &format!("{MANIFEST}{extra}"))
         // C linkage, so the C executable links with the C++ body.
         .file(
             "src/util.h",
@@ -125,7 +125,7 @@ fn failures_show_the_compiler_and_exit_1() {
             continue;
         }
         let run = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return undeclared; }\n")
             .cuno(&["build", "--compiler", name]);
         assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
@@ -137,7 +137,7 @@ fn failures_show_the_compiler_and_exit_1() {
         );
 
         let run = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file(
                 "src/main.cpp",
                 "int missing();\nint main() { return missing(); }\n",
@@ -172,8 +172,8 @@ fn what_cannot_be_built_exits_3() {
         3,
         "",
         &format!(
-            "error: could not find cuno.toml in {} or any parent directory\n\
-             help: run it in a directory that holds a cuno.toml, or below one\n",
+            "error: could not find Cuno.toml in {} or any parent directory\n\
+             help: run it in a directory that holds a Cuno.toml, or below one\n",
             outside.path().display()
         ),
     );
@@ -198,7 +198,7 @@ fn verbose_shows_each_command() {
     assert_eq!(running, 5, "{}", run.stderr);
 }
 
-/// A setting in `cuno.toml` reaches `cuno doctor`'s standard library check
+/// A setting in `Cuno.toml` reaches `cuno doctor`'s standard library check
 /// and the build's compiles alike, since both take their flags from one
 /// place: a define written in `[build]` trips a `src/yvals_core.h` in both.
 ///
@@ -264,7 +264,7 @@ fn compiler_option_variables_are_left_out_with_a_warning() {
             continue;
         }
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", REPORTS_DEFINES);
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
         cmd.args(["build", "--compiler", name])
@@ -274,8 +274,8 @@ fn compiler_option_variables_are_left_out_with_a_warning() {
         assert_eq!(run.code, Some(0), "{name}: {}", run.stderr);
         assert!(
             run.stderr.contains(
-                "warning: CL is set in the environment and is not used\nhelp: write the flags in cuno.toml\n\
-                 warning: _CL_ is set in the environment and is not used\nhelp: write the flags in cuno.toml\n"
+                "warning: CL is set in the environment and is not used\nhelp: write the flags in Cuno.toml\n\
+                 warning: _CL_ is set in the environment and is not used\nhelp: write the flags in Cuno.toml\n"
             ),
             "{name}: {}",
             run.stderr
@@ -302,7 +302,7 @@ fn a_build_started_below_the_root_runs_in_the_root() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &format!("{MANIFEST}[build.{name}]\nflags = {flags}\n"),
             )
             .file("src/cfg.h", "#define CFG 1\n")
@@ -368,7 +368,7 @@ fn a_c_package_builds_on_every_compiler() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &format!("{MANIFEST}lang = \"c\"\n"),
             )
             .file("src/yvals_core.h", "#error the C++ check ran\n")
@@ -392,7 +392,7 @@ fn quiet_still_shows_a_failure() {
         return;
     }
     let run = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() { return undeclared; }\n")
         .cuno(&["-q", "build", "--compiler", "clang"]);
     assert_eq!(run.code, Some(1), "{}", run.stderr);
@@ -404,7 +404,7 @@ fn quiet_still_shows_a_failure() {
     );
 }
 
-/// Warnings from reading `cuno.toml` and from classifying the sources are
+/// Warnings from reading `Cuno.toml` and from classifying the sources are
 /// shown, and the build goes on.
 ///
 /// Mutation: drop either kind of warning; this test fails.
@@ -421,7 +421,7 @@ fn warnings_are_shown_and_the_build_goes_on() {
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(
         run.stderr
-            .contains("warning: unknown key `package.unknown` in cuno.toml, ignored"),
+            .contains("warning: unknown key `package.unknown` in Cuno.toml, ignored"),
         "{}",
         run.stderr
     );
@@ -520,7 +520,7 @@ fn run_passes_the_arguments_root_and_exit_code() {
             continue;
         }
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", REPORTS_ITS_RUN);
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
         cmd.args(["run", "--compiler", name, "--", "a", "b c"])
@@ -559,7 +559,7 @@ fn run_shows_the_executable_relative_and_nothing_when_quiet() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() { return 0; }\n");
     let run = project.cuno(&["run", "--compiler", "clang"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
@@ -624,7 +624,7 @@ fn check_writes_no_object_and_checks_only_what_changed() {
             continue;
         }
         let broken = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return undeclared; }\n");
         let run = broken.cuno(&["check", "--compiler", name]);
         assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
@@ -687,7 +687,7 @@ fn run_runs_nothing_when_the_build_fails() {
         if !here(compiler) {
             continue;
         }
-        let project = Project::new().file("cuno.toml", MANIFEST).file(
+        let project = Project::new().file("Cuno.toml", MANIFEST).file(
             "src/main.cpp",
             "#include <cstdio>\nint main() { std::puts(\"old\"); }\n",
         );
@@ -716,7 +716,7 @@ fn check_sees_a_changed_header() {
             continue;
         }
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/h.h", "#define VALUE 0\n")
             .file(
                 "src/main.cpp",
@@ -741,7 +741,7 @@ fn run_gives_the_program_cunos_environment() {
     if !here(Compiler::Msvc) {
         return;
     }
-    let project = Project::new().file("cuno.toml", MANIFEST).file(
+    let project = Project::new().file("Cuno.toml", MANIFEST).file(
         "src/main.cpp",
         r#"#include <cstdio>
 #include <cstdlib>
@@ -948,7 +948,7 @@ fn compile_commands_hold_the_dev_commands_whatever_is_built() {
         }
 
         let broken = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return undeclared; }\n");
         let run = broken.cuno(&["build", "--compiler", name]);
         assert_eq!(run.code, Some(1), "{name}: {}", run.stderr);
@@ -1018,7 +1018,7 @@ fn compile_commands_analyse_the_program_that_was_built() {
                 continue;
             }
             let project = Project::new()
-                .file("cuno.toml", &manifest)
+                .file("Cuno.toml", &manifest)
                 .file(source, text);
             let run = project.cuno(&["build", "--compiler", name]);
             assert_eq!(run.code, Some(0), "{name} {source}: {}", run.stderr);
@@ -1058,7 +1058,7 @@ fn compile_commands_are_written_by_every_build_command() {
     };
     for command in ["check", "run"] {
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() {}\n");
         let run = project.cuno(&[command, "--release", "--compiler", name]);
         assert_eq!(run.code, Some(0), "{command}: {}", run.stderr);
@@ -1073,7 +1073,7 @@ fn compile_commands_are_written_by_every_build_command() {
     }
 
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() {}\n")
         .file("compile_commands.json/keep", "");
     let run = project.cuno(&["build", "--compiler", name]);
@@ -1103,7 +1103,7 @@ fn the_probe_uses_the_built_profiles_flags() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/yvals_core.h", PROBE_FLAGS)
         .file("src/main.cpp", "int main() {}\n");
     let run = project.cuno(&["build", "--compiler", "clang-cl"]);
@@ -1140,7 +1140,7 @@ fn the_build_uses_the_configured_toolchain_paths() {
         ),
     ] {
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file(
                 ".cuno/config.toml",
                 &format!("[toolchain.paths]\n{setting}\n"),
@@ -1165,7 +1165,7 @@ fn clangs_diagnostics_are_colored_when_cunos_output_is() {
             continue;
         }
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return undeclared; }\n");
         let colored = project.cuno(&["--color", "always", "build", "--compiler", name]);
         let diagnostic = colored
@@ -1192,7 +1192,7 @@ fn clangs_diagnostics_are_colored_when_cunos_output_is() {
         // A user's own `-fno-color-diagnostics` comes later and wins.
         let opted_out = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &format!("{MANIFEST}[build.{name}]\nflags = [\"-fno-color-diagnostics\"]\n"),
             )
             .file("src/main.cpp", "int main() { return undeclared; }\n")
@@ -1218,7 +1218,7 @@ fn msvc_with_a_missing_temporary_directory_stops_before_compiling() {
     if !here(Compiler::Msvc) {
         return;
     }
-    let project = Project::new().file("cuno.toml", MANIFEST).file(
+    let project = Project::new().file("Cuno.toml", MANIFEST).file(
         "src/main.cpp",
         "int main() { return 0; }
 ",
@@ -1258,7 +1258,7 @@ fn a_missing_temporary_directory_stops_the_build() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", "int main() { return 0; }\n");
     let missing = project.home().join("missing");
     let temp = missing.join("temp");
@@ -1294,7 +1294,7 @@ fn compile_commands_for_clang_ignore_the_environments_headers() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file(
             "src/main.cpp",
             "#include <vector>\nint main() { return std::vector<int>{1}.size() == 1 ? 0 : 1; }\n",
@@ -1372,7 +1372,7 @@ fn an_up_to_date_step_shows_its_last_warnings_again() {
             continue;
         }
         let project = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { int unused = 0; return 0; }\n");
         let first = project.cuno(&["build", "--compiler", name]);
         assert_eq!(first.code, Some(0), "{name}: {}", first.stderr);
@@ -1426,7 +1426,7 @@ fn a_replayed_warning_follows_the_color_and_the_status_line() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file(
             "src/main.cpp",
             "int helper();\nint main() { return helper(); }\n",
@@ -1481,7 +1481,7 @@ fn an_msvc_check_fails_where_the_build_does() {
         ),
     ] {
         let project = Project::new()
-            .file("cuno.toml", &format!("{MANIFEST}{extra}"))
+            .file("Cuno.toml", &format!("{MANIFEST}{extra}"))
             .file("src/main.cpp", source);
         for command in ["check", "build"] {
             let run = project.cuno(&[command, "--compiler", "msvc"]);
@@ -1536,7 +1536,7 @@ fn check_targets_package(broken: &str) -> Project {
     let entry = if broken == "entry" { bad } else { "" };
     let test = if broken == "test" { bad } else { "" };
     Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/util.cpp", &body)
         .file(
             "src/main.cpp",

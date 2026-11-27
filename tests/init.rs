@@ -52,7 +52,7 @@ fn init(p: &Project, args: &[&str]) -> Run {
     p.cuno(&all)
 }
 
-/// A directory holding a C program in cuno's layout gets a `cuno.toml`
+/// A directory holding a C program in cuno's layout gets a `Cuno.toml`
 /// that says C, and nothing else of the sample; it then builds and runs.
 ///
 /// Mutation: decide C++ whatever the sources, or write the sample too;
@@ -70,9 +70,9 @@ fn c_sources_in_place_get_a_c_manifest_that_builds() {
         .file("src/add.c", "int add(int a, int b) { return a + b; }\n");
     let run = init(&p, &["--vcs", "none", "--name", "calc"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
-    let manifest = read(&p.path().join("cuno.toml"));
+    let manifest = read(&p.path().join("Cuno.toml"));
     assert!(manifest.contains("lang = \"c\"\n"), "{manifest}");
-    assert_eq!(files(p.path()), ["cuno.toml", "src/add.c", "src/main.c"]);
+    assert_eq!(files(p.path()), ["Cuno.toml", "src/add.c", "src/main.c"]);
     let run = p.cuno(&["run", "--compiler", "msvc"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
 }
@@ -100,7 +100,7 @@ fn the_language_comes_from_the_sources_unless_given() {
         all.extend_from_slice(args);
         let run = init(&p, &all);
         assert_eq!(run.code, Some(0), "{args:?}: {}", run.stderr);
-        let manifest = read(&p.path().join("cuno.toml"));
+        let manifest = read(&p.path().join("Cuno.toml"));
         assert!(
             manifest.contains(&format!("lang = \"{lang}\"\nedition = \"{edition}\"\n")),
             "{args:?}: {manifest}"
@@ -122,7 +122,7 @@ fn programs_in_src_bin_or_a_capitalised_src_are_enough() {
         let p = Project::new().file(entry, "int main() { return 0; }\n");
         let run = init(&p, &["--vcs", "none", "--name", "tools"]);
         assert_eq!(run.code, Some(0), "{entry}: {}", run.stderr);
-        assert!(read(&p.path().join("cuno.toml")).contains("lang = \"c++\"\n"));
+        assert!(read(&p.path().join("Cuno.toml")).contains("lang = \"c++\"\n"));
         let run = p.cuno(&["build", "--compiler", "msvc"]);
         assert_eq!(run.code, Some(0), "{entry}: {}", run.stderr);
     }
@@ -131,7 +131,7 @@ fn programs_in_src_bin_or_a_capitalised_src_are_enough() {
 /// A directory with no sources gets `cuno new`'s sample; sources in
 /// `target/`, in a hidden directory or in another package do not count.
 ///
-/// Mutation: write only `cuno.toml` there, or look in `target/`, in a
+/// Mutation: write only `Cuno.toml` there, or look in `target/`, in a
 /// hidden directory, or in another package; this test fails.
 #[test]
 fn a_directory_with_no_sources_of_its_own_gets_the_sample() {
@@ -139,7 +139,7 @@ fn a_directory_with_no_sources_of_its_own_gets_the_sample() {
         .file("target/old.cpp", "")
         .file(".vscode/x.cpp", "")
         .file(
-            "vendor/cuno.toml",
+            "vendor/Cuno.toml",
             "[package]\nname = \"v\"\nversion = \"0.1.0\"\n",
         )
         .file("vendor/src/main.cpp", "");
@@ -165,8 +165,8 @@ fn the_path_given_is_the_package_and_names_it() {
     std::fs::create_dir(p.path().join("calc")).unwrap();
     let run = init(&p, &["calc", "--vcs", "none"]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert!(!p.path().join("cuno.toml").exists());
-    let manifest = read(&p.path().join("calc").join("cuno.toml"));
+    assert!(!p.path().join("Cuno.toml").exists());
+    let manifest = read(&p.path().join("calc").join("Cuno.toml"));
     assert!(manifest.contains("name = \"calc\"\n"), "{manifest}");
     assert!(
         run.stderr.contains("Created `calc` package"),
@@ -201,7 +201,7 @@ fn git_is_initialised_only_outside_a_repository() {
 /// Every refusal is exit code 2 with the spec's message and help, and
 /// writes nothing.
 ///
-/// Mutation: write anything before refusing (`cuno.toml` before the
+/// Mutation: write anything before refusing (`Cuno.toml` before the
 /// `.gitignore` is found unusable, or the sample before a file there is
 /// found), stop naming at 5 sources, or change a message; this test fails.
 #[test]
@@ -239,18 +239,18 @@ fn every_refusal_writes_nothing() {
             &[("src/calc.h", b"// mine\n")],
             &[],
             "error: src/calc.h already exists\n",
-            "help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand\n",
+            "help: cuno init writes no file that is there; move it aside, or add Cuno.toml by hand\n",
         ),
         (
             &[("src", b"not a directory")],
             &[],
             "error: src already exists\n",
-            "help: cuno init writes no file that is there; move it aside, or add cuno.toml by hand\n",
+            "help: cuno init writes no file that is there; move it aside, or add Cuno.toml by hand\n",
         ),
         (
-            &[("cuno.toml", b"# mine\n")],
+            &[("Cuno.toml", b"# mine\n")],
             &[],
-            "error: `.` already has a cuno.toml\n",
+            "error: `.` already has a Cuno.toml\n",
             "",
         ),
         (
@@ -321,7 +321,7 @@ fn every_refusal_writes_nothing() {
         "{}",
         run.stderr
     );
-    assert!(!p.path().join("my proj").join("cuno.toml").exists());
+    assert!(!p.path().join("my proj").join("Cuno.toml").exists());
 }
 
 /// What the build itself refuses about `src/` is refused here, before

@@ -36,12 +36,13 @@ pub(crate) fn in_project(
     resolved: Result<Settings, ConfigError>,
     cwd: &Path,
 ) -> Result<Settings, Box<dyn CunoError>> {
-    if cuno_manifest::find_project(cwd).is_none() {
-        return Err(Box::new(CommandError::NoProject {
+    match cuno_manifest::find_project(cwd, cuno_core::NameCase::host()) {
+        Ok(Some(_)) => resolved.map_err(boxed),
+        Ok(None) => Err(Box::new(CommandError::NoProject {
             cwd: cwd.to_owned(),
-        }));
+        })),
+        Err(error) => Err(boxed(error)),
     }
-    resolved.map_err(boxed)
 }
 
 /// What a build command does once the project is built.
@@ -279,7 +280,7 @@ impl fmt::Display for CommandError {
         match self {
             CommandError::NoProject { cwd } => write!(
                 f,
-                "could not find cuno.toml in {} or any parent directory",
+                "could not find Cuno.toml in {} or any parent directory",
                 cwd.display()
             ),
             CommandError::UnknownProfile { name } => write!(f, "no profile named `{name}`"),
@@ -308,7 +309,7 @@ impl CunoError for CommandError {
     fn help(&self) -> Option<String> {
         match self {
             CommandError::NoProject { .. } => {
-                Some("run it in a directory that holds a cuno.toml, or below one".to_owned())
+                Some("run it in a directory that holds a Cuno.toml, or below one".to_owned())
             }
             CommandError::UnknownProfile { .. } => Some(format!("use {}", profile_names())),
             CommandError::TargetNotSupported | CommandError::CannotRun { .. } => None,
@@ -321,7 +322,7 @@ mod tests {
     use super::*;
 
     /// `--profile` takes every profile `Profile` has, by the name
-    /// `cuno.toml` writes it with, and no other; the help lists them all.
+    /// `Cuno.toml` writes it with, and no other; the help lists them all.
     ///
     /// Mutation: write a profile name in `profile_named` instead of asking
     /// `Profile`, or leave one out of `profile_names`; this test fails.

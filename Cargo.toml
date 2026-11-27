@@ -74,7 +74,7 @@ anstream = "1.0.0"
 serde_json = "1.0.154"
 # Temporary project directories in tests (tests/support).
 tempfile = "3.27"
-# Reading cuno.toml and config.toml (cuno-manifest): the TOML parser with
+# Reading Cuno.toml and config.toml (cuno-manifest): the TOML parser with
 # positions, serde derive, the keys nothing read, and package versions.
 toml = "1.2.2"
 # Rewriting the user config.toml (cuno-manifest, `cuno toolchain default`)

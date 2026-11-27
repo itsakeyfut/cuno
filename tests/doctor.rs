@@ -177,7 +177,7 @@ fn each_compiler_is_diagnosed_outside_a_project() {
     }
 }
 
-/// Inside a project, the compiler `cuno.toml` names is diagnosed, and the
+/// Inside a project, the compiler `Cuno.toml` names is diagnosed, and the
 /// source says so; with nothing named, MSVC by automatic selection.
 ///
 /// Mutation: ignore the project's layers, or name another source; this test
@@ -186,10 +186,10 @@ fn each_compiler_is_diagnosed_outside_a_project() {
 fn inside_a_project_its_choice_is_diagnosed() {
     let manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
     if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_some() {
-        let expected = healthy(&selected("clang"), "[toolchain] compiler in cuno.toml");
+        let expected = healthy(&selected("clang"), "[toolchain] compiler in Cuno.toml");
         Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &format!("{manifest}[toolchain]\ncompiler = \"clang\"\n"),
             )
             .cuno(&["doctor"])
@@ -198,7 +198,7 @@ fn inside_a_project_its_choice_is_diagnosed() {
     if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_some() {
         let expected = healthy(&selected("msvc"), "automatic selection");
         Project::new()
-            .file("cuno.toml", manifest)
+            .file("Cuno.toml", manifest)
             .cuno(&["doctor"])
             .assert(0, "", &expected);
     }
@@ -309,14 +309,14 @@ fn a_broken_configuration_is_reported_and_diagnosis_goes_on() {
         return;
     }
     let run = Project::new()
-        .file("cuno.toml", "[package]\nname = 1\n")
+        .file("Cuno.toml", "[package]\nname = 1\n")
         .cuno(&["doctor", "--compiler", "msvc"]);
     let expected = healthy(&selected("msvc"), "--compiler").replace(
         "    Finished no problems found\n",
         "    Finished 1 problem found\n",
     );
     let first =
-        "error: invalid type: integer `1`, expected a string in cuno.toml\n --> cuno.toml:2:8\n";
+        "error: invalid type: integer `1`, expected a string in Cuno.toml\n --> Cuno.toml:2:8\n";
     assert_eq!(run.code, Some(1), "{}", run.stderr);
     assert_eq!(run.stderr, format!("{first}{expected}"));
 }
@@ -343,7 +343,7 @@ fn an_unreadable_configuration_does_not_pass_for_its_choice() {
     let project = || {
         Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &manifest("[toolchain]\ncompiler = \"clang\"\n"),
             )
             .file(".cuno/config.toml", "bad[\n")
@@ -387,13 +387,13 @@ fn configuration_warnings_come_first() {
     }
     let expected = healthy(&selected("msvc"), "--compiler");
     Project::new()
-        .file("cuno.toml", &manifest("foo = 1\n"))
+        .file("Cuno.toml", &manifest("foo = 1\n"))
         .cuno(&["doctor", "--compiler", "msvc"])
         .assert(
             0,
             "",
             &format!(
-                "warning: unknown key `package.foo` in cuno.toml, ignored\n --> cuno.toml:4:1\n{expected}"
+                "warning: unknown key `package.foo` in Cuno.toml, ignored\n --> Cuno.toml:4:1\n{expected}"
             ),
         );
 }
@@ -434,7 +434,7 @@ fn the_toolchain_settings_constrain_the_selection() {
     .expect_err("no clang satisfies >=99");
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest("[toolchain.version]\nclang = \">=99\"\n"),
         )
         .cuno(&["doctor", "--compiler", "clang"])
@@ -450,7 +450,7 @@ fn the_toolchain_settings_constrain_the_selection() {
             ),
         );
     Project::new()
-        .file("cuno.toml", &manifest(""))
+        .file("Cuno.toml", &manifest(""))
         .file(
             ".cuno/config.toml",
             "[toolchain.paths]\nclang = \"C:/nope/clang.exe\"\nmsvc = \"C:/nope/VS\"\n",
@@ -495,7 +495,7 @@ fn an_edition_the_compiler_lacks_is_a_problem() {
         }
     };
     Project::new()
-        .file("cuno.toml", &manifest("edition = \"c++23\"\n"))
+        .file("Cuno.toml", &manifest("edition = \"c++23\"\n"))
         .cuno(&["doctor", "--compiler", "msvc"])
         .assert(code, "", &expected);
 }
@@ -513,7 +513,7 @@ fn a_c_project_is_not_checked_against_the_standard_library() {
     let expected = healthy(&selected("clang"), "--compiler")
         .replace("    Accepted by the MSVC standard library\n", "");
     Project::new()
-        .file("cuno.toml", &manifest("edition = \"c11\"\nlang = \"c\"\n"))
+        .file("Cuno.toml", &manifest("edition = \"c11\"\nlang = \"c\"\n"))
         .file("src/yvals_core.h", STL1000)
         .cuno(&["doctor", "--compiler", "clang"])
         .assert(0, "", &expected);
@@ -533,7 +533,7 @@ fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
         return;
     }
     let run = Project::new()
-        .file("cuno.toml", &manifest(""))
+        .file("Cuno.toml", &manifest(""))
         .file(
             "src/yvals_core.h",
             "#ifdef NDEBUG\n#error release flags reached the probe\n#else\n#error dev flags reached the probe\n#endif\n",
@@ -567,7 +567,7 @@ fn the_check_uses_the_builds_dev_flags_and_reports_its_failure() {
         "{rest}"
     );
     assert_eq!(
-        rest.matches("help: check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations\n").count(),
+        rest.matches("help: check `[build.<compiler>] flags` in Cuno.toml, and the Visual Studio and LLVM installations\n").count(),
         2,
         "{rest}"
     );
@@ -645,7 +645,7 @@ fn clang_tidy_is_checked_against_the_standard_library() {
         )
         .replace("no problems found", "1 problem found");
     Project::new()
-        .file("cuno.toml", &manifest(""))
+        .file("Cuno.toml", &manifest(""))
         .file("src/yvals_core.h", STL1000)
         .cuno(&["doctor", "--compiler", "msvc"])
         .assert(1, "", &expected);
@@ -743,7 +743,7 @@ fn each_tool_line_names_its_own_configured_copy() {
             "clang version 18.1.4\nTarget: x86_64-pc-windows-msvc",
         ),
     ];
-    let mut project = Project::new().file("cuno.toml", &manifest(""));
+    let mut project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &tools);
     for (tool, version) in tools {
         project = project.file(&format!("fake/{tool}.cmd"), &fake_tool(version, 0));
@@ -778,7 +778,7 @@ fn a_configured_tool_that_does_not_run_is_a_problem() {
     if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang-tidy", "")]);
     let fake = project.path().join("fake/clang-tidy.cmd");
     let project = project
@@ -819,7 +819,7 @@ fn the_checks_use_the_projects_edition() {
     for (edition, seen) in [("c++17", "probed as c++17"), ("c++20", "probed as c++20")] {
         let run = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &manifest(&format!("edition = \"{edition}\"\n")),
             )
             .file("src/yvals_core.h", header)
@@ -847,7 +847,7 @@ fn a_configured_compiler_is_the_one_diagnosed() {
     if require(Compiler::Clang, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang", "")]);
     let fake = project.path().join("fake/clang.cmd");
     let run = project
@@ -863,7 +863,7 @@ fn a_configured_compiler_is_the_one_diagnosed() {
     );
     assert!(run.stderr.starts_with(&selected), "{}", run.stderr);
 
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang", "")]);
     let fake = project.path().join("fake/clang.cmd");
     let run = project
@@ -893,7 +893,7 @@ fn an_unusable_configured_compiler_is_a_problem_even_unselected() {
     if !llvm_tools_here() || require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang", "")]);
     let fake = project.path().join("fake/clang.cmd");
     let expected = healthy(&selected("msvc"), "--compiler")
@@ -925,7 +925,7 @@ fn a_configured_clang_below_the_minimum_is_one_problem_either_way() {
         return;
     }
     let project = || {
-        let project = Project::new().file("cuno.toml", &manifest(""));
+        let project = Project::new().file("Cuno.toml", &manifest(""));
         let config = configured(&project, &[("clang", "")]);
         let fake = project.path().join("fake/clang.cmd");
         let project = project
@@ -1073,7 +1073,7 @@ fn a_configured_clang_is_reported_when_visual_studio_stops_selection() {
     };
 
     // No Visual Studio at all.
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang", "")]);
     let fake = project.path().join("fake/clang.cmd");
     let empty = project.home().join("empty");
@@ -1099,7 +1099,7 @@ fn a_configured_clang_is_reported_when_visual_studio_stops_selection() {
     );
 
     // A wrong `[toolchain.paths] msvc`.
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = format!(
         "{}msvc = 'C:/nope/VS'\n",
         configured(&project, &[("clang", "")])
@@ -1145,7 +1145,7 @@ fn the_info_lines_ignore_toolchain_version() {
     let expected = healthy(&selected("msvc"), "--compiler");
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest("[toolchain.version]\nclang = \">=99\"\nclang-cl = \">=99\"\n"),
         )
         .cuno(&["doctor", "--compiler", "msvc"])
@@ -1159,7 +1159,7 @@ fn the_info_lines_ignore_toolchain_version() {
 /// fails.
 #[test]
 fn a_configured_clang_cl_is_reported_when_visual_studio_stops_selection() {
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let config = configured(&project, &[("clang-cl", "")]);
     let fake = project.path().join("fake/clang-cl.cmd");
     let empty = project.home().join("empty");
@@ -1212,7 +1212,7 @@ fn the_check_takes_the_selected_compilers_own_flags() {
             .collect();
         let run = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 &manifest(&format!("[build.{name}]\nflags = [\"{own}\"]\n{others}")),
             )
             .file("src/yvals_core.h", header)
@@ -1246,7 +1246,7 @@ fn the_check_takes_the_hosts_platform_layer() {
     let header = "#error poisoned yvals_core.h reached the probe\n";
     let windows = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest("[platform.windows.build]\ninclude-dirs = [\"poison\"]\n"),
         )
         .file("poison/yvals_core.h", header)
@@ -1262,7 +1262,7 @@ fn the_check_takes_the_hosts_platform_layer() {
 
     let linux = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest("[platform.linux.build]\ninclude-dirs = [\"poison\"]\n"),
         )
         .file("poison/yvals_core.h", header)
@@ -1291,7 +1291,7 @@ fn the_probe_runs_in_the_project_root() {
     }
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest("[build.clang-cl]\nflags = [\"/FIsrc/cfg.h\"]\n"),
         )
         .file("src/cfg.h", "#define CFG 1\n")
@@ -1331,7 +1331,7 @@ fn clang_tidy_reads_an_msvc_projects_flags_as_clang_cl() {
     }
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &manifest(
                 "edition = \"c++23\"\n[build]\nwarnings-as-errors = true\n[profile.dev]\nlto = true\n",
             ),
@@ -1358,11 +1358,11 @@ fn quiet_shows_only_warnings_and_problems() {
         return;
     }
     Project::new()
-        .file("cuno.toml", &manifest(""))
+        .file("Cuno.toml", &manifest(""))
         .cuno(&["-q", "doctor", "--compiler", "msvc"])
         .assert(0, "", "");
     let run = Project::new()
-        .file("cuno.toml", &manifest("foo = 1\n"))
+        .file("Cuno.toml", &manifest("foo = 1\n"))
         .cuno(&["-q", "doctor", "--compiler", "safec"]);
 
     assert_eq!(run.code, Some(1), "{}", run.stderr);
@@ -1416,7 +1416,7 @@ fn clang_tidy_is_checked_on_compile_commands_json_s_command() {
         return;
     }
     let project = Project::new()
-        .file("cuno.toml", &manifest(""))
+        .file("Cuno.toml", &manifest(""))
         .file("src/main.cpp", "int main() { return 0; }\n");
     let config = configured(&project, &[("clang-tidy", "")]);
     let project = project
@@ -1490,7 +1490,7 @@ fn a_gcc_the_build_refuses_is_a_problem() {
                if \"%~1\"==\"-dumpmachine\" (echo x86_64-w64-mingw32& exit /b 0)\r\n\
                if \"%~1\"==\"-dM\" (echo #define _UCRT 1& exit /b 0)\r\n\
                exit /b 1\r\n";
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let fake = project.path().join("fake/gcc.cmd");
     let config = format!("[toolchain.paths]\ngcc = '{}'\n", fake.display());
     let run = project
@@ -1521,7 +1521,7 @@ fn a_configured_gcc_with_no_file_is_a_problem_whatever_is_diagnosed() {
     if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
         return;
     }
-    let project = Project::new().file("cuno.toml", &manifest(""));
+    let project = Project::new().file("Cuno.toml", &manifest(""));
     let missing = project.path().join("nowhere/gcc.exe");
     let config = format!("[toolchain.paths]\ngcc = '{}'\n", missing.display());
     let run = project

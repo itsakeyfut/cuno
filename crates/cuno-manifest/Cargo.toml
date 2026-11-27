@@ -1,6 +1,6 @@
 [package]
 name = "cuno-manifest"
-description = "Loading and validating cuno.toml and config.toml."
+description = "Loading and validating Cuno.toml and config.toml."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

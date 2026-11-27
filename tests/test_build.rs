@@ -210,7 +210,7 @@ fn each_test_executable_holds_its_own_tests() {
             continue;
         }
         let p = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", MAIN)
             .file("src/calc.cpp", CALC)
             .file("src/sub.c", SUB)
@@ -266,7 +266,7 @@ fn a_test_and_the_body_see_one_definition() {
             continue;
         }
         let p = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return 0; }\n")
             .file(
                 "src/calc.h",
@@ -308,7 +308,7 @@ fn a_main_under_tests_does_not_replace_the_runner() {
             continue;
         }
         let p = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return 0; }\n")
             .file("tests/mine.cpp", "int main() { return 0; }\n");
         let result = try_build_tests(&p, name);
@@ -334,7 +334,7 @@ fn the_runner_judges_what_the_build_made() {
             continue;
         }
         let p = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", MAIN)
             .file("src/calc.cpp", CALC)
             .file("src/sub.c", SUB)
@@ -428,7 +428,7 @@ fn ready_asks_the_registry_it_is_given() {
             continue;
         }
         let p = Project::new()
-            .file("cuno.toml", MANIFEST)
+            .file("Cuno.toml", MANIFEST)
             .file("src/main.cpp", "int main() { return 0; }\n");
         let env = environment(&p);
         let cli = CliSettings {

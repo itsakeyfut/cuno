@@ -1,4 +1,4 @@
-//! Reading and validating `cuno.toml`. See `docs/en/specs/manifest.md`.
+//! Reading and validating `Cuno.toml`. See `docs/en/specs/manifest.md`.
 //!
 //! The file is deserialized into raw structs whose fields are all optional,
 //! then checked into a [`Manifest`]. Defaults that depend on other settings
@@ -27,7 +27,7 @@ pub struct Loaded<T> {
     pub warnings: Vec<ConfigWarning>,
 }
 
-/// `cuno.toml`.
+/// `Cuno.toml`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Manifest {
     /// `[package]`.
@@ -287,7 +287,7 @@ choices!(
 );
 /// The name `[build.<compiler>]` and `[toolchain.version]` use for each
 /// compiler cuno can build with: the one place a compiler kind is mapped to
-/// the names `cuno.toml` is read with (which also include compilers cuno
+/// the names `Cuno.toml` is read with (which also include compilers cuno
 /// recognises but cannot build with yet).
 impl From<CompilerKind> for CompilerName {
     fn from(kind: CompilerKind) -> CompilerName {
@@ -501,7 +501,7 @@ struct RawTest {
 
 // ---- reading ----
 
-/// Reads the project's `cuno.toml`. `cwd` decides how the file is shown in
+/// Reads the project's `Cuno.toml`. `cwd` decides how the file is shown in
 /// messages.
 pub fn load_manifest(project: &Project, cwd: &Path) -> Result<Loaded<Manifest>, ConfigError> {
     let path = project.manifest();
@@ -513,7 +513,7 @@ pub fn load_manifest(project: &Project, cwd: &Path) -> Result<Loaded<Manifest>, 
     parse_manifest(&text, &shown_path(&path, cwd), &project.root)
 }
 
-/// Reads `text` as `cuno.toml`; `file` is how messages name it, and relative
+/// Reads `text` as `Cuno.toml`; `file` is how messages name it, and relative
 /// paths resolve against `root`.
 pub fn parse_manifest(
     text: &str,
@@ -1065,7 +1065,7 @@ impl Check<'_> {
 
 /// Whether `name` is a package name (`docs/en/specs/commands.md`, "`cuno
 /// new <path>`"): ASCII letters, digits, `-` and `_`, starting with a
-/// letter. `cuno new` and `cuno.toml` are held to this one rule, so a
+/// letter. `cuno new` and `Cuno.toml` are held to this one rule, so a
 /// package `cuno new` makes is one `cuno build` reads.
 pub fn valid_package_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_alphabetic())
@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     fn read(text: &str) -> Result<Loaded<Manifest>, ConfigError> {
-        parse_manifest(text, Path::new("cuno.toml"), &root())
+        parse_manifest(text, Path::new("Cuno.toml"), &root())
     }
 
     /// `MINIMAL` and then `rest`.
@@ -1512,23 +1512,23 @@ indent-width = 2
             .map(|w| (w.location.as_ref().unwrap().line, w.message.clone()))
             .collect();
         let expect: Vec<(usize, String)> = [
-            (5, "`build.unity` in cuno.toml is ignored: it is not supported yet"),
+            (5, "`build.unity` in Cuno.toml is ignored: it is not supported yet"),
             (
                 6,
-                "`build.precompiled-header` in cuno.toml is ignored: it is not supported yet",
+                "`build.precompiled-header` in Cuno.toml is ignored: it is not supported yet",
             ),
-            (7, "unknown key `build.wanings` in cuno.toml, ignored"),
-            (10, "unknown key `toolchain.version.nvcc` in cuno.toml, ignored"),
-            (11, "unknown key `platform.beos` in cuno.toml, ignored"),
+            (7, "unknown key `build.wanings` in Cuno.toml, ignored"),
+            (10, "unknown key `toolchain.version.nvcc` in Cuno.toml, ignored"),
+            (11, "unknown key `platform.beos` in Cuno.toml, ignored"),
             (
                 14,
-                "`platform.linux.build.target-dir` in cuno.toml is ignored: it can be written only in `[build]`",
+                "`platform.linux.build.target-dir` in Cuno.toml is ignored: it can be written only in `[build]`",
             ),
             (
                 15,
-                "`profile.dev.build.msvc` in cuno.toml is ignored: it can be written only in `[build]`",
+                "`profile.dev.build.msvc` in Cuno.toml is ignored: it can be written only in `[build]`",
             ),
-            (17, "unknown key `package2` in cuno.toml, ignored"),
+            (17, "unknown key `package2` in Cuno.toml, ignored"),
         ]
         .iter()
         .map(|(l, m)| (*l, m.to_string()))
@@ -1575,7 +1575,7 @@ indent-width = 2
     #[test]
     fn a_project_file_is_loaded_and_named_as_the_user_would() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("cuno.toml"), with("[build]\nnope = 1\n")).unwrap();
+        std::fs::write(dir.path().join("Cuno.toml"), with("[build]\nnope = 1\n")).unwrap();
         let project = Project {
             root: dir.path().to_owned(),
         };
@@ -1583,7 +1583,7 @@ indent-width = 2
         assert_eq!(loaded.value.package.name, "app");
         assert_eq!(
             loaded.warnings[0].to_string(),
-            "unknown key `build.nope` in cuno.toml, ignored\n --> cuno.toml:5:1"
+            "unknown key `build.nope` in Cuno.toml, ignored\n --> Cuno.toml:5:1"
         );
         let missing = Project {
             root: dir.path().join("none"),
@@ -1919,7 +1919,7 @@ indent-width = 2
         let shown: Vec<String> = loaded.warnings.iter().map(|w| w.to_string()).collect();
         assert_eq!(
             shown,
-            ["unknown key `platform.\"a.b\"` in cuno.toml, ignored\n --> cuno.toml:4:11"]
+            ["unknown key `platform.\"a.b\"` in Cuno.toml, ignored\n --> Cuno.toml:4:11"]
         );
 
         let err = read(&with(

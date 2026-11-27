@@ -48,7 +48,7 @@ const INTEGRATION: &str = "#include <cuno/test.hpp>\nint add(int, int);\n\
 
 fn project(extra: &str) -> Project {
     Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file("src/main.cpp", MAIN)
         .file("src/calc.cpp", &calc(extra))
         .file("tests/adds.cpp", INTEGRATION)
@@ -296,7 +296,7 @@ fn a_release_run_from_a_subdirectory() {
                  const char *v = std::getenv(\"CALC_PROBE\");\n\
                  require(v != nullptr);\n\
                  expect(eq(std::string(v), std::string(\"given\")));\n\
-                 std::FILE *f = std::fopen(\"cuno.toml\", \"r\");\n\
+                 std::FILE *f = std::fopen(\"Cuno.toml\", \"r\");\n\
                  expect(f != nullptr);\n\
                  if (f) std::fclose(f);\n\
                  });\n";
@@ -457,7 +457,7 @@ fn no_test_is_lost_in_any_build() {
                     continue;
                 }
                 let p = files.iter().fold(
-                    Project::new().file("cuno.toml", &manifest),
+                    Project::new().file("Cuno.toml", &manifest),
                     |p, (path, text)| p.file(path, text),
                 );
                 let at = format!("{shape}, {build}, {name}");

@@ -190,7 +190,7 @@ pub fn files(name: &str, lang: Lang, edition: Edition) -> Vec<(&'static str, Str
         lang.as_str(),
         edition.as_str()
     );
-    let mut files = vec![("cuno.toml", manifest)];
+    let mut files = vec![(cuno_manifest::MANIFEST, manifest)];
     match lang {
         Lang::Cxx => {
             // Every edition named, so a new one has to choose its sample.
@@ -364,7 +364,7 @@ impl fmt::Display for InitError {
                 write!(f, "`{}` is not a directory", path.display())
             }
             InitError::AlreadyPackage { path } => {
-                write!(f, "`{}` already has a cuno.toml", path.display())
+                write!(f, "`{}` already has a Cuno.toml", path.display())
             }
             InitError::SourcesElsewhere { found, more } => {
                 write!(f, "sources found outside src/: {}", found.join(", "))?;
@@ -398,7 +398,7 @@ impl CunoError for InitError {
                 "put the program's main in src/main.cpp (or src/main.c), or each program in src/bin/"
             }
             InitError::Exists { .. } => {
-                "cuno init writes no file that is there; move it aside, or add cuno.toml by hand"
+                "cuno init writes no file that is there; move it aside, or add Cuno.toml by hand"
             }
             InitError::Gitignore { .. } => "make it a text file in UTF-8, or use --vcs none",
         };
@@ -412,10 +412,10 @@ const SHOWN_SOURCES: usize = 5;
 /// The sources in `dir`, by their path from it with `/`: those under `src/`,
 /// told as the file system tells names apart (`case`), and the rest. What
 /// cuno makes (`target/`), hidden directories (`.git/`, `.cuno/`), links
-/// and other packages (a directory with its own `cuno.toml`) are not looked
+/// and other packages (a directory with its own `Cuno.toml`) are not looked
 /// in.
 fn sources_in(dir: &Path, case: cuno_core::NameCase) -> (Vec<String>, Vec<String>) {
-    fn walk(dir: &Path, from: &str, out: &mut Vec<String>) {
+    fn walk(dir: &Path, from: &str, case: cuno_core::NameCase, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -434,9 +434,12 @@ fn sources_in(dir: &Path, case: cuno_core::NameCase) -> (Vec<String>, Vec<String
             if kind.is_dir() {
                 let skipped = name.starts_with('.')
                     || (from.is_empty() && name == "target")
-                    || entry.path().join("cuno.toml").exists();
+                    || !matches!(
+                        cuno_manifest::manifest_in(&entry.path(), case),
+                        cuno_manifest::ManifestIn::None
+                    );
                 if !skipped {
-                    walk(&entry.path(), &relative, out);
+                    walk(&entry.path(), &relative, case, out);
                 }
             } else if kind.is_file() && cuno_build::sources::language(&entry.path()).is_some() {
                 out.push(relative);
@@ -444,7 +447,7 @@ fn sources_in(dir: &Path, case: cuno_core::NameCase) -> (Vec<String>, Vec<String
         }
     }
     let mut all = Vec::new();
-    walk(dir, "", &mut all);
+    walk(dir, "", case, &mut all);
     all.into_iter().partition(|s| {
         s.split_once('/')
             .is_some_and(|(top, _)| case.same(top, "src"))
@@ -518,7 +521,7 @@ fn blocked(dir: &Path, relative: &str) -> Option<String> {
 }
 
 /// Makes the existing directory `args` describe into a package, `args.path`
-/// taken from `cwd`: `cuno.toml`, the sample when there are no sources, and
+/// taken from `cwd`: `Cuno.toml`, the sample when there are no sources, and
 /// the `.gitignore` lines cuno needs. Every refusal comes before anything
 /// is written (`docs/en/specs/commands.md`, "`cuno init [path]`").
 pub fn init(
@@ -536,7 +539,10 @@ pub fn init(
         }
         Ok(_) => {}
     }
-    if dir.join("cuno.toml").exists() {
+    if !matches!(
+        cuno_manifest::manifest_in(&dir, host.name_case()),
+        cuno_manifest::ManifestIn::None
+    ) {
         return Err(boxed(InitError::AlreadyPackage { path: args.path }));
     }
     let (name, from_directory) = match &args.name {
@@ -582,9 +588,10 @@ pub fn init(
         // Only the manifest: the sources are the user's. Whether they make
         // an executable is the build's own rule, asked of the manifest to be.
         written.truncate(1);
-        let manifest = cuno_manifest::parse_manifest(&written[0].1, &dir.join("cuno.toml"), &dir)
-            .map_err(|e| Box::new(e) as Box<dyn CunoError>)?
-            .value;
+        let manifest =
+            cuno_manifest::parse_manifest(&written[0].1, &dir.join(cuno_manifest::MANIFEST), &dir)
+                .map_err(|e| Box::new(e) as Box<dyn CunoError>)?
+                .value;
         match cuno_build::sources::classify(&dir, &manifest, &dir.join("target"), host) {
             Ok(_) => {}
             Err(cuno_build::BuildError::NoExecutable { .. }) => {
@@ -709,7 +716,7 @@ mod tests {
     /// edition, and nothing else; C++17 gets the macro API's sample and
     /// C++20 the modern one.
     ///
-    /// Mutation: write anything else into `cuno.toml`, or give C++17 the
+    /// Mutation: write anything else into `Cuno.toml`, or give C++17 the
     /// sample that needs C++20; this test fails.
     #[test]
     fn the_files_fit_the_language_and_edition() {
@@ -717,7 +724,7 @@ mod tests {
         assert_eq!(
             cxx[0],
             (
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c++\"\nedition = \"c++20\"\n"
                     .to_owned()
             )
@@ -725,7 +732,7 @@ mod tests {
         let names: Vec<&str> = cxx.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            ["cuno.toml", "src/main.cpp", "src/calc.h", "src/calc.cpp"]
+            ["Cuno.toml", "src/main.cpp", "src/calc.h", "src/calc.cpp"]
         );
         assert!(cxx[3].1.contains("<cuno/test.hpp>"));
         let cxx17 = files("app", Lang::Cxx, Edition::Cxx17);
@@ -734,7 +741,7 @@ mod tests {
         let names: Vec<&str> = c.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            ["cuno.toml", "src/main.c", "src/calc.h", "src/calc.c"]
+            ["Cuno.toml", "src/main.c", "src/calc.h", "src/calc.c"]
         );
     }
 

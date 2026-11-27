@@ -1,5 +1,5 @@
 //! The one place a compile's input is assembled from the settings: which
-//! layers of `cuno.toml` apply, the standard for the source's language, and
+//! layers of `Cuno.toml` apply, the standard for the source's language, and
 //! the include directories cuno always adds (`docs/en/specs/build.md`,
 //! "Default include paths"). `cuno doctor`'s standard library check and the
 //! build both take their flags from here, so they cannot disagree.
@@ -139,7 +139,7 @@ pub fn target_os(host: HostOs) -> Os {
 fn default_manifest() -> Manifest {
     cuno_manifest::parse_manifest(
         "[package]\nname = \"default\"\nversion = \"0.0.0\"\n",
-        Path::new("cuno.toml"),
+        Path::new(cuno_manifest::MANIFEST),
         Path::new("."),
     )
     .expect("a manifest with only [package] name and version is valid")
@@ -156,7 +156,7 @@ pub(crate) mod tests {
     pub(crate) const BUNDLED: &str = "C:/home/include/0.0.0";
 
     fn manifest(toml: &str) -> Manifest {
-        cuno_manifest::parse_manifest(toml, Path::new("cuno.toml"), Path::new("C:/p"))
+        cuno_manifest::parse_manifest(toml, Path::new("Cuno.toml"), Path::new("C:/p"))
             .unwrap()
             .value
     }

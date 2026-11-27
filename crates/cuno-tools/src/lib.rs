@@ -27,7 +27,7 @@ impl fmt::Display for EditorFileWarning {
         match self {
             EditorFileWarning::Kept(file) => write!(
                 f,
-                "kept the hand-written `{file}`; remove it to have cuno write it from cuno.toml"
+                "kept the hand-written `{file}`; remove it to have cuno write it from Cuno.toml"
             ),
             EditorFileWarning::Failed(file, e) => write!(f, "could not write {file}: {e}"),
         }

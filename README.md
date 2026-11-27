@@ -44,7 +44,7 @@ cargo install cuno
   - If you have used Cargo, you already know your way around.
   - cuno departs from Cargo only where C/C++ needs something different.
 - **One config file, zero setup**
-  - Everything lives in `cuno.toml`.
+  - Everything lives in `Cuno.toml`.
   - A project created with `cuno new` builds without writing a single line of config.
   - Directory layout and coding rules are never forced on you.
 - **Every major compiler, on equal terms**
@@ -61,7 +61,7 @@ See [docs/en/concept.md](docs/en/concept.md) for the full concept and design pri
 - Compiler flags such as `-Werror` / `/WX` are not intuitive.
 - Adding a library often means looking up hashes and wiring things up by hand.
 
-cuno replaces CMake, Ninja, ctest, and hand-written `.clang-format` / `.clang-tidy` files with one `cuno.toml`.
+cuno replaces CMake, Ninja, ctest, and hand-written `.clang-format` / `.clang-tidy` files with one `Cuno.toml`.
 
 ## Documentation
 

@@ -130,14 +130,14 @@ fn default_refuses_an_unknown_name_and_writes_nothing() {
 #[test]
 fn default_warns_when_a_project_selects_another() {
     let project = Project::new().file(
-        "cuno.toml",
+        "Cuno.toml",
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[toolchain]\ncompiler = \"clang\"\n",
     );
     let run = toolchain(&project, &["toolchain", "default", "msvc"], &[]);
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(
         run.stderr.contains(
-            "warning: msvc is the default, but here [toolchain] compiler in cuno.toml selects clang"
+            "warning: msvc is the default, but here [toolchain] compiler in Cuno.toml selects clang"
         ),
         "{}",
         run.stderr

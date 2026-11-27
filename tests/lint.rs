@@ -34,7 +34,7 @@ fn compilers() -> Vec<&'static str> {
 
 fn package(lint: &str) -> Project {
     Project::new()
-        .file("cuno.toml", &format!("{MANIFEST}[lint]\n{lint}"))
+        .file("Cuno.toml", &format!("{MANIFEST}[lint]\n{lint}"))
         .file("src/main.cpp", ZERO)
         .file(
             "src/third_party/v.cpp",
@@ -134,7 +134,7 @@ fn fix_leaves_other_packages_alone_and_their_errors_show() {
     let vend = "#include <string>\nvoid f(std::string s);\n";
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!(
                 "{MANIFEST}[build]\ninclude-dirs = [\"vend\"]\n[lint]\npreset = \"none\"\nwarn = [\"performance-unnecessary-value-param\"]\n"
             ),
@@ -267,7 +267,7 @@ fn files_are_analysed_once_each_in_path_order() {
     };
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!(
                 "{MANIFEST}[[bin]]
 name = \"a\"
@@ -314,7 +314,7 @@ fn a_link_is_analysed_and_left_by_fix_and_its_target_is_fixed() {
         return;
     };
     let project = Project::new()
-        .file("cuno.toml", MANIFEST)
+        .file("Cuno.toml", MANIFEST)
         .file(
             "src/main.cpp",
             "int main() { return 0; }

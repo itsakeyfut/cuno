@@ -121,40 +121,40 @@ mod tests {
     #[test]
     fn messages_point_at_the_line_and_column() {
         let text = "[build]\nwanings = \"all\"\n  é = 1\n";
-        let file = Path::new("cuno.toml");
-        assert_eq!(Location::at(file, text, 0).to_string(), "cuno.toml:1:1");
-        assert_eq!(Location::at(file, text, 8).to_string(), "cuno.toml:2:1");
+        let file = Path::new("Cuno.toml");
+        assert_eq!(Location::at(file, text, 0).to_string(), "Cuno.toml:1:1");
+        assert_eq!(Location::at(file, text, 8).to_string(), "Cuno.toml:2:1");
         let accented = text.find("= 1").unwrap();
         assert_eq!(
             Location::at(file, text, accented).to_string(),
-            "cuno.toml:3:5"
+            "Cuno.toml:3:5"
         );
         let inside = text.find('é').unwrap() + 1;
         assert_eq!(
             Location::at(file, text, inside).to_string(),
-            "cuno.toml:3:3"
+            "Cuno.toml:3:3"
         );
-        assert_eq!(Location::at(file, text, 999).to_string(), "cuno.toml:4:1");
+        assert_eq!(Location::at(file, text, 999).to_string(), "Cuno.toml:4:1");
         let bom = "\u{feff}zz = 1\n";
         assert_eq!(
             Location::at(file, bom, bom.find("zz").unwrap()).to_string(),
-            "cuno.toml:1:1"
+            "Cuno.toml:1:1"
         );
 
         let warning = ConfigWarning {
-            message: "unknown key `build.wanings` in cuno.toml, ignored".into(),
+            message: "unknown key `build.wanings` in Cuno.toml, ignored".into(),
             location: Some(Location::at(file, text, 8)),
         };
         assert_eq!(
             warning.to_string(),
-            "unknown key `build.wanings` in cuno.toml, ignored\n --> cuno.toml:2:1"
+            "unknown key `build.wanings` in Cuno.toml, ignored\n --> Cuno.toml:2:1"
         );
         let error = ConfigError {
-            message: "cannot read cuno.toml".into(),
+            message: "cannot read Cuno.toml".into(),
             location: None,
             help: Some("check it".into()),
         };
-        assert_eq!(error.to_string(), "cannot read cuno.toml");
+        assert_eq!(error.to_string(), "cannot read Cuno.toml");
         assert_eq!(error.help().as_deref(), Some("check it"));
     }
 
@@ -176,8 +176,8 @@ mod tests {
     fn files_under_the_current_directory_are_shown_relative() {
         let cwd = Path::new("work").join("p");
         assert_eq!(
-            shown_path(&cwd.join("cuno.toml"), &cwd),
-            Path::new("cuno.toml")
+            shown_path(&cwd.join("Cuno.toml"), &cwd),
+            Path::new("Cuno.toml")
         );
         let elsewhere = Path::new("home").join("config.toml");
         assert_eq!(shown_path(&elsewhere, &cwd), elsewhere);

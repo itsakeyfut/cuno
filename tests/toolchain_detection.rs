@@ -175,7 +175,7 @@ fn a_configured_clang_that_is_clang_cl_is_refused() {
     let path = driver.get_program().to_string_lossy().replace('\\', "/");
     let project = support::Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c\"\n",
         )
         .file("src/main.c", "int main(void) { return 0; }\n")

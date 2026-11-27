@@ -213,7 +213,7 @@ fn a_panic_exits_101() {
 fn the_configured_color_colors_every_command() {
     let p = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
         )
         // An unknown key, so that there is a warning to color.

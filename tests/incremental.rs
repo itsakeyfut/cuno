@@ -27,7 +27,7 @@ fn here(compiler: Compiler) -> bool {
 fn package(extra: &str) -> Project {
     Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n{extra}"),
         )
         .file("src/inc dir/内側.h", "#pragma once\n#define INNER 1\n")
@@ -134,7 +134,7 @@ fn a_changed_setting_recompiles_what_it_affects() {
         let project = package("");
         build(&project, name);
         std::fs::write(
-            project.path().join("cuno.toml"),
+            project.path().join("Cuno.toml"),
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ndefines = [\"X=1\"]\n",
         )
         .unwrap();
@@ -209,7 +209,7 @@ fn a_file_read_by_embed_is_an_input() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlang = \"c\"\nedition = \"c23\"\n",
             )
             .file("src/data.bin", "A")
@@ -243,7 +243,7 @@ fn a_rebuilt_library_is_relinked() {
     };
     let project = Project::new()
         .file(
-            "cuno.toml",
+            "Cuno.toml",
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\nlinks = [\"foo\"]\nlib-dirs = [\"lib\"]\n",
         )
         .file(
@@ -338,7 +338,7 @@ fn a_header_created_ahead_in_the_search_is_compiled_in() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"hdr\"]\n",
             )
             .file("hdr/cfg.h", "#define CFG 1\n")
@@ -379,7 +379,7 @@ fn a_same_named_header_later_in_the_search_changes_nothing() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"a\", \"b\"]\n",
             )
             .file("a/cfg.h", "#define CFG 1\n")
@@ -408,7 +408,7 @@ fn a_header_created_to_shadow_a_system_one_is_compiled_in() {
         }
         let project = Project::new()
             .file(
-                "cuno.toml",
+                "Cuno.toml",
                 "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[build]\ninclude-dirs = [\"inc\"]\n",
             )
             .file(

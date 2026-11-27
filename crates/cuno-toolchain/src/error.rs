@@ -295,7 +295,7 @@ impl CunoError for ToolchainError {
                 None => format!("the standard library says: {message}"),
             }),
             ToolchainError::ProbeFailed { .. } => Some(
-                "check `[build.<compiler>] flags` in cuno.toml, and the Visual Studio and LLVM installations".to_owned(),
+                "check `[build.<compiler>] flags` in Cuno.toml, and the Visual Studio and LLVM installations".to_owned(),
             ),
             ToolchainError::GccUnreadable { .. } => Some(format!(
                 "reinstall MSYS2's UCRT64 GCC ({MSYS2_GCC}), or write where a working gcc is in [toolchain.paths] gcc"

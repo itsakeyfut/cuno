@@ -316,7 +316,7 @@ impl Steps for StopAtFirst<'_> {
     fn ignored(&mut self, name: &str) {
         self.shell
             .warning(format!("{name} is set in the environment and is not used"));
-        self.shell.help("write the flags in cuno.toml");
+        self.shell.help("write the flags in Cuno.toml");
     }
 
     fn problem(&mut self, error: Box<dyn CunoError>) -> ControlFlow<Box<dyn CunoError>> {
@@ -611,7 +611,7 @@ mod tests {
     }
 
     fn manifest(toml: &str) -> Manifest {
-        cuno_manifest::parse_manifest(toml, Path::new("cuno.toml"), Path::new("C:/p"))
+        cuno_manifest::parse_manifest(toml, Path::new("Cuno.toml"), Path::new("C:/p"))
             .unwrap()
             .value
     }

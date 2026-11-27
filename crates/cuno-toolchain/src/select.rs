@@ -25,7 +25,7 @@ pub enum Source {
     Environment,
     /// The project's `.cuno/config.toml`.
     ProjectConfig,
-    /// `[toolchain] compiler` in `cuno.toml`.
+    /// `[toolchain] compiler` in `Cuno.toml`.
     Manifest,
     /// The user-level `config.toml`.
     UserConfig,
@@ -39,7 +39,7 @@ impl fmt::Display for Source {
             Source::CommandLine => "--compiler",
             Source::Environment => "CUNO_COMPILER",
             Source::ProjectConfig => "compiler in .cuno/config.toml",
-            Source::Manifest => "[toolchain] compiler in cuno.toml",
+            Source::Manifest => "[toolchain] compiler in Cuno.toml",
             Source::UserConfig => "compiler in the user-level config.toml",
             Source::Automatic => "automatic selection",
         })
@@ -65,7 +65,7 @@ pub struct Choices {
 pub struct ProjectChoices {
     /// `.cuno/config.toml`.
     pub config: Option<String>,
-    /// `[toolchain] compiler` in `cuno.toml`.
+    /// `[toolchain] compiler` in `Cuno.toml`.
     pub manifest: Option<String>,
 }
 
@@ -808,7 +808,7 @@ mod tests {
             (Source::CommandLine, "--compiler"),
             (Source::Environment, "CUNO_COMPILER"),
             (Source::ProjectConfig, "compiler in .cuno/config.toml"),
-            (Source::Manifest, "[toolchain] compiler in cuno.toml"),
+            (Source::Manifest, "[toolchain] compiler in Cuno.toml"),
             (Source::UserConfig, "compiler in the user-level config.toml"),
             (Source::Automatic, "automatic selection"),
         ];
@@ -832,7 +832,7 @@ mod tests {
                     }),
                     ..Default::default()
                 },
-                "[toolchain] compiler in cuno.toml",
+                "[toolchain] compiler in Cuno.toml",
             ),
         ] {
             let err = pick(&choices, found(&installs, &[]), &Constraints::default()).unwrap_err();
@@ -843,7 +843,7 @@ mod tests {
             }
             assert_eq!(
                 matches!(err, ToolchainError::UnknownCompiler { .. }),
-                text.contains("cuno.toml")
+                text.contains("Cuno.toml")
             );
         }
     }
