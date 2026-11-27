@@ -14,6 +14,7 @@ pub mod prepare;
 pub mod probe;
 mod run;
 pub mod select;
+pub mod short_path;
 mod version;
 
 pub use error::ToolchainError;

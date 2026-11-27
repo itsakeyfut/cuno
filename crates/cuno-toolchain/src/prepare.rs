@@ -107,6 +107,30 @@ impl Prepared {
     }
 }
 
+/// `env` with its temporary directory, as Windows finds it (`TMP`, else
+/// `TEMP`, else `USERPROFILE`), set as `TMP` and `TEMP` by its short name
+/// when it is not ASCII and has an ASCII one: GCC's linker and the tools
+/// it runs open it in the ANSI code page (`docs/en/specs/toolchain.md`,
+/// "MinGW (GCC)"). As it is otherwise; the build refuses what is left.
+fn ascii_temp(env: Env) -> Env {
+    let Some(temp) = ["TMP", "TEMP", "USERPROFILE"]
+        .iter()
+        .find_map(|name| env.get(name))
+        .map(PathBuf::from)
+    else {
+        return env;
+    };
+    if temp.to_str().is_some_and(str::is_ascii) {
+        return env;
+    }
+    match crate::short_path::ascii_short_path(&temp) {
+        Some(short) => env
+            .with("TMP", short.clone().into_os_string())
+            .with("TEMP", short.into_os_string()),
+        None => env,
+    }
+}
+
 /// Resolves the environment for `selected`: with an MSVC toolset (every
 /// compiler on Windows but GCC), the Windows SDK is found and both are
 /// applied to `env` (`docs/en/specs/toolchain.md`, "Environment resolution
@@ -127,7 +151,7 @@ pub fn prepare(
     let Some(toolset) = &selected.msvc else {
         let (env, gcc) = match selected.kind {
             CompilerKind::Gcc => {
-                let env = crate::gcc::env_for(&selected.executable, &clean);
+                let env = ascii_temp(crate::gcc::env_for(&selected.executable, &clean));
                 let install = crate::gcc::install(&selected.executable, host, &env, run)?;
                 (env, Some(install))
             }
@@ -462,6 +486,31 @@ mod tests {
             .unwrap();
             assert_eq!(prepared.env.get("PATH"), env.get("PATH"), "{kind:?}");
         }
+    }
+
+    /// A temporary directory that is not ASCII is given to GCC by its
+    /// ASCII short name, as both `TMP` and `TEMP`, whichever named it; an
+    /// ASCII one, or one without a short name, is left as it is.
+    ///
+    /// Mutation: leave it as it is, or set only `TMP`; this test fails.
+    #[cfg(windows)]
+    #[test]
+    fn gcc_gets_the_temporary_directory_s_short_name() {
+        let root = tempfile::tempdir().unwrap();
+        let japanese = root.path().join("一時");
+        std::fs::create_dir(&japanese).unwrap();
+        let ascii = Env::from_pairs([("TMP".into(), "C:/tmp".into())], NameCase::Insensitive);
+        assert_eq!(ascii_temp(ascii.clone()).get("TMP"), ascii.get("TMP"));
+        let Some(short) = crate::short_path::ascii_short_path(&japanese) else {
+            return;
+        };
+        let env = Env::from_pairs(
+            [("TEMP".into(), japanese.clone().into_os_string())],
+            NameCase::Insensitive,
+        );
+        let given = ascii_temp(env);
+        assert_eq!(given.get("TMP"), Some(short.as_os_str()));
+        assert_eq!(given.get("TEMP"), Some(short.as_os_str()));
     }
 
     /// Off Windows nothing looks for Visual Studio.

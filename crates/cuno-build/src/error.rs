@@ -112,7 +112,8 @@ pub enum NotAscii {
     LibDir,
     /// An executable named after its entry file, the path given.
     Bin,
-    /// The temporary directory, which link-time optimisation writes to.
+    /// The temporary directory, which GCC's linker writes to, when it has
+    /// no ASCII short name.
     Temp,
 }
 
@@ -180,7 +181,7 @@ impl fmt::Display for BuildError {
                     ),
                     NotAscii::Temp => write!(
                         f,
-                        "the temporary directory {path} is not ASCII, which GCC's link-time optimisation cannot use"
+                        "the temporary directory {path} is not ASCII and has no short name, which GCC's linker cannot use"
                     ),
                 }
             }
@@ -243,7 +244,7 @@ impl CunoError for BuildError {
                     NotAscii::Target => "build into a directory whose path is ASCII (--target-dir, CUNO_TARGET_DIR or [build] target-dir)",
                     NotAscii::LibDir => "move the libraries to a directory whose path is ASCII",
                     NotAscii::Bin => "rename the file to an ASCII name, or list it in [[bin]] with an ASCII name",
-                    NotAscii::Temp => "set TMP and TEMP to a directory whose path is ASCII, or set lto = false",
+                    NotAscii::Temp => "set TMP and TEMP to a directory whose path is ASCII",
                 }
                 .to_owned(),
             ),

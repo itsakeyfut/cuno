@@ -11,6 +11,7 @@ use cuno_toolchain::compiler::CompilerKind;
 use crate::error::{BuildError, NotAscii};
 use crate::layout::Layout;
 use crate::sources::Bin;
+use cuno_toolchain::short_path::fits_ansi_code_page;
 
 /// Whether `path` is all ASCII.
 fn is_ascii(path: &Path) -> bool {
@@ -21,7 +22,8 @@ fn is_ascii(path: &Path) -> bool {
 pub struct Linking<'a> {
     /// `lib-dirs`.
     pub lib_dirs: &'a [PathBuf],
-    /// `lto`, whose link writes to the temporary directory.
+    /// `lto`, whose link writes to the temporary directory in a way that
+    /// fails for any path that is not ASCII.
     pub lto: bool,
     /// The program's executables, named after their entry files under
     /// `src/bin/` or `[[bin]] name`.
@@ -31,10 +33,11 @@ pub struct Linking<'a> {
 /// The first path `kind`'s tools would be given that is not ASCII, written
 /// from the project root where it is inside it (as the build writes it):
 /// the target directory, and for a build that links (`linking`), a
-/// `lib-dirs` directory, an executable's name, and with `lto` the
-/// temporary directory, which GCC's link-time optimisation writes to: as
-/// Windows finds it, `TMP`, else `TEMP`, else `USERPROFILE` in `env`. Ok
-/// for a compiler whose tools open any path.
+/// `lib-dirs` directory, an executable's name, and the temporary directory
+/// its linker writes to: as Windows finds it, `TMP`, else `TEMP`, else
+/// `USERPROFILE` in `env`, the build's, which already holds the directory's
+/// short name where it has an ASCII one. Ok for a compiler whose tools open
+/// any path.
 pub fn check(
     kind: CompilerKind,
     layout: &Layout,
@@ -65,13 +68,17 @@ pub fn check(
     if let Some(bin) = linking.bins.iter().find(|b| !b.name.is_ascii()) {
         return Err(refuse(NotAscii::Bin, &bin.entry.path));
     }
-    if linking.lto
-        && let Some(temp) = ["TMP", "TEMP", "USERPROFILE"]
-            .iter()
-            .find_map(|name| env.get(name))
-        && !is_ascii(Path::new(temp))
+    // The build's environment already names it by its ASCII short name
+    // where it has one; without one, a link works only when the path fits
+    // the ANSI code page, and LTO's not at all.
+    if let Some(temp) = ["TMP", "TEMP", "USERPROFILE"]
+        .iter()
+        .find_map(|name| env.get(name))
+        .map(Path::new)
+        && !is_ascii(temp)
+        && (linking.lto || !fits_ansi_code_page(temp))
     {
-        return Err(refuse(NotAscii::Temp, Path::new(temp)));
+        return Err(refuse(NotAscii::Temp, temp));
     }
     Ok(())
 }
@@ -122,14 +129,17 @@ mod tests {
     /// A project whose own path is not ASCII builds with GCC: what is
     /// inside it is written from the root. A target directory that is not
     /// ASCII written so, and for a build that links a library directory,
-    /// an executable's name, or with LTO the temporary directory (`TMP`,
-    /// else `TEMP`, else `USERPROFILE`), are refused with the path, exit 3.
+    /// an executable's name, or the temporary directory (`TMP`, else
+    /// `TEMP`, else `USERPROFILE`) left without an ASCII short name where
+    /// the link would fail on it (with LTO, or a path the ANSI code page
+    /// cannot hold), are refused with the path, exit 3.
     /// A check links nothing, so only the target directory counts there.
     /// Other compilers are never refused.
     ///
     /// Mutation: skip any of the checks, check the absolute path of what is
     /// inside the project, ignore `TEMP` or `USERPROFILE`, refuse the
-    /// temporary directory without LTO or for a check, or refuse another
+    /// temporary directory for a check or for a plain link the code page
+    /// holds, let LTO or a path it cannot hold through, or refuse another
     /// compiler; this test fails.
     #[test]
     fn what_cannot_be_written_in_ascii_is_refused() {
@@ -146,7 +156,8 @@ mod tests {
                 bins,
             })
         };
-        assert!(check(gcc, &japanese, inside, linking(&libs, true, &bins), &ascii).is_ok());
+
+        assert!(check(gcc, &japanese, inside, linking(&libs, false, &bins), &ascii).is_ok());
 
         assert_eq!(
             what(check(gcc, &japanese, Path::new("D:/出力"), None, &ascii)),
@@ -185,7 +196,11 @@ mod tests {
             )),
             Some((NotAscii::Bin, PathBuf::from("C:/p/src/bin/漢字.c")))
         );
-        for japanese_temp in [
+        // A temporary directory left without an ASCII short name: LTO's
+        // link fails on it whatever the code page, a plain link only when
+        // the code page cannot hold it (U+20B9F no Windows code page holds).
+        let unheld = "C:/Users/\u{20B9F}/Temp";
+        for temp in [
             env(&[("TEMP", "C:/Users/山田/Temp")]),
             env(&[("USERPROFILE", "C:/Users/山田/Temp")]),
         ] {
@@ -195,23 +210,30 @@ mod tests {
                     &japanese,
                     inside,
                     linking(&[], true, &[]),
-                    &japanese_temp
+                    &temp
                 )),
                 Some((NotAscii::Temp, PathBuf::from("C:/Users/山田/Temp")))
             );
-            assert!(
-                check(
-                    gcc,
-                    &japanese,
-                    inside,
-                    linking(&[], false, &[]),
-                    &japanese_temp
-                )
-                .is_ok()
-            );
             // A check links nothing.
-            assert!(check(gcc, &japanese, inside, None, &japanese_temp).is_ok());
+            assert!(check(gcc, &japanese, inside, None, &temp).is_ok());
         }
+        assert_eq!(
+            what(check(
+                gcc,
+                &japanese,
+                inside,
+                linking(&[], false, &[]),
+                &env(&[("TMP", unheld)])
+            )),
+            Some((NotAscii::Temp, PathBuf::from(unheld)))
+        );
+        let held = env(&[("TMP", "C:/Users/山田/Temp")]);
+        let plain = check(gcc, &japanese, inside, linking(&[], false, &[]), &held);
+        assert_eq!(
+            plain.is_ok(),
+            fits_ansi_code_page(Path::new("C:/Users/山田/Temp")),
+            "a plain link is refused exactly when the code page cannot hold the path"
+        );
         let err = check(gcc, &japanese, Path::new("D:/出力"), None, &ascii).unwrap_err();
         assert_eq!(err.exit_class(), ExitClass::Setup);
         let japanese_temp = env(&[("TMP", "C:/Users/山田/Temp")]);
@@ -225,7 +247,7 @@ mod tests {
                     kind,
                     &japanese,
                     Path::new("D:/出力"),
-                    linking(&other_libs, true, &japanese_bin),
+                    linking(&other_libs, false, &japanese_bin),
                     &japanese_temp
                 )
                 .is_ok()

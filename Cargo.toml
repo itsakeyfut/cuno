@@ -82,6 +82,9 @@ serde_ignored = "0.1.14"
 semver = "1.0.28"
 # Reading where the Windows SDK is installed (cuno-toolchain, Windows only).
 winreg = "0.56"
+# A path's short (8.3) name, which GCC's tools can open where the long one
+# is not ASCII (cuno-toolchain, Windows only). winreg already depends on it.
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Globalization"] }
 
 [workspace.lints.rust]
 # `deny` rather than `forbid`: a small Windows integration module may need an

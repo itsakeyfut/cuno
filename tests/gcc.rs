@@ -249,16 +249,17 @@ fn the_whole_flow_works_with_gcc() {
 
 /// A package `cuno new` makes under a directory that is not ASCII, with a
 /// source and a test file named so too, builds, runs and tests with GCC,
-/// also when the temporary directory is not ASCII (a Japanese user name),
-/// and a second build runs nothing. What cannot be named in ASCII, LTO with
-/// such a temporary directory or a target directory outside the project,
-/// is refused before compiling (`docs/en/specs/toolchain.md`, "MinGW
+/// also when the temporary directory is not ASCII (a Japanese user name,
+/// given to GCC by its short name, LTO included), and a second build runs
+/// nothing. What cannot be named in ASCII, a target directory outside the
+/// project or an executable's name, is refused before compiling (`docs/en/specs/toolchain.md`, "MinGW
 /// (GCC)").
 ///
 /// Mutation: drop `-pipe`, name GCC's objects or executable absolutely,
 /// leave the output names unencoded, skip the checks, refuse a check for
-/// LTO's temporary directory, or let an executable named in another script
-/// through; this test fails.
+/// the temporary directory, give GCC the temporary directory's long name
+/// (caught where the volume keeps short names), or let an executable named
+/// in another script through; this test fails.
 #[test]
 fn paths_that_are_not_ascii_build_or_are_refused() {
     if require_driver(Compiler::Gcc, Language::C).is_none() {
@@ -304,10 +305,10 @@ fn paths_that_are_not_ascii_build_or_are_refused() {
         &["run", "--compiler", "gcc"],
         &["test", "--compiler", "gcc"],
     ] {
-        let run = cuno(&app, args, temps);
+        let run = cuno(&app, args, &[]);
         assert_eq!(run.code, Some(0), "{args:?}: {}", run.stderr);
     }
-    let again = cuno(&app, &["-v", "build", "--compiler", "gcc"], temps);
+    let again = cuno(&app, &["-v", "build", "--compiler", "gcc"], &[]);
     assert_eq!(again.code, Some(0), "{}", again.stderr);
     assert!(
         !again.stderr.contains("Running"),
@@ -321,13 +322,28 @@ fn paths_that_are_not_ascii_build_or_are_refused() {
             + "\n[profile.release]\nlto = true\n",
     )
     .unwrap();
-    let lto = cuno(&app, &["build", "--release", "--compiler", "gcc"], temps);
-    assert_eq!(lto.code, Some(3), "{}", lto.stderr);
-    assert!(
-        lto.stderr.contains("the temporary directory"),
-        "{}",
-        lto.stderr
-    );
+    // A temporary directory that is not ASCII (a Japanese user name) is
+    // given to GCC by its short name, so a link, LTO's included, builds.
+    // Where the volume keeps no short names, a link builds when the code
+    // page holds the path and is refused when it does not, and LTO's is
+    // refused: never left to fail in the linker (exit 1).
+    for args in [
+        &["build", "--compiler", "gcc"][..],
+        &["build", "--release", "--compiler", "gcc"],
+    ] {
+        let run = cuno(&app, args, temps);
+        if cuno_toolchain::short_path::ascii_short_path(&temp).is_some() {
+            assert_eq!(run.code, Some(0), "{args:?}: {}", run.stderr);
+        } else {
+            assert!(
+                run.code == Some(0)
+                    || (run.code == Some(3) && run.stderr.contains("has no short name")),
+                "{args:?}: {}",
+                run.stderr
+            );
+        }
+    }
+
     let outside = parent.path().join("出力");
     let target = cuno(
         &app,
