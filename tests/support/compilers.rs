@@ -24,9 +24,7 @@
 //! install it or point the tests at it. Outside CI, setting
 //! `CUNO_TEST_ALLOW_MISSING=1` turns that into a skip, reported on stderr in a
 //! normal `cargo test` run. On CI (`CI=true`) a missing compiler always fails,
-//! whatever else is set, except GCC, which CI does not install yet: there a
-//! missing GCC is a skip, reported on stderr, until CI runs the suites with
-//! GCC (#322). See [`require`] and [`on_missing`].
+//! whatever else is set. See [`require`] and [`on_missing`].
 //!
 //! The `CUNO_TEST_*` variables are read by the test process only; like every
 //! `CUNO_*` variable, they are removed from the programs a test runs.
@@ -168,10 +166,7 @@ pub fn require_llvm_tool(name: &str) -> Option<PathBuf> {
 #[track_caller]
 fn skip_or_fail<T>(missing: &Missing) -> Option<T> {
     let ci = std::env::var_os("CI").is_some_and(|v| v == "true");
-    let allow = std::env::var_os("CUNO_TEST_ALLOW_MISSING").is_some_and(|v| v == "1")
-        // CI installs no GCC yet (#322).
-        || (ci && missing.compiler == Compiler::Gcc.name());
-    let ci = ci && missing.compiler != Compiler::Gcc.name();
+    let allow = std::env::var_os("CUNO_TEST_ALLOW_MISSING").is_some_and(|v| v == "1");
     match on_missing(missing, ci, allow) {
         Outcome::Fail(message) => panic!("{message}"),
         Outcome::Skip(message) => {
@@ -196,7 +191,8 @@ pub fn on_missing(missing: &Missing, ci: bool, allow_missing: bool) -> Outcome {
     Outcome::Fail(format!(
         "{} not found: {}\n\
          Install it, or point the tests at an installation with \
-         CUNO_TEST_VS_INSTALL (Visual Studio) or CUNO_TEST_LLVM_BIN (LLVM).\n\
+         CUNO_TEST_VS_INSTALL (Visual Studio), CUNO_TEST_LLVM_BIN (LLVM) \
+         or CUNO_TEST_GCC_BIN (GCC).\n\
          Outside CI, CUNO_TEST_ALLOW_MISSING=1 skips tests that need it.",
         missing.compiler, missing.detail
     ))

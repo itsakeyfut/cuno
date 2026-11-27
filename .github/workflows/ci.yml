@@ -153,6 +153,14 @@ jobs:
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       # The clang the compiler tests use; see .github/actions/llvm.
       - uses: ./.github/actions/llvm
+      # MinGW GCC where users have it: MSYS2's UCRT64 in the image's own
+      # MSYS2, left off PATH, so the tests find it where cuno looks
+      # (docs/en/specs/toolchain.md, "MinGW (GCC)"). A missing GCC fails
+      # the tests on CI, as any missing compiler does.
+      - name: Install MinGW GCC
+        run: |
+          C:/msys64/usr/bin/bash.exe -lc 'pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc'
+          C:/msys64/ucrt64/bin/gcc.exe -dumpfullversion
       - run: cargo test --workspace --no-fail-fast
 
   msrv:

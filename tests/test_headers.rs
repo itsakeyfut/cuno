@@ -15,7 +15,12 @@ use std::process::Command;
 use support::compilers::{Compiler, Language, require_driver};
 use support::{Project, Run};
 
-const COMPILERS: [Compiler; 3] = [Compiler::Msvc, Compiler::Clang, Compiler::ClangCl];
+const COMPILERS: [Compiler; 4] = [
+    Compiler::Msvc,
+    Compiler::Clang,
+    Compiler::ClangCl,
+    Compiler::Gcc,
+];
 
 /// The headers in this repository, which cuno embeds and writes to the cuno
 /// home unchanged (`crates/cuno-build/src/bundled.rs`).

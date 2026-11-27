@@ -19,10 +19,11 @@ use std::path::Path;
 use support::Project;
 use support::compilers::{Compiler, Language, require};
 
-const COMPILERS: [(&str, Compiler); 3] = [
+const COMPILERS: [(&str, Compiler); 4] = [
     ("msvc", Compiler::Msvc),
     ("clang", Compiler::Clang),
     ("clang-cl", Compiler::ClangCl),
+    ("gcc", Compiler::Gcc),
 ];
 
 /// The profiles every example is run in, with the flag that picks each and
