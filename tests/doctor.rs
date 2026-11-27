@@ -1509,3 +1509,28 @@ fn a_gcc_the_build_refuses_is_a_problem() {
     );
     assert_eq!(run.code, Some(1), "{}", run.stderr);
 }
+
+/// A `[toolchain.paths] gcc` with no file there is reported even while
+/// another compiler is diagnosed: doctor looks for GCC whatever is asked
+/// for, and a setting the user wrote that cannot be used is a problem
+/// (commands.md, "`cuno doctor`").
+///
+/// Mutation: leave GCC's detection error unreported; this test fails.
+#[test]
+fn a_configured_gcc_with_no_file_is_a_problem_whatever_is_diagnosed() {
+    if require(Compiler::Msvc, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
+    let project = Project::new().file("cuno.toml", &manifest(""));
+    let missing = project.path().join("nowhere/gcc.exe");
+    let config = format!("[toolchain.paths]\ngcc = '{}'\n", missing.display());
+    let run = project
+        .file(".cuno/config.toml", &config)
+        .cuno(&["doctor", "--compiler", "msvc"]);
+    assert!(
+        run.stderr.contains("error: [toolchain.paths] gcc"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(run.code, Some(1), "{}", run.stderr);
+}

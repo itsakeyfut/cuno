@@ -882,4 +882,28 @@ mod tests {
             }
         }
     }
+
+    /// What each command makes ready decides whether every GCC is run to be
+    /// found, and whether the temporary directory is checked for the
+    /// compiler: only doctor looks for every compiler, only a build runs
+    /// the compiler afterwards.
+    ///
+    /// Mutation: let lint look for every compiler (or doctor not), or check
+    /// the temporary directory for lint or doctor; this test fails.
+    #[test]
+    fn what_each_command_makes_ready_for() {
+        let answers: Vec<(ReadyFor, bool, bool)> =
+            [ReadyFor::Build, ReadyFor::Lint, ReadyFor::Doctor]
+                .into_iter()
+                .map(|r| (r, r.looks_for_every_compiler(), r.runs_the_compiler()))
+                .collect();
+        assert_eq!(
+            answers,
+            [
+                (ReadyFor::Build, false, true),
+                (ReadyFor::Lint, false, false),
+                (ReadyFor::Doctor, true, false),
+            ]
+        );
+    }
 }
