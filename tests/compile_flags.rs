@@ -1,7 +1,8 @@
-//! The compile arguments cuno builds, run through the real cl, clang-cl and
-//! clang: each must compile what `docs/en/specs/build.md`, "Settings and
-//! flags", says, and the program must see the settings (the standard, the C
-//! runtime, RTTI, `NDEBUG`). A flag a driver ignores shows up here.
+//! The compile arguments cuno builds, run through the real cl, clang-cl,
+//! clang and MinGW GCC: each must compile what `docs/en/specs/build.md`,
+//! "Settings and flags", says, and the program must see the settings (the
+//! standard, the C runtime, RTTI, `NDEBUG`). A flag a driver ignores shows
+//! up here.
 #![cfg(windows)]
 
 mod support;
@@ -17,7 +18,7 @@ use cuno_toolchain::flags::{
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::CompilerKind;
 use cuno_toolchain::{SystemRunner, Version};
-use support::compilers::{Compiler, Language, require};
+use support::compilers::{Compiler, Language, gcc_dir, require, require_driver};
 
 /// Each available driver, its program, and the environment it builds in.
 fn drivers() -> Vec<(CompilerKind, PathBuf, Env, Version)> {
@@ -52,6 +53,13 @@ fn drivers() -> Vec<(CompilerKind, PathBuf, Env, Version)> {
                 any,
             ));
         }
+    }
+    // GCC uses no MSVC environment, and runs with its own directory on
+    // `PATH`, as cuno runs it.
+    if require_driver(Compiler::Gcc, Language::C).is_some() {
+        let gcc = gcc_dir().unwrap().join("gcc.exe");
+        let env = cuno_toolchain::gcc::env_for(&gcc, &process);
+        out.push((CompilerKind::Gcc, gcc, env, any));
     }
     out
 }
@@ -90,7 +98,7 @@ int main() {
 #ifdef _DLL
     std::printf(" dll");
 #endif
-#ifdef _CPPRTTI
+#if defined(_CPPRTTI) || defined(__GXX_RTTI)
     std::printf(" rtti");
 #endif
 #ifdef NDEBUG
@@ -122,7 +130,7 @@ fn build(
     std::fs::write(&source, text).unwrap();
     let object = dir.path().join("main.obj");
     let exe = dir.path().join("main.exe");
-    let run = |args: Vec<std::ffi::OsString>| {
+    let run = |program: &Path, args: Vec<std::ffi::OsString>| {
         let output = Command::new(program)
             .args(&args)
             .current_dir(dir.path())
@@ -138,14 +146,19 @@ fn build(
             String::from_utf8_lossy(&output.stderr)
         );
     };
-    run(compile_args(input, &source, Some(&object)));
+    run(program, compile_args(input, &source, Some(&object)));
+    let cxx = input.lang == Lang::Cxx;
     let link = LinkInput {
         kind,
         build: input.build,
         profile: input.profile,
         subsystem,
+        cxx,
     };
-    run(link_args(&link, &[object], &exe));
+    run(
+        &kind.link_driver(program, cxx),
+        link_args(&link, &[object], &exe),
+    );
     (dir, exe)
 }
 
@@ -224,10 +237,11 @@ fn every_edition_reaches_the_program() {
 }
 
 /// The C runtime, RTTI, `NDEBUG`, exceptions and optimisation reach the
-/// program with each driver.
+/// program with each driver (GCC's C runtime is UCRT's DLL either way,
+/// which its headers say with `_DLL`).
 ///
-/// Mutation: drop `-fms-runtime-lib` for clang, `/MT`, `/GR-`, or
-/// `NDEBUG`; this test fails.
+/// Mutation: drop `-fms-runtime-lib` for clang, `/MT`, `/GR-`, `-fno-rtti`,
+/// or `NDEBUG`; this test fails.
 #[test]
 fn runtime_rtti_and_assertions_reach_the_program() {
     let (mut build, mut profile) = settings();
@@ -268,6 +282,16 @@ fn runtime_rtti_and_assertions_reach_the_program() {
             };
             let printed = build_and_run(kind, &program, &env, &input, CXX);
             let rest = printed.split_once(' ').map(|(_, r)| r).unwrap_or_default();
+            let expected = match kind {
+                // MinGW links UCRT's DLL under either runtime.
+                CompilerKind::Gcc if !expected.contains(" dll") => {
+                    expected.replacen("f=2", "f=2 dll", 1)
+                }
+                CompilerKind::Gcc => expected.to_owned(),
+                CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
+                    expected.to_owned()
+                }
+            };
             assert_eq!(rest, expected, "{kind:?} {runtime:?}");
         }
     }
@@ -333,11 +357,12 @@ fn disabled_exceptions_and_rtti_are_refused_by_every_driver() {
 
 /// A program calling a system library links with each driver from the link
 /// arguments, as a console and as a `windows` program, with debug
-/// information (a `.pdb`) and with LTO, and runs.
+/// information (a `.pdb`, but for GCC, which keeps DWARF in the
+/// executable) and with LTO, and runs.
 ///
 /// Mutation: drop the library, `/ENTRY:mainCRTStartup`, the subsystem,
-/// `/DEBUG` or `-g` at link time, or `-fuse-ld=lld` for clang-cl with LTO;
-/// this test fails.
+/// `-mwindows`, `/DEBUG` or `-g` at link time, or `-fuse-ld=lld` for
+/// clang-cl with LTO; this test fails.
 #[test]
 fn programs_link_and_run_with_every_setting() {
     let text = "#include <windows.h>
@@ -368,7 +393,7 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
             assert!(status.success(), "{kind:?} {subsystem:?} {status}");
             assert_eq!(
                 dir.path().join("main.pdb").is_file(),
-                debug,
+                debug && kind != CompilerKind::Gcc,
                 "{kind:?} {subsystem:?}"
             );
         }
@@ -376,10 +401,11 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
 }
 
 /// Links a program against a library built here, found through `lib-dirs`,
-/// with a `link-flags` entry that holds a comma, on each driver.
+/// with a `link-flags` entry that holds a comma, on each driver (GCC's an
+/// `ar` archive and a GNU ld flag).
 ///
-/// Mutation: drop `lib-dirs`, or pass `link-flags` to clang as `-Wl,`
-/// (which splits `/OPT:REF,ICF`); this test fails.
+/// Mutation: drop `lib-dirs`, or pass `link-flags` to clang or GCC as
+/// `-Wl,` (which splits `/OPT:REF,ICF`); this test fails.
 #[test]
 fn lib_dirs_and_link_flags_reach_the_linker() {
     let (settings_build, profile) = settings();
@@ -406,14 +432,32 @@ fn lib_dirs_and_link_flags_reach_the_linker() {
             .status()
             .unwrap();
         assert!(status.success(), "{kind:?}");
-        let lib_exe = std::env::split_paths(env.get("PATH").unwrap())
-            .map(|d| d.join("lib.exe"))
-            .find(|p| p.is_file())
-            .unwrap();
-        let mut out = std::ffi::OsString::from("/OUT:");
-        out.push(libs.path().join("answer.lib"));
-        let status = Command::new(lib_exe)
-            .args([std::ffi::OsString::from("/NOLOGO"), out, object.into()])
+        let (archiver, archive, flag) = match kind {
+            CompilerKind::Gcc => (
+                program.with_file_name("ar.exe"),
+                vec![
+                    "rcs".into(),
+                    libs.path().join("libanswer.a").into_os_string(),
+                    object.into(),
+                ],
+                "--exclude-libs=libx,liby",
+            ),
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
+                let lib_exe = std::env::split_paths(env.get("PATH").unwrap())
+                    .map(|d| d.join("lib.exe"))
+                    .find(|p| p.is_file())
+                    .unwrap();
+                let mut out = std::ffi::OsString::from("/OUT:");
+                out.push(libs.path().join("answer.lib"));
+                (
+                    lib_exe,
+                    vec![std::ffi::OsString::from("/NOLOGO"), out, object.into()],
+                    "/OPT:REF,ICF",
+                )
+            }
+        };
+        let status = Command::new(archiver)
+            .args(archive)
             .env_clear()
             .envs(env.vars())
             .status()
@@ -423,7 +467,7 @@ fn lib_dirs_and_link_flags_reach_the_linker() {
         let linked = BuildSettings {
             links: vec!["answer".into()],
             lib_dirs: vec![libs.path().to_owned()],
-            link_flags: vec!["/OPT:REF,ICF".into()],
+            link_flags: vec![flag.into()],
             ..settings_build.clone()
         };
         let input = CompileInput {
@@ -440,12 +484,16 @@ fn lib_dirs_and_link_flags_reach_the_linker() {
 }
 
 /// A program with `WinMain` and no `main` under the default console
-/// subsystem fails to link on every driver, instead of becoming a GUI
-/// program with no console; and the static C runtime leaves no
-/// VCRUNTIME140.dll import.
+/// subsystem fails to link on every driver for the MSVC ABI, instead of
+/// becoming a GUI program with no console (MinGW's start-up code calls
+/// `WinMain` from a console program, which keeps its console); the static
+/// C runtime leaves no VCRUNTIME140.dll import; and GCC's executables
+/// import none of GCC's own DLLs under either runtime, so they start
+/// outside cuno.
 ///
-/// Mutation: leave the console subsystem unstated, or link the dynamic C
-/// runtime for `runtime = "static"`; this test fails.
+/// Mutation: leave the console subsystem unstated, link the dynamic C
+/// runtime for `runtime = "static"`, or leave GCC's runtime or
+/// `winpthread` dynamic; this test fails.
 #[test]
 fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
     let (settings_build, profile) = settings();
@@ -465,8 +513,8 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
         let source = dir.path().join("main.cpp");
         std::fs::write(&source, win_main).unwrap();
         let object = dir.path().join("main.obj");
-        let run = |args: Vec<std::ffi::OsString>| {
-            Command::new(&program)
+        let run = |program: &Path, args: Vec<std::ffi::OsString>| {
+            Command::new(program)
                 .args(args)
                 .current_dir(dir.path())
                 .env_clear()
@@ -483,7 +531,7 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
             ..input
         };
         assert!(
-            run(compile_args(&compile, &source, Some(&object))),
+            run(&program, compile_args(&compile, &source, Some(&object))),
             "{kind:?}"
         );
         let link = LinkInput {
@@ -491,9 +539,19 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
             build: &lenient,
             profile: &profile,
             subsystem: Subsystem::Console,
+            cxx: true,
         };
-        let linked = run(link_args(&link, &[object], &dir.path().join("main.exe")));
-        assert!(!linked, "{kind:?} linked WinMain as a console program");
+        let exe = dir.path().join("main.exe");
+        let linked = run(
+            &kind.link_driver(&program, true),
+            link_args(&link, &[object], &exe),
+        );
+        match kind {
+            CompilerKind::Gcc => assert_eq!(pe_subsystem(&exe), 3, "a console program"),
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
+                assert!(!linked, "{kind:?} linked WinMain as a console program");
+            }
+        }
 
         for (runtime, imports) in [(Runtime::Dynamic, true), (Runtime::Static, false)] {
             let with_runtime = BuildSettings {
@@ -506,8 +564,21 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
             };
             let (_dir, exe) = build(kind, &program, &env, &input, Subsystem::Console, CXX);
             let bytes = std::fs::read(&exe).unwrap().to_ascii_lowercase();
-            let found = bytes.windows(16).any(|w| w == b"vcruntime140.dll");
-            assert_eq!(found, imports, "{kind:?} {runtime:?}");
+            let has = |name: &[u8]| bytes.windows(name.len()).any(|w| w == name);
+            match kind {
+                CompilerKind::Gcc => {
+                    for dll in [&b"libstdc++-6.dll"[..], b"libwinpthread-1.dll", b"libgcc_s"] {
+                        assert!(
+                            !has(dll),
+                            "{runtime:?} imports {}",
+                            String::from_utf8_lossy(dll)
+                        );
+                    }
+                }
+                CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
+                    assert_eq!(has(b"vcruntime140.dll"), imports, "{kind:?} {runtime:?}");
+                }
+            }
         }
     }
 }

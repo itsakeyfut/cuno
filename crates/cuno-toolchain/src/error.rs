@@ -227,6 +227,12 @@ impl fmt::Display for ToolchainError {
 
 impl std::error::Error for ToolchainError {}
 
+/// GCC's name, as the errors carry it.
+const GCC: &str = crate::compiler::CompilerKind::Gcc.name();
+
+/// How to install the GCC cuno uses: MSYS2's UCRT64 environment.
+const MSYS2_GCC: &str = "https://www.msys2.org/, then `pacman -S mingw-w64-ucrt-x86_64-gcc`";
+
 impl CunoError for ToolchainError {
     fn exit_class(&self) -> ExitClass {
         ExitClass::Setup
@@ -237,6 +243,13 @@ impl CunoError for ToolchainError {
             ToolchainError::UnknownCompiler { .. } | ToolchainError::UnsupportedCompiler { .. } => {
                 Some(format!("choose {}", crate::compiler::CompilerKind::names()))
             }
+            // GCC is MSYS2's UCRT64 one (`toolchain.md`, "MinGW (GCC)").
+            ToolchainError::CompilerNotFound { compiler } if *compiler == GCC => Some(format!(
+                "install MSYS2's UCRT64 GCC ({MSYS2_GCC}), or write where gcc is in [toolchain.paths] gcc"
+            )),
+            ToolchainError::NoUsableCompiler { compiler, .. } if *compiler == GCC => Some(format!(
+                "install MSYS2's UCRT64 GCC ({MSYS2_GCC}), or write where a usable gcc is in [toolchain.paths] gcc"
+            )),
             ToolchainError::CompilerNotFound { compiler } => Some(format!(
                 "install LLVM (https://github.com/llvm/llvm-project/releases), or write where {compiler} is in [toolchain.paths] {compiler}"
             )),
@@ -416,11 +429,11 @@ mod tests {
             ),
             (
                 ToolchainError::UnsupportedCompiler {
-                    name: "gcc".into(),
+                    name: "safec".into(),
                     source: "CUNO_COMPILER".into(),
                 },
-                "gcc is not supported yet (chosen by CUNO_COMPILER)",
-                "msvc, clang or clang-cl",
+                "safec is not supported yet (chosen by CUNO_COMPILER)",
+                "msvc, clang, clang-cl or gcc",
             ),
             (
                 ToolchainError::NoMatchingVersion {
@@ -469,7 +482,7 @@ mod tests {
                     source: "--compiler".into(),
                 },
                 "--compiler names `nope`, which is not a compiler cuno knows",
-                "msvc, clang or clang-cl",
+                "msvc, clang, clang-cl or gcc",
             ),
             (
                 ToolchainError::CompilerNotFound { compiler: "clang" },
@@ -483,6 +496,21 @@ mod tests {
                 },
                 "no usable clang was found; left out: a (x); b (y)",
                 "release of LLVM",
+            ),
+            (
+                ToolchainError::CompilerNotFound { compiler: "gcc" },
+                "no gcc was found",
+                "pacman -S mingw-w64-ucrt-x86_64-gcc`), or write where gcc is in [toolchain.paths] gcc",
+            ),
+            (
+                ToolchainError::NoUsableCompiler {
+                    compiler: "gcc",
+                    excluded: vec![
+                        "C:/mingw64/bin/gcc.exe (its C runtime is MSVCRT, not UCRT)".into(),
+                    ],
+                },
+                "left out: C:/mingw64/bin/gcc.exe (its C runtime is MSVCRT, not UCRT)",
+                "install MSYS2's UCRT64 GCC",
             ),
             (
                 ToolchainError::InvalidVersionRequirement {

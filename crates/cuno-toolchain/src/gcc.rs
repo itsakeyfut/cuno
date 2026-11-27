@@ -166,7 +166,7 @@ fn ask(path: &Path, args: &[&str], run: &dyn Runner, env: &Env) -> Option<String
 /// `env` with the directory holding `gcc` first on `PATH`: its compiler
 /// proper loads DLLs from there, and fails silently when it is not on
 /// `PATH` (`docs/en/specs/toolchain.md`, "MinGW (GCC)").
-fn env_for(gcc: &Path, env: &Env) -> Env {
+pub fn env_for(gcc: &Path, env: &Env) -> Env {
     let Some(dir) = gcc.parent() else {
         return env.clone();
     };

@@ -6,6 +6,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::gcc::{Gcc, Origin as GccOrigin, Probe as GccProbe};
 use crate::llvm::{LlvmTool, Origin, Probe, Tool};
 use crate::msvc::{MsvcToolset, VsInstallation};
 use cuno_core::paths;
@@ -193,6 +194,8 @@ pub struct Constraints {
     pub clang: Option<VersionReq>,
     /// `clang-cl`.
     pub clang_cl: Option<VersionReq>,
+    /// `gcc`.
+    pub gcc: Option<VersionReq>,
 }
 
 impl Constraints {
@@ -203,6 +206,7 @@ impl Constraints {
             CompilerKind::Msvc => &mut self.msvc,
             CompilerKind::Clang => &mut self.clang,
             CompilerKind::ClangCl => &mut self.clang_cl,
+            CompilerKind::Gcc => &mut self.gcc,
         }
     }
 
@@ -211,6 +215,7 @@ impl Constraints {
             CompilerKind::Msvc => self.msvc.as_ref(),
             CompilerKind::Clang => self.clang.as_ref(),
             CompilerKind::ClangCl => self.clang_cl.as_ref(),
+            CompilerKind::Gcc => self.gcc.as_ref(),
         }
     }
 }
@@ -222,6 +227,9 @@ pub struct Found<'a> {
     pub installs: &'a [VsInstallation],
     /// Every LLVM tool.
     pub llvm: &'a [LlvmTool],
+    /// Every GCC, searched only when GCC is wanted (`toolchain.md`, "MinGW
+    /// (GCC)"): empty otherwise.
+    pub gcc: &'a [Gcc],
     /// `[toolchain.paths] msvc`: the only installation to use, when written.
     pub explicit_msvc: Option<&'a Path>,
 }
@@ -341,6 +349,31 @@ pub fn copy_of(
                 }
             }
         }
+        CompilerKind::Gcc => {
+            // As for LLVM, a configured copy is the only one used.
+            if let Some(g) = found.gcc.iter().find(|g| g.origin == GccOrigin::Configured) {
+                let why = match gcc_release(g) {
+                    Ok(version) if acceptable(&version) => {
+                        return Ok((g.path.clone(), version, None));
+                    }
+                    Ok(version) => {
+                        format!("{version} does not satisfy {}", requirements.join(" and "))
+                    }
+                    Err(why) => why,
+                };
+                return Err(ToolchainError::ConfiguredToolUnusable {
+                    setting: "[toolchain.paths] gcc".to_owned(),
+                    path: g.path.clone(),
+                    why,
+                });
+            }
+            for g in found.gcc {
+                match gcc_release(g) {
+                    Ok(version) => candidates.push((g.path.clone(), version, None)),
+                    Err(why) => excluded.push(format!("{} ({why})", g.path.display())),
+                }
+            }
+        }
     }
     if candidates.is_empty() {
         return Err(if excluded.is_empty() {
@@ -441,6 +474,38 @@ fn release_for(tool: &LlvmTool, host: HostOs) -> Result<Version, String> {
     }
     Ok(version)
 }
+
+/// The version of a GCC that ran, is a release, targets
+/// `x86_64-w64-mingw32` and links UCRT, or why it is not eligible
+/// (`toolchain.md`, "MinGW (GCC)").
+fn gcc_release(gcc: &Gcc) -> Result<Version, String> {
+    match &gcc.probe {
+        GccProbe::Failed => Err("it did not run".to_owned()),
+        GccProbe::NoVersion => Err("it printed no version".to_owned()),
+        GccProbe::Ran {
+            version,
+            prerelease,
+            target,
+            ucrt,
+        } => {
+            if *prerelease {
+                return Err(format!("{version} is a preview"));
+            }
+            match target.as_deref() {
+                Some(GCC_TARGET) => {}
+                Some(t) => return Err(format!("it targets {t}, not {GCC_TARGET}")),
+                None => return Err("it reports no target".to_owned()),
+            }
+            if !ucrt {
+                return Err("its C runtime is MSVCRT, not UCRT".to_owned());
+            }
+            Ok(*version)
+        }
+    }
+}
+
+/// The one target cuno builds for with GCC.
+const GCC_TARGET: &str = "x86_64-w64-mingw32";
 
 /// A clang-format or clang-tidy to use.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -583,6 +648,7 @@ mod tests {
         Found {
             installs,
             llvm,
+            gcc: &[],
             explicit_msvc: None,
         }
     }
@@ -689,7 +755,7 @@ mod tests {
             assert_eq!(source.to_string(), text);
         }
         for (choices, text) in [
-            (asking("gcc"), "--compiler"),
+            (asking("safec"), "--compiler"),
             (
                 Choices {
                     env: Some("safec".into()),
@@ -951,6 +1017,7 @@ mod tests {
                 Found {
                     installs: &installs,
                     llvm: &[],
+                    gcc: &[],
                     explicit_msvc: Some(dir),
                 },
                 &Constraints::default(),
@@ -1334,6 +1401,169 @@ mod tests {
             err.to_string(),
             "no usable clang-format was found; left out: preview (23.0.0 is a preview); \
              silent (it printed no version); broken (it did not run)"
+        );
+    }
+
+    fn gcc(path: &str, probe: GccProbe, origin: GccOrigin) -> Gcc {
+        Gcc {
+            path: path.into(),
+            probe,
+            origin,
+        }
+    }
+
+    fn gcc_ran(version: Version, target: &str, ucrt: bool) -> GccProbe {
+        GccProbe::Ran {
+            version,
+            prerelease: false,
+            target: Some(target.to_owned()),
+            ucrt,
+        }
+    }
+
+    fn with_gcc(gcc: &[Gcc]) -> Found<'_> {
+        Found {
+            installs: &[],
+            llvm: &[],
+            gcc,
+            explicit_msvc: None,
+        }
+    }
+
+    const MINGW: &str = "x86_64-w64-mingw32";
+
+    /// GCC needs no Visual Studio. Of the copies found, the newest that
+    /// ran, is a release, targets `x86_64-w64-mingw32`, links UCRT and
+    /// meets cuno's minimum and `[toolchain.version] gcc` is chosen; each
+    /// other copy is left out with why, the reasons in the error when none
+    /// is left.
+    ///
+    /// Mutation: take a preview, an MSVCRT, i686 or Linux GCC, one older
+    /// than 10, the oldest, ignore `[toolchain.version] gcc`, or require
+    /// Visual Studio; this test fails.
+    #[test]
+    fn the_newest_usable_ucrt_gcc_is_chosen() {
+        let mut preview = gcc_ran(v(17, 0, 0), MINGW, true);
+        if let GccProbe::Ran { prerelease, .. } = &mut preview {
+            *prerelease = true;
+        }
+        let copies = [
+            gcc("old", gcc_ran(v(9, 5, 0), MINGW, true), GccOrigin::Path),
+            gcc("ucrt13", gcc_ran(v(13, 2, 0), MINGW, true), GccOrigin::Path),
+            gcc(
+                "ucrt14",
+                gcc_ran(v(14, 2, 0), MINGW, true),
+                GccOrigin::Msys2,
+            ),
+            gcc(
+                "msvcrt",
+                gcc_ran(v(16, 0, 0), MINGW, false),
+                GccOrigin::Msys2,
+            ),
+            gcc(
+                "i686",
+                gcc_ran(v(16, 0, 0), "i686-w64-mingw32", true),
+                GccOrigin::Path,
+            ),
+            gcc(
+                "linux",
+                gcc_ran(v(16, 0, 0), "x86_64-linux-gnu", true),
+                GccOrigin::Path,
+            ),
+            gcc("preview", preview, GccOrigin::Path),
+            gcc("broken", GccProbe::Failed, GccOrigin::Path),
+        ];
+        let selected = pick(&asking("gcc"), with_gcc(&copies), &Constraints::default()).unwrap();
+        assert_eq!(
+            (
+                selected.kind,
+                selected.executable,
+                selected.version,
+                selected.msvc
+            ),
+            (
+                CompilerKind::Gcc,
+                PathBuf::from("ucrt14"),
+                v(14, 2, 0),
+                None
+            )
+        );
+        let pinned = Constraints {
+            gcc: Some(VersionReq::parse("gcc", "<14").unwrap()),
+            ..Constraints::default()
+        };
+        let selected = pick(&asking("gcc"), with_gcc(&copies), &pinned).unwrap();
+        assert_eq!(selected.executable, PathBuf::from("ucrt13"));
+
+        let err = pick(
+            &asking("gcc"),
+            with_gcc(&copies[3..]),
+            &Constraints::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "no usable gcc was found; left out: msvcrt (its C runtime is MSVCRT, not UCRT); \
+             i686 (it targets i686-w64-mingw32, not x86_64-w64-mingw32); \
+             linux (it targets x86_64-linux-gnu, not x86_64-w64-mingw32); \
+             preview (17.0.0 is a preview); broken (it did not run)"
+        );
+        assert!(matches!(
+            pick(&asking("gcc"), with_gcc(&[]), &Constraints::default()),
+            Err(ToolchainError::CompilerNotFound { compiler: "gcc" })
+        ));
+    }
+
+    /// The GCC written in `[toolchain.paths] gcc` is the only one used: a
+    /// newer one found elsewhere is not taken, and one that cannot be used
+    /// is an error naming the setting, never a reason to take another.
+    ///
+    /// Mutation: pick the newest copy over the configured one, or fall back
+    /// to another when it is unusable; this test fails.
+    #[test]
+    fn a_configured_gcc_is_the_only_one_used() {
+        let newer = gcc("newer", gcc_ran(v(15, 1, 0), MINGW, true), GccOrigin::Msys2);
+        let configured = gcc(
+            "mine",
+            gcc_ran(v(13, 2, 0), MINGW, true),
+            GccOrigin::Configured,
+        );
+        let copies = [configured, newer.clone()];
+        let selected = pick(&asking("gcc"), with_gcc(&copies), &Constraints::default()).unwrap();
+        assert_eq!(selected.executable, PathBuf::from("mine"));
+
+        let msvcrt = gcc(
+            "mine",
+            gcc_ran(v(13, 2, 0), MINGW, false),
+            GccOrigin::Configured,
+        );
+        let err = pick(
+            &asking("gcc"),
+            with_gcc(&[msvcrt, newer.clone()]),
+            &Constraints::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::ConfiguredToolUnusable { setting, why, .. }
+                if setting == "[toolchain.paths] gcc" && why == "its C runtime is MSVCRT, not UCRT"),
+            "{err:?}"
+        );
+        let pinned = Constraints {
+            gcc: Some(VersionReq::parse("gcc", ">=14").unwrap()),
+            ..Constraints::default()
+        };
+        let copies = [
+            gcc(
+                "mine",
+                gcc_ran(v(13, 2, 0), MINGW, true),
+                GccOrigin::Configured,
+            ),
+            newer,
+        ];
+        let err = pick(&asking("gcc"), with_gcc(&copies), &pinned).unwrap_err();
+        assert!(
+            matches!(&err, ToolchainError::ConfiguredToolUnusable { why, .. } if why.contains("13.2.0 does not satisfy")),
+            "{err:?}"
         );
     }
 }

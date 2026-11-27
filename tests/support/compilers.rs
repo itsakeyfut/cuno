@@ -13,6 +13,10 @@
 //!   otherwise `PATH`. They run without the MSVC environment: on Windows clang
 //!   finds the MSVC libraries and the Windows SDK itself. clang-cl is Windows
 //!   only.
+//! - **gcc / g++** (MinGW-w64): the directory in `CUNO_TEST_GCC_BIN` if set,
+//!   otherwise MSYS2's UCRT64 (`C:\msys64\ucrt64\bin`) on Windows and `PATH`
+//!   elsewhere. They run with that directory first on `PATH`, where their
+//!   compiler proper finds its DLLs.
 //!
 //! # When a compiler is missing
 //!
@@ -20,7 +24,9 @@
 //! install it or point the tests at it. Outside CI, setting
 //! `CUNO_TEST_ALLOW_MISSING=1` turns that into a skip, reported on stderr in a
 //! normal `cargo test` run. On CI (`CI=true`) a missing compiler always fails,
-//! whatever else is set. See [`require`] and [`on_missing`].
+//! whatever else is set, except GCC, which CI does not install yet: there a
+//! missing GCC is a skip, reported on stderr, until CI runs the suites with
+//! GCC (#322). See [`require`] and [`on_missing`].
 //!
 //! The `CUNO_TEST_*` variables are read by the test process only; like every
 //! `CUNO_*` variable, they are removed from the programs a test runs.
@@ -40,6 +46,8 @@ pub enum Compiler {
     Clang,
     /// The MSVC-style `clang-cl` driver.
     ClangCl,
+    /// MinGW-w64's `gcc` / `g++`.
+    Gcc,
 }
 
 /// The source language of a program to compile.
@@ -76,6 +84,7 @@ impl Compiler {
             Compiler::Msvc => "MSVC (cl.exe)",
             Compiler::Clang => "clang",
             Compiler::ClangCl => "clang-cl",
+            Compiler::Gcc => "gcc",
         }
     }
 
@@ -94,7 +103,7 @@ impl Compiler {
                 }
                 cmd.arg(source).arg(format!("/Fe:{exe}"));
             }
-            Compiler::Clang => {
+            Compiler::Clang | Compiler::Gcc => {
                 cmd.arg(source).arg("-o").arg(exe);
             }
         }
@@ -114,6 +123,10 @@ impl Compiler {
                 },
             )?),
             Compiler::ClangCl => Command::new(llvm_tool(self, "clang-cl")?),
+            Compiler::Gcc => gcc_command(match language {
+                Language::C => "gcc",
+                Language::Cxx => "g++",
+            })?,
         })
     }
 }
@@ -155,7 +168,10 @@ pub fn require_llvm_tool(name: &str) -> Option<PathBuf> {
 #[track_caller]
 fn skip_or_fail<T>(missing: &Missing) -> Option<T> {
     let ci = std::env::var_os("CI").is_some_and(|v| v == "true");
-    let allow = std::env::var_os("CUNO_TEST_ALLOW_MISSING").is_some_and(|v| v == "1");
+    let allow = std::env::var_os("CUNO_TEST_ALLOW_MISSING").is_some_and(|v| v == "1")
+        // CI installs no GCC yet (#322).
+        || (ci && missing.compiler == Compiler::Gcc.name());
+    let ci = ci && missing.compiler != Compiler::Gcc.name();
     match on_missing(missing, ci, allow) {
         Outcome::Fail(message) => panic!("{message}"),
         Outcome::Skip(message) => {
@@ -213,6 +229,44 @@ fn llvm_tool(compiler: Compiler, name: &str) -> Result<PathBuf, Missing> {
         compiler: compiler.name(),
         detail: format!("{file} is not on PATH"),
     })
+}
+
+/// The directory the tests take GCC from: `CUNO_TEST_GCC_BIN`, else
+/// MSYS2's UCRT64 on Windows, else the first on `PATH` holding `gcc`.
+pub fn gcc_dir() -> Result<PathBuf, Missing> {
+    let missing = |detail: String| Missing {
+        compiler: Compiler::Gcc.name(),
+        detail,
+    };
+    let gcc = executable("gcc");
+    let dir = match std::env::var_os("CUNO_TEST_GCC_BIN") {
+        Some(dir) => PathBuf::from(dir),
+        None if cfg!(windows) => PathBuf::from(r"C:\msys64\ucrt64\bin"),
+        None => find_in(std::env::var_os("PATH").unwrap_or_default(), &gcc)
+            .and_then(|p| p.parent().map(Path::to_owned))
+            .ok_or_else(|| missing(format!("{gcc} is not on PATH")))?,
+    };
+    if dir.join(&gcc).is_file() {
+        Ok(dir)
+    } else {
+        Err(missing(format!(
+            "{} does not exist",
+            dir.join(&gcc).display()
+        )))
+    }
+}
+
+/// `name` (`gcc`, `g++`) from [`gcc_dir`], with that directory first on
+/// `PATH`.
+fn gcc_command(name: &str) -> Result<Command, Missing> {
+    let dir = gcc_dir()?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path =
+        std::env::join_paths(std::iter::once(dir.clone()).chain(std::env::split_paths(&path)))
+            .expect("a directory found on disk joins a PATH");
+    let mut cmd = Command::new(dir.join(executable(name)));
+    cmd.env("PATH", path);
+    Ok(cmd)
 }
 
 /// `name` with the platform's executable suffix.

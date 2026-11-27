@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use cuno_core::Env;
 
+use crate::compiler::CompilerKind;
 use crate::llvm::{ExplicitPaths, LlvmTool, find_llvm_tools};
 use crate::msvc::{self, Registry, VsInstallation, WindowsSdk};
 use crate::select::Selected;
@@ -93,8 +94,10 @@ impl Prepared {
 }
 
 /// Resolves the environment for `selected`: with an MSVC toolset (every
-/// compiler on Windows), the Windows SDK is found and both are applied to
-/// `env` (`docs/en/specs/toolchain.md`, "Environment resolution on Windows").
+/// compiler on Windows but GCC), the Windows SDK is found and both are
+/// applied to `env` (`docs/en/specs/toolchain.md`, "Environment resolution
+/// on Windows"); GCC gets its own directory first on `PATH`, which its
+/// compiler proper loads DLLs from (`toolchain.md`, "MinGW (GCC)").
 pub fn prepare(
     selected: &Selected,
     env: &Env,
@@ -106,8 +109,12 @@ pub fn prepare(
         .collect();
     let clean = env.without(&TOOL_OPTION_VARIABLES);
     let Some(toolset) = &selected.msvc else {
+        let env = match selected.kind {
+            CompilerKind::Gcc => crate::gcc::env_for(&selected.executable, &clean),
+            CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => clean,
+        };
         return Ok(Prepared {
-            env: clean,
+            env,
             sdk: None,
             ignored,
         });
@@ -124,8 +131,8 @@ pub fn prepare(
 mod tests {
     use super::*;
     use crate::Version;
-    use crate::compiler::CompilerKind;
     use crate::msvc::MsvcToolset;
+
     use crate::select::Source;
     use cuno_core::NameCase;
     use std::ffi::{OsStr, OsString};
@@ -291,6 +298,43 @@ mod tests {
             prepare(&selected(Some(toolset)), &env(), &Kits(nowhere)),
             Err(ToolchainError::NoWindowsSdk { .. })
         ));
+    }
+
+    /// GCC runs with its own directory first on `PATH` and the rest kept,
+    /// and with no MSVC environment; no other compiler's `PATH` changes.
+    ///
+    /// Mutation: give GCC the environment unchanged, or put its directory
+    /// on another compiler's `PATH`; this test fails.
+    #[test]
+    fn gcc_finds_its_own_dlls() {
+        let path = |dirs: &[&str]| std::env::join_paths(dirs).unwrap();
+        let env = Env::from_pairs(
+            [("PATH".into(), path(&["C:/Windows"]))],
+            NameCase::Insensitive,
+        );
+        let gcc = Selected {
+            kind: CompilerKind::Gcc,
+            executable: "C:/msys64/ucrt64/bin/gcc.exe".into(),
+            ..selected(None)
+        };
+        let prepared = prepare(&gcc, &env, &Kits("C:/nowhere".into())).unwrap();
+        assert_eq!(
+            prepared.env.get("PATH"),
+            Some(path(&["C:/msys64/ucrt64/bin", "C:/Windows"]).as_os_str())
+        );
+        assert!(prepared.sdk.is_none());
+        for kind in [
+            CompilerKind::Msvc,
+            CompilerKind::Clang,
+            CompilerKind::ClangCl,
+        ] {
+            let other = Selected {
+                kind,
+                ..gcc.clone()
+            };
+            let prepared = prepare(&other, &env, &Kits("C:/nowhere".into())).unwrap();
+            assert_eq!(prepared.env.get("PATH"), env.get("PATH"), "{kind:?}");
+        }
     }
 
     /// Off Windows nothing looks for Visual Studio.

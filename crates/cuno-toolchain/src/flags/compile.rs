@@ -70,7 +70,8 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     }
     match input.kind.family() {
         Family::Llvm => out.push(&[TARGET_SWITCH]),
-        Family::Msvc => {}
+        // cl targets what it is; MinGW's GCC targets only MinGW-w64.
+        Family::Msvc | Family::Gnu => {}
     }
     if msvc_style && cxx {
         out.push(&["/Zc:__cplusplus"]);
@@ -80,39 +81,43 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
 
     out.push(match (build.warnings, input.kind) {
         (Warnings::Default, _) => &[][..],
-        (Warnings::All, CompilerKind::Clang) => &["-Wall", "-Wextra"],
+        (Warnings::All, CompilerKind::Clang | CompilerKind::Gcc) => &["-Wall", "-Wextra"],
         (Warnings::All, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/W4"],
         (Warnings::Pedantic, CompilerKind::Msvc) => &["/W4", "/permissive-"],
         (Warnings::Pedantic, CompilerKind::ClangCl) => &["/W4", "-Wpedantic"],
-        (Warnings::Pedantic, CompilerKind::Clang) => &["-Wall", "-Wextra", "-Wpedantic"],
+        (Warnings::Pedantic, CompilerKind::Clang | CompilerKind::Gcc) => {
+            &["-Wall", "-Wextra", "-Wpedantic"]
+        }
     });
     if build.warnings_as_errors {
         out.push(&[if msvc_style { "/WX" } else { "-Werror" }]);
     }
 
-    out.push(&[match (build.runtime, input.kind) {
-        (Runtime::Dynamic, CompilerKind::Msvc | CompilerKind::ClangCl) => "/MD",
-        (Runtime::Static, CompilerKind::Msvc | CompilerKind::ClangCl) => "/MT",
-        (Runtime::Dynamic, CompilerKind::Clang) => "-fms-runtime-lib=dll",
-        (Runtime::Static, CompilerKind::Clang) => "-fms-runtime-lib=static",
-    }]);
+    // GCC's runtime is chosen when linking (`link::runtime_args`).
+    out.push(match (build.runtime, input.kind) {
+        (Runtime::Dynamic, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/MD"][..],
+        (Runtime::Static, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/MT"],
+        (Runtime::Dynamic, CompilerKind::Clang) => &["-fms-runtime-lib=dll"],
+        (Runtime::Static, CompilerKind::Clang) => &["-fms-runtime-lib=static"],
+        (Runtime::Dynamic | Runtime::Static, CompilerKind::Gcc) => &[],
+    });
 
     if cxx {
         // With exceptions or RTTI off, cl and clang-cl only warn about
         // `try` / `throw` and `typeid` / `dynamic_cast`; these make it an
         // error, as clang does (build.md, "Settings and flags").
         out.push(match (build.exceptions, input.kind) {
-            (true, CompilerKind::Clang) => &[][..],
+            (true, CompilerKind::Clang | CompilerKind::Gcc) => &[][..],
             (true, CompilerKind::Msvc | CompilerKind::ClangCl) => &["/EHsc"],
             (false, CompilerKind::Msvc) => &["/we4530"],
             (false, CompilerKind::ClangCl) => &[],
-            (false, CompilerKind::Clang) => &["-fno-exceptions"],
+            (false, CompilerKind::Clang | CompilerKind::Gcc) => &["-fno-exceptions"],
         });
         if !build.rtti {
             out.push(match input.kind {
                 CompilerKind::Msvc => &["/GR-", "/we4541"][..],
                 CompilerKind::ClangCl => &["/GR-", "-Werror=rtti"],
-                CompilerKind::Clang => &["-fno-rtti"],
+                CompilerKind::Clang | CompilerKind::Gcc => &["-fno-rtti"],
             });
         }
     }
@@ -133,7 +138,7 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     if profile.lto {
         out.push(&[match input.kind.family() {
             Family::Msvc => "/GL",
-            Family::Llvm => "-flto",
+            Family::Llvm | Family::Gnu => "-flto",
         }]);
     }
 
@@ -145,7 +150,9 @@ pub fn compile_flags(input: &CompileInput<'_>) -> Vec<OsString> {
     if input.test {
         defines.push("CUNO_TEST");
     }
-    if cxx && !build.exceptions {
+    // The MSVC standard library's switch; libstdc++ needs only
+    // `-fno-exceptions` (build.md, "Settings and flags").
+    if cxx && !build.exceptions && input.kind.uses_msvc_stl() {
         defines.push("_HAS_EXCEPTIONS=0");
     }
     for d in defines {
@@ -209,14 +216,16 @@ pub fn compile_args(
 /// The arguments that make `kind` color its diagnostics when cuno colors
 /// (`color`), placed first so a user's `-fno-color-diagnostics` in `flags`
 /// comes later and wins: through a pipe Clang colors only when asked, and
-/// on Windows writes color as escape codes only with the second flag. cl
-/// has no such switch, and nothing is given when cuno does not color
-/// (`docs/en/specs/build.md`, "Always-on flags").
+/// on Windows writes color as escape codes only with the second flag. GCC
+/// also colors a pipe only when asked, and writes escape codes. cl has no
+/// such switch, and nothing is given when cuno does not color
+/// (`docs/en/specs/commands.md`, "Format").
 pub fn color_args(kind: CompilerKind, color: bool) -> Vec<OsString> {
     match (color, kind.family()) {
         (true, Family::Llvm) => ["-fcolor-diagnostics", "-fansi-escape-codes"]
             .map(OsString::from)
             .to_vec(),
+        (true, Family::Gnu) => vec!["-fdiagnostics-color=always".into()],
         (false, _) | (true, Family::Msvc) => Vec::new(),
     }
 }
@@ -243,12 +252,12 @@ pub fn dependency_args(kind: CompilerKind, file: &Path) -> Vec<OsString> {
 /// through `/clang:`. C23 is `c2x`, which Clang 17 also accepts.
 pub(super) fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
     match (kind, edition) {
-        (CompilerKind::Clang, Edition::Cxx17) => "-std=c++17",
-        (CompilerKind::Clang, Edition::Cxx20) => "-std=c++20",
-        (CompilerKind::Clang, Edition::Cxx23) => "-std=c++23",
-        (CompilerKind::Clang, Edition::C11) => "-std=c11",
-        (CompilerKind::Clang, Edition::C17) => "-std=c17",
-        (CompilerKind::Clang, Edition::C23) => "-std=c2x",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::Cxx17) => "-std=c++17",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::Cxx20) => "-std=c++20",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::Cxx23) => "-std=c++23",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::C11) => "-std=c11",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::C17) => "-std=c17",
+        (CompilerKind::Clang | CompilerKind::Gcc, Edition::C23) => "-std=c2x",
         (CompilerKind::ClangCl, Edition::Cxx23) => "/clang:-std=c++23",
         (CompilerKind::ClangCl, Edition::C23) => "/clang:-std=c2x",
         (CompilerKind::Msvc, Edition::Cxx23) => "/std:c++23",
@@ -265,7 +274,8 @@ pub(super) fn standard(kind: CompilerKind, edition: Edition) -> &'static str {
 /// decided from its version (`docs/en/specs/toolchain.md`, "Language
 /// standards"): `/std:c++23` from cl 19.52, the oldest checked, and
 /// `/std:clatest` from 19.37 (Visual Studio 2022 17.7). Every Clang cuno
-/// supports accepts every edition.
+/// supports accepts every edition; GCC accepts `-std=c++23` from 11, and
+/// refuses it before, which this says in cuno's words.
 pub fn check_edition(
     kind: CompilerKind,
     version: Version,
@@ -286,9 +296,18 @@ pub fn check_edition(
             },
             _ => return Ok(()),
         },
+        CompilerKind::Gcc => match edition {
+            Edition::Cxx23 => Version {
+                major: 11,
+                minor: 0,
+                patch: 0,
+            },
+            _ => return Ok(()),
+        },
         // Every supported Clang accepts every edition (as `c2x` for C23).
         CompilerKind::Clang | CompilerKind::ClangCl => return Ok(()),
     };
+
     if version >= needed {
         return Ok(());
     }
@@ -314,9 +333,9 @@ mod tests {
     use super::*;
 
     /// Clang is asked to color, and to write color as escape codes, only
-    /// when cuno colors; cl is given nothing either way.
+    /// when cuno colors, and GCC to color; cl is given nothing either way.
     ///
-    /// Mutation: give MSVC the flags, give clang or clang-cl none when
+    /// Mutation: give MSVC the flags, give clang, clang-cl or GCC none when
     /// coloring, or some when not, or drop or reorder one; this test fails.
     #[test]
     fn color_args_follow_the_family() {
@@ -325,14 +344,20 @@ mod tests {
             assert_eq!(strings(color_args(kind, true)), flags, "{kind:?}");
             assert!(color_args(kind, false).is_empty(), "{kind:?}");
         }
+        assert_eq!(
+            strings(color_args(CompilerKind::Gcc, true)),
+            ["-fdiagnostics-color=always"]
+        );
+        assert!(color_args(CompilerKind::Gcc, false).is_empty());
         assert!(color_args(CompilerKind::Msvc, true).is_empty());
         assert!(color_args(CompilerKind::Msvc, false).is_empty());
     }
 
-    const DRIVERS: [CompilerKind; 3] = [
+    const DRIVERS: [CompilerKind; 4] = [
         CompilerKind::Msvc,
         CompilerKind::ClangCl,
         CompilerKind::Clang,
+        CompilerKind::Gcc,
     ];
 
     fn build() -> BuildSettings {
@@ -406,7 +431,7 @@ mod tests {
     #[test]
     fn the_defaults_give_the_always_on_flags() {
         let case = Case::new();
-        let expected: [&[&str]; 3] = [
+        let expected: [&[&str]; 4] = [
             &[
                 "/nologo",
                 "/utf-8",
@@ -432,6 +457,7 @@ mod tests {
                 "-fms-runtime-lib=dll",
                 "-O0",
             ],
+            &["-std=c++20", "-O0"],
         ];
         for (kind, expected) in DRIVERS.into_iter().zip(expected) {
             assert_eq!(case.flags(kind), expected, "{kind:?}");
@@ -440,7 +466,7 @@ mod tests {
 
     /// `flags` with `removed` gone and `added` present, compared with the
     /// defaults: what one row of the table changes.
-    fn assert_row(name: &str, change: impl Fn(&mut Case), rows: [(&[&str], &[&str]); 3]) {
+    fn assert_row(name: &str, change: impl Fn(&mut Case), rows: [(&[&str], &[&str]); 4]) {
         assert_row_for(Case::new, name, change, rows);
     }
 
@@ -456,7 +482,7 @@ mod tests {
         start: fn() -> Case,
         name: &str,
         change: impl Fn(&mut Case),
-        rows: [(&[&str], &[&str]); 3],
+        rows: [(&[&str], &[&str]); 4],
     ) {
         let base = start();
         let mut case = start();
@@ -492,7 +518,7 @@ mod tests {
         type Row = (
             &'static str,
             fn(&mut Case),
-            [(&'static [&'static str], &'static [&'static str]); 3],
+            [(&'static [&'static str], &'static [&'static str]); 4],
         );
         let rows: Vec<Row> = vec![
             (
@@ -501,6 +527,7 @@ mod tests {
                 [
                     (&["/std:c++20"], &["/std:c++17"]),
                     (&["/std:c++20"], &["/std:c++17"]),
+                    (&["-std=c++20"], &["-std=c++17"]),
                     (&["-std=c++20"], &["-std=c++17"]),
                 ],
             ),
@@ -511,6 +538,7 @@ mod tests {
                     (&["/std:c++20"], &["/std:c++23"]),
                     (&["/std:c++20"], &["/clang:-std=c++23"]),
                     (&["-std=c++20"], &["-std=c++23"]),
+                    (&["-std=c++20"], &["-std=c++23"]),
                 ],
             ),
             (
@@ -519,6 +547,7 @@ mod tests {
                 [
                     (&[], &["/W4"]),
                     (&[], &["/W4"]),
+                    (&[], &["-Wall", "-Wextra"]),
                     (&[], &["-Wall", "-Wextra"]),
                 ],
             ),
@@ -529,17 +558,28 @@ mod tests {
                     (&[], &["/W4", "/permissive-"]),
                     (&[], &["/W4", "-Wpedantic"]),
                     (&[], &["-Wall", "-Wextra", "-Wpedantic"]),
+                    (&[], &["-Wall", "-Wextra", "-Wpedantic"]),
                 ],
             ),
             (
                 "warnings-as-errors",
                 |c| c.build.warnings_as_errors = true,
-                [(&[], &["/WX"]), (&[], &["/WX"]), (&[], &["-Werror"])],
+                [
+                    (&[], &["/WX"]),
+                    (&[], &["/WX"]),
+                    (&[], &["-Werror"]),
+                    (&[], &["-Werror"]),
+                ],
             ),
             (
                 "defines",
                 |c| c.build.defines = vec!["A=1".into()],
-                [(&[], &["/DA=1"]), (&[], &["/DA=1"]), (&[], &["-DA=1"])],
+                [
+                    (&[], &["/DA=1"]),
+                    (&[], &["/DA=1"]),
+                    (&[], &["-DA=1"]),
+                    (&[], &["-DA=1"]),
+                ],
             ),
             (
                 "test",
@@ -547,6 +587,7 @@ mod tests {
                 [
                     (&[], &["/DCUNO_TEST"]),
                     (&[], &["/DCUNO_TEST"]),
+                    (&[], &["-DCUNO_TEST"]),
                     (&[], &["-DCUNO_TEST"]),
                 ],
             ),
@@ -560,6 +601,7 @@ mod tests {
                     (&[], &["/Isrc", "/Iinc"]),
                     (&[], &["/Isrc", "/Iinc"]),
                     (&[], &["-Isrc", "-Iinc"]),
+                    (&[], &["-Isrc", "-Iinc"]),
                 ],
             ),
             (
@@ -569,6 +611,8 @@ mod tests {
                     (&["/MD"], &["/MT"]),
                     (&["/MD"], &["/MT"]),
                     (&["-fms-runtime-lib=dll"], &["-fms-runtime-lib=static"]),
+                    // GCC's runtime is chosen when linking.
+                    (&[], &[]),
                 ],
             ),
             (
@@ -578,6 +622,8 @@ mod tests {
                     (&["/EHsc"], &["/we4530", "/D_HAS_EXCEPTIONS=0"]),
                     (&["/EHsc"], &["/D_HAS_EXCEPTIONS=0"]),
                     (&[], &["-fno-exceptions", "-D_HAS_EXCEPTIONS=0"]),
+                    // libstdc++ needs no `_HAS_EXCEPTIONS`.
+                    (&[], &["-fno-exceptions"]),
                 ],
             ),
             (
@@ -586,6 +632,7 @@ mod tests {
                 [
                     (&[], &["/GR-", "/we4541"]),
                     (&[], &["/GR-", "-Werror=rtti"]),
+                    (&[], &["-fno-rtti"]),
                     (&[], &["-fno-rtti"]),
                 ],
             ),
@@ -596,6 +643,7 @@ mod tests {
                     (&["/Od"], &["/O2"]),
                     (&["/Od"], &["/O2"]),
                     (&["-O0"], &["-O1"]),
+                    (&["-O0"], &["-O1"]),
                 ],
             ),
             (
@@ -604,6 +652,7 @@ mod tests {
                 [
                     (&["/Od"], &["/O2"]),
                     (&["/Od"], &["/O2"]),
+                    (&["-O0"], &["-O2"]),
                     (&["-O0"], &["-O2"]),
                 ],
             ),
@@ -614,6 +663,7 @@ mod tests {
                     (&["/Od"], &["/O2"]),
                     (&["/Od"], &["/O2"]),
                     (&["-O0"], &["-O3"]),
+                    (&["-O0"], &["-O3"]),
                 ],
             ),
             (
@@ -623,12 +673,18 @@ mod tests {
                     (&["/Od"], &["/O1"]),
                     (&["/Od"], &["/O1"]),
                     (&["-O0"], &["-Os"]),
+                    (&["-O0"], &["-Os"]),
                 ],
             ),
             (
                 "debug-info",
                 |c| c.profile.debug_info = true,
-                [(&[], &["/Z7"]), (&[], &["/Z7"]), (&[], &["-g"])],
+                [
+                    (&[], &["/Z7"]),
+                    (&[], &["/Z7"]),
+                    (&[], &["-g"]),
+                    (&[], &["-g"]),
+                ],
             ),
             (
                 "debug-assertions false",
@@ -637,17 +693,28 @@ mod tests {
                     (&[], &["/DNDEBUG"]),
                     (&[], &["/DNDEBUG"]),
                     (&[], &["-DNDEBUG"]),
+                    (&[], &["-DNDEBUG"]),
                 ],
             ),
             (
                 "lto",
                 |c| c.profile.lto = true,
-                [(&[], &["/GL"]), (&[], &["-flto"]), (&[], &["-flto"])],
+                [
+                    (&[], &["/GL"]),
+                    (&[], &["-flto"]),
+                    (&[], &["-flto"]),
+                    (&[], &["-flto"]),
+                ],
             ),
             (
                 "raw flags",
                 |c| c.build.flags = vec!["/raw".into()],
-                [(&[], &["/raw"]), (&[], &["/raw"]), (&[], &["/raw"])],
+                [
+                    (&[], &["/raw"]),
+                    (&[], &["/raw"]),
+                    (&[], &["/raw"]),
+                    (&[], &["/raw"]),
+                ],
             ),
         ];
         for (name, change, row) in rows {
@@ -672,7 +739,7 @@ mod tests {
             for kind in DRIVERS {
                 let flags = case.flags(kind);
                 let expected = match (kind, edition) {
-                    (CompilerKind::Clang, _) => clang,
+                    (CompilerKind::Clang | CompilerKind::Gcc, _) => clang,
                     (CompilerKind::ClangCl, Edition::C23) => "/clang:-std=c2x",
                     _ => msvc,
                 };
@@ -805,10 +872,10 @@ mod tests {
         type Row = (
             &'static str,
             fn(&mut Case),
-            [(&'static [&'static str], &'static [&'static str]); 3],
+            [(&'static [&'static str], &'static [&'static str]); 4],
         );
         let same = |a: &'static [&'static str], c: &'static [&'static str]| {
-            [(&[][..], a), (&[][..], a), (&[][..], c)]
+            [(&[][..], a), (&[][..], a), (&[][..], c), (&[][..], c)]
         };
         let rows: Vec<Row> = vec![
             (
@@ -858,6 +925,7 @@ mod tests {
                     (&["/MD"], &["/MT"]),
                     (&["/MD"], &["/MT"]),
                     (&["-fms-runtime-lib=dll"], &["-fms-runtime-lib=static"]),
+                    (&[], &[]),
                 ],
             ),
             (
@@ -867,22 +935,28 @@ mod tests {
                     (&["/Od"], &["/O1"]),
                     (&["/Od"], &["/O1"]),
                     (&["-O0"], &["-Os"]),
+                    (&["-O0"], &["-Os"]),
                 ],
             ),
             (
                 "lto",
                 |c| c.profile.lto = true,
-                [(&[], &["/GL"]), (&[], &["-flto"]), (&[], &["-flto"])],
+                [
+                    (&[], &["/GL"]),
+                    (&[], &["-flto"]),
+                    (&[], &["-flto"]),
+                    (&[], &["-flto"]),
+                ],
             ),
             (
                 "exceptions false",
                 |c| c.build.exceptions = false,
-                [(&[], &[]), (&[], &[]), (&[], &[])],
+                [(&[], &[]), (&[], &[]), (&[], &[]), (&[], &[])],
             ),
             (
                 "rtti false",
                 |c| c.build.rtti = false,
-                [(&[], &[]), (&[], &[]), (&[], &[])],
+                [(&[], &[]), (&[], &[]), (&[], &[]), (&[], &[])],
             ),
         ];
         for (name, change, row) in rows {
@@ -911,7 +985,8 @@ mod tests {
     }
 
     /// Mutation: let a cl too old for `c++23` or `c23` through, reject one that
-    /// is new enough, or hold Clang to a version; this test fails.
+    /// is new enough, hold Clang to a version, let a GCC before 11 take
+    /// `c++23`, or hold GCC 10 to C23; this test fails.
     #[test]
     fn an_edition_cl_does_not_know_is_an_error() {
         let v = |minor| Version {
@@ -945,6 +1020,18 @@ mod tests {
                 );
             }
         }
+        let gcc = |major| Version {
+            major,
+            minor: 0,
+            patch: 0,
+        };
+        assert!(check_edition(CompilerKind::Gcc, gcc(11), Edition::Cxx23).is_ok());
+        let err = check_edition(CompilerKind::Gcc, gcc(10), Edition::Cxx23).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "gcc 10.0.0 does not support edition = \"c++23\""
+        );
+        assert!(check_edition(CompilerKind::Gcc, gcc(10), Edition::C23).is_ok());
     }
 
     /// Each driver is asked for its header dependencies in its own way, the
@@ -966,5 +1053,6 @@ mod tests {
             ["/clang:-MD", "/clang:-MFC:/p/a.cpp.d"]
         );
         assert_eq!(args(CompilerKind::Clang), ["-MD", "-MF", "C:/p/a.cpp.d"]);
+        assert_eq!(args(CompilerKind::Gcc), ["-MD", "-MF", "C:/p/a.cpp.d"]);
     }
 }

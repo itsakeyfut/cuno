@@ -79,6 +79,7 @@ fn try_build_tests(p: &Project, compiler: &str) -> Result<Vec<BuiltTest>, (Build
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &[],
         explicit_msvc: settings.msvc_path(),
     };
     let selected =

@@ -12,7 +12,9 @@ use std::path::Path;
 use std::process::Command;
 
 use cuno_core::{CunoError, Env};
+use cuno_toolchain::gcc::find_gcc;
 use cuno_toolchain::llvm::{ExplicitPaths, LlvmTool, Tool, find_llvm_tools};
+
 use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::{self, Choices, Constraints, Found, Selected, VersionReq};
 use cuno_toolchain::{HostOs, SystemRunner};
@@ -51,6 +53,7 @@ fn selected(name: &str) -> Selected {
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &[],
         explicit_msvc: None,
     };
     select::select(&choices, found, &Default::default(), HostOs::Windows).unwrap()
@@ -97,10 +100,27 @@ fn found_tools() -> String {
 }
 
 /// The `Info` line for `kind`: MSVC as selected with Visual Studio, a Clang
-/// by the copy detected.
+/// by the copy detected, GCC by what selecting it here would use (it may
+/// not be installed).
 fn info(kind: select::CompilerKind) -> String {
     let (_, llvm) = detected();
     let version = match kind {
+        select::CompilerKind::Gcc => {
+            let gcc = find_gcc(&env(), HostOs::Windows, None, &SystemRunner::new()).unwrap();
+            let found = Found {
+                installs: &[],
+                llvm: &[],
+                gcc: &gcc,
+                explicit_msvc: None,
+            };
+            return match select::copy_of(kind, found, &Default::default(), HostOs::Windows) {
+                Ok((_, version, _)) => format!("        Info gcc {version} (not selected)\n"),
+                Err(cuno_toolchain::ToolchainError::CompilerNotFound { .. }) => {
+                    "        Info gcc not found\n".to_owned()
+                }
+                Err(error) => format!("        Info gcc not usable: {error}\n"),
+            };
+        }
         select::CompilerKind::Msvc => selected("msvc").version,
         select::CompilerKind::Clang => {
             select::select_tool(Tool::Clang, &llvm, HostOs::Windows)
@@ -118,15 +138,11 @@ fn info(kind: select::CompilerKind) -> String {
 
 /// The `Info` lines for the compilers other than `selected`.
 fn others(selected: Option<select::CompilerKind>) -> String {
-    [
-        select::CompilerKind::Msvc,
-        select::CompilerKind::Clang,
-        select::CompilerKind::ClangCl,
-    ]
-    .into_iter()
-    .filter(|k| Some(*k) != selected)
-    .map(info)
-    .collect()
+    select::CompilerKind::ALL
+        .into_iter()
+        .filter(|k| Some(*k) != selected)
+        .map(info)
+        .collect()
 }
 
 /// Whether clang-format and clang-tidy are here; the tests whose output
@@ -191,7 +207,7 @@ fn inside_a_project_its_choice_is_diagnosed() {
 /// An unsupported compiler is a problem naming where it was chosen, and the
 /// last line counts it.
 ///
-/// Mutation: fall back to automatic selection for `gcc`, or exit 0; this
+/// Mutation: fall back to automatic selection for `safec`, or exit 0; this
 /// test fails.
 #[test]
 fn an_unsupported_compiler_is_a_problem() {
@@ -199,13 +215,13 @@ fn an_unsupported_compiler_is_a_problem() {
         return;
     }
     Project::new()
-        .cuno(&["doctor", "--compiler", "gcc"])
+        .cuno(&["doctor", "--compiler", "safec"])
         .assert(
             1,
             "",
             &format!(
-                "error: gcc is not supported yet (chosen by --compiler)\n\
-                 help: choose msvc, clang or clang-cl\n{}{}    \
+                "error: safec is not supported yet (chosen by --compiler)\n\
+                 help: choose msvc, clang, clang-cl or gcc\n{}{}    \
                  Finished 1 problem found\n",
                 found_tools(),
                 others(None)
@@ -265,6 +281,7 @@ fn a_missing_visual_studio_is_reported_not_fatal() {
             Err(_) => format!("        Info {} not found\n", tool.name()),
         };
     }
+    info += &self::info(select::CompilerKind::Gcc);
     let finished = if problems == 1 {
         "1 problem found".to_owned()
     } else {
@@ -405,6 +422,7 @@ fn the_toolchain_settings_constrain_the_selection() {
         Found {
             installs: &installs,
             llvm: &llvm,
+            gcc: &[],
             explicit_msvc: None,
         },
         &Constraints {
@@ -441,11 +459,14 @@ fn the_toolchain_settings_constrain_the_selection() {
         .assert(
             1,
             "",
-            "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n\
-             help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
-             error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
-             help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n    \
-             Finished 2 problems found\n",
+            &format!(
+                "error: [toolchain.paths] clang is C:/nope/clang.exe, but there is no file there\n\
+                 help: correct [toolchain.paths] clang, or remove it to let cuno find the tool\n\
+                 error: [toolchain.paths] msvc is C:/nope/VS, but no Visual Studio with the C++ x64 tools is installed there\n\
+                 help: correct [toolchain.paths] msvc, or remove it to let cuno find Visual Studio\n{}    \
+                 Finished 2 problems found\n",
+                info(select::CompilerKind::Gcc)
+            ),
         );
 }
 
@@ -659,11 +680,12 @@ fn missing_llvm_tools_are_problems_and_missing_compilers_are_not() {
              error: no clang-format was found\n{}\
              error: no clang-tidy was found\n{}        \
              Info clang not found\n        \
-             Info clang-cl not found\n    \
+             Info clang-cl not found\n{}    \
              Finished 3 problems found\n",
             vswhere.display(),
             llvm_help("clang-format"),
             llvm_help("clang-tidy"),
+            info(select::CompilerKind::Gcc),
         ),
     );
 }
@@ -733,11 +755,12 @@ fn each_tool_line_names_its_own_configured_copy() {
          Found clang-format 19.1.1\n       \
          Found clang-tidy 19.1.2\n        \
          Info clang 18.1.3 (not selected)\n        \
-         Info clang-cl 18.1.4 (not selected)\n    \
+         Info clang-cl 18.1.4 (not selected)\n{}    \
          Finished no problems found\n",
         msvc.version,
         msvc.executable.display(),
-        sdk()
+        sdk(),
+        info(select::CompilerKind::Gcc)
     );
     project
         .file(".cuno/config.toml", &config)
@@ -1340,7 +1363,8 @@ fn quiet_shows_only_warnings_and_problems() {
         .assert(0, "", "");
     let run = Project::new()
         .file("cuno.toml", &manifest("foo = 1\n"))
-        .cuno(&["-q", "doctor", "--compiler", "gcc"]);
+        .cuno(&["-q", "doctor", "--compiler", "safec"]);
+
     assert_eq!(run.code, Some(1), "{}", run.stderr);
     let lines: Vec<&str> = run.stderr.lines().collect();
     assert!(

@@ -16,6 +16,8 @@ use cuno_core::{CunoError, Env, Shell};
 use cuno_manifest::{Lang, Manifest, Profile, Settings};
 use cuno_toolchain::compiler::CompilerKind;
 use cuno_toolchain::flags::{Mode, ToolContext, check_edition};
+use cuno_toolchain::gcc::{Gcc, find_gcc};
+
 use cuno_toolchain::msvc::Registry;
 use cuno_toolchain::prepare::{self, Detected, Prepared};
 use cuno_toolchain::probe::{self as stl, ProbeInputs};
@@ -43,6 +45,18 @@ pub fn detect(
 ) -> Detected {
     let explicit = settings.map(Settings::llvm_paths).unwrap_or_default();
     prepare::detect(env, host, &explicit, runner)
+}
+
+/// Finds every GCC, the one `[toolchain.paths] gcc` names first. Called
+/// only when GCC is wanted (`docs/en/specs/toolchain.md`, "MinGW (GCC)"):
+/// it runs each copy found.
+pub fn detect_gcc(
+    settings: Option<&Settings>,
+    env: &Env,
+    host: HostOs,
+    runner: &dyn Runner,
+) -> Result<Vec<Gcc>, ToolchainError> {
+    find_gcc(env, host, settings.and_then(Settings::gcc_path), runner)
 }
 
 /// What the standard library probe compiles: the build's settings for a
@@ -254,11 +268,24 @@ pub fn ready(
     shell: &mut Shell,
 ) -> Result<Ready, Box<dyn CunoError>> {
     let detected = detect(Some(settings), env, host, runner);
-    let installs = detected.installs.map_err(boxed)?;
+    // The compiler asked for decides what it needs: one with no MSVC
+    // toolset builds without Visual Studio, and only GCC is searched for
+    // GCC. A name cuno does not know is selection's error, below.
+    let wanted = settings.compiler.kind(host).ok().map(|(kind, _)| kind);
+    let installs = match detected.installs {
+        Ok(installs) => installs,
+        Err(_) if wanted.is_some_and(|kind| !kind.uses_msvc_toolset(host)) => Vec::new(),
+        Err(error) => return Err(boxed(error)),
+    };
     let llvm = detected.llvm.map_err(boxed)?;
+    let gcc = match wanted {
+        Some(CompilerKind::Gcc) => detect_gcc(Some(settings), env, host, runner).map_err(boxed)?,
+        _ => Vec::new(),
+    };
     let found = Found {
         installs: &installs,
         llvm: &llvm,
+        gcc: &gcc,
         explicit_msvc: settings.msvc_path(),
     };
     let selected =

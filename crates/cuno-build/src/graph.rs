@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use cuno_toolchain::compiler::{CompilerKind, Dependencies};
 use cuno_toolchain::flags::{
     BuildSettings, Lang, LinkInput, Mode, ProfileSettings, Subsystem, color_args, compile_args,
-    dependency_args, library_file, link_args,
+    dependency_args, library_files, link_args,
 };
 
 use crate::deps::Headers;
@@ -206,6 +206,9 @@ pub fn plan(p: &Plan<'_>) -> Graph {
     };
     let layout = &layout;
     let mut steps = Vec::new();
+    // Whether each step compiles C++, by step: a link of any C++ object
+    // needs the C++ runtime.
+    let mut cxx: Vec<bool> = Vec::new();
     let mut compile = |source: &Source, object: Option<PathBuf>| -> usize {
         let settings = (p.compile)(source.lang, purpose);
         let (kind, output) = match purpose.mode {
@@ -253,6 +256,7 @@ pub fn plan(p: &Plan<'_>) -> Graph {
             color: color_args(p.kind, p.color),
             dependency,
         });
+        cxx.push(source.lang == Lang::Cxx);
         steps.len() - 1
     };
     let body: Vec<usize> = p.sources.body.iter().map(|s| compile(s, None)).collect();
@@ -371,15 +375,17 @@ pub fn plan(p: &Plan<'_>) -> Graph {
 
     for (name, subsystem, exe, after) in links {
         let objects: Vec<PathBuf> = after.iter().map(|&i| steps[i].output.clone()).collect();
+        let cxx = after.iter().any(|&i| cxx[i]);
         let input = LinkInput {
             kind: p.kind,
             build: p.link.0,
             profile: p.link.1,
             subsystem,
+            cxx,
         };
         steps.push(Step {
             kind: StepKind::Link { bin: name },
-            program: p.program.to_owned(),
+            program: p.kind.link_driver(p.program, cxx),
             args: link_args(&input, &objects, &exe),
             output: exe,
             after,
@@ -392,7 +398,8 @@ pub fn plan(p: &Plan<'_>) -> Graph {
                 .0
                 .links
                 .iter()
-                .map(|lib| PathBuf::from(library_file(p.kind, lib)))
+                .flat_map(|lib| library_files(p.kind, lib))
+                .map(PathBuf::from)
                 .collect(),
             color: Vec::new(),
             dependency: Vec::new(),
@@ -401,19 +408,21 @@ pub fn plan(p: &Plan<'_>) -> Graph {
     Graph { steps }
 }
 
-/// The libraries of `links` found in `lib-dirs`: for each, the first
-/// [`library_file`] searching `lib-dirs` in order, as the linker searches
-/// them. A library found nowhere there is a system one, found through
-/// `LIB`.
+/// The libraries of `links` found in `lib-dirs`: for each, the first of
+/// its [`library_files`] searching `lib-dirs` in order, and each directory
+/// for every name in order, as the linker searches them. A library found
+/// nowhere there is a system one, found through `LIB` (or GCC's own
+/// directories, which its version identifies).
 fn libraries(kind: CompilerKind, build: &BuildSettings) -> Vec<PathBuf> {
     build
         .links
         .iter()
         .filter_map(|lib| {
+            let names = library_files(kind, lib);
             build
                 .lib_dirs
                 .iter()
-                .map(|dir| dir.join(library_file(kind, lib)))
+                .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
                 .find(|path| path.is_file())
         })
         .collect()
@@ -461,6 +470,21 @@ mod tests {
                 source("C:/p/src/a.cpp", Lang::Cxx),
                 source("C:/p/src/b.c", Lang::C),
             ],
+            integration_tests: Vec::new(),
+            test_helpers: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// A program of C sources only.
+    fn c_sources() -> Sources {
+        Sources {
+            bins: vec![Bin {
+                name: "tool".into(),
+                entry: source("C:/p/src/main.c", Lang::C),
+                subsystem: Subsystem::Console,
+            }],
+            body: vec![source("C:/p/src/b.c", Lang::C)],
             integration_tests: Vec::new(),
             test_helpers: Vec::new(),
             warnings: Vec::new(),
@@ -665,6 +689,110 @@ mod tests {
             libraries(CompilerKind::Msvc, &build),
             [first.join("foo.lib"), second.join("bar.lib")]
         );
+    }
+
+    /// GCC's `ld` tries every name of a library in one directory before the
+    /// next directory, so a link reads the first directory's file whatever
+    /// its name, and within a directory the name `ld` tries first.
+    ///
+    /// Mutation: search by name across every directory first, or try GCC's
+    /// names in another order; this test fails.
+    #[test]
+    fn gcc_reads_a_library_as_its_ld_searches() {
+        let root = tempfile::tempdir().unwrap();
+        let (first, second) = (root.path().join("one"), root.path().join("two"));
+        for dir in [&first, &second] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(first.join("libfoo.a"), "").unwrap();
+        std::fs::write(second.join("libfoo.dll.a"), "").unwrap();
+        std::fs::write(second.join("bar.lib"), "").unwrap();
+        std::fs::write(second.join("libbar.a"), "").unwrap();
+        let mut build = compile_settings(
+            None,
+            CompilerKind::Gcc,
+            Profile::Dev,
+            Lang::Cxx,
+            HostOs::Windows,
+            Path::new(BUNDLED),
+            false,
+            Mode::Compile,
+        )
+        .build;
+        build.links = vec!["foo".into(), "bar".into()];
+        build.lib_dirs = vec![first.clone(), second.clone()];
+        assert_eq!(
+            libraries(CompilerKind::Gcc, &build),
+            [first.join("libfoo.a"), second.join("libbar.a")]
+        );
+    }
+
+    /// GCC links a program with C++ in it with `g++`, one of C only with
+    /// `gcc`, and looks in `lib-dirs` for every name its `ld` tries.
+    ///
+    /// Mutation: link C++ with `gcc`, C with `g++`, or look for one name
+    /// only; this test fails.
+    #[test]
+    fn gcc_links_cxx_with_g_plus_plus_and_looks_for_every_name() {
+        let layout = Layout::new(
+            Path::new("C:/p/target"),
+            Profile::Dev,
+            Path::new("C:/p"),
+            HostOs::Windows,
+        );
+        let kind = CompilerKind::Gcc;
+        let compile = |lang, purpose: Purpose| {
+            compile_settings(
+                None,
+                kind,
+                Profile::Dev,
+                lang,
+                HostOs::Windows,
+                Path::new(BUNDLED),
+                purpose.test,
+                purpose.mode,
+            )
+        };
+        let mut link = compile(Lang::Cxx, PROGRAM);
+        link.build.links = vec!["z".into()];
+        for (sources, driver) in [
+            (sources(), "C:/m/bin/g++.exe"),
+            (c_sources(), "C:/m/bin/gcc.exe"),
+        ] {
+            let g = plan(&Plan {
+                package: "app",
+                sources: &sources,
+                products: Products::Programs {
+                    mode: Mode::Compile,
+                },
+                layout: &layout,
+                kind,
+                program: Path::new("C:/m/bin/gcc.exe"),
+                compile: &compile,
+                link: (&link.build, &link.profile),
+                color: false,
+            });
+            let last = g.steps.last().unwrap();
+            for step in &g.steps {
+                let want = match step.kind {
+                    StepKind::Link { .. } => driver,
+                    _ => "C:/m/bin/gcc.exe",
+                };
+                assert_eq!(step.program, Path::new(want), "{:?}", step.kind);
+            }
+            assert_eq!(
+                last.looked_for,
+                [
+                    "libz.dll.a",
+                    "z.dll.a",
+                    "libz.a",
+                    "z.lib",
+                    "libz.dll",
+                    "z.dll"
+                ]
+                .map(PathBuf::from)
+            );
+        }
     }
 
     /// A compile searches cuno's own include directories, then
