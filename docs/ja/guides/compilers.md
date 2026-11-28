@@ -78,6 +78,10 @@ gcc = ">=13"
 
 足りないときは、ビルドの前にエラーになり、要るバージョンが示されます（[toolchain.md](../specs/toolchain.md#コンパイラの最低バージョン)）。
 
+## どのコンパイラでも同じこと
+
+- **コンパイラやリンカが自分で読む環境変数は使いません。** `CL` / `_CL_`（cl と clang-cl）、`LINK` / `_LINK_`（link.exe と lld-link）、`CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH`（Clang と GCC）、`LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH`（GCC）、`DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES`（GCC）は、ビルド、標準ライブラリの確認、`cuno doctor`、GCC の検出の環境から取り除きます。ビルド系のコマンドは、設定されていたものを 1 つずつ警告します。コマンドラインに現れないフラグで、`Cuno.toml` と違うビルドをしないためです。フラグは `Cuno.toml` に書いてください（[toolchain.md](../specs/toolchain.md#解決の方法)）。
+
 ## MSVC（cl）
 
 Windows で何も選ばなければ使われるコンパイラです。
@@ -94,7 +98,6 @@ Windows で何も選ばなければ使われるコンパイラです。
 - **`exceptions = false` でも、cl は `try` のない `throw` を検出できません。** cuno は、例外を切ったときの cl の警告をエラーに格上げして `try` / `catch` を止めますが、`try` のない `throw` だけは、cl ではどのフラグでも検出できません（[build.md](../specs/build.md#理由)）。
 - **`warnings = "pedantic"` と `"all"` の違いは小さい**です。cl では、C++20 以降と C の規格指定がすでに `/permissive-` を含むためです。
 - **リンカは `link.exe`** です。`debug-info = true` ではインクリメンタルリンクを切り（`/INCREMENTAL:NO`）、lld と同じく `.ilk` を作らないようにします。
-- **環境変数 `CL` / `_CL_` / `LINK` / `_LINK_` は使いません。** 設定されていれば、ビルドのたびに警告します。フラグは `Cuno.toml` に書いてください（[toolchain.md](../specs/toolchain.md#解決の方法)）。
 
 ### できないこと
 
@@ -113,7 +116,7 @@ Windows の Clang は MSVC と同じ ABI（ビルド対象 `x86_64-pc-windows-ms
 
 - **LLVM の Windows 向けリリース**を、公式のインストーラで入れます（https://github.com/llvm/llvm-project/releases ）。既定の場所（`%ProgramFiles%\LLVM\bin`）なら、`PATH` に足さなくても見つかります。Visual Studio に同梱された Clang（`VC\Tools\Llvm\x64\bin`）も見つかります（[toolchain.md](../specs/toolchain.md#llvmclang--clang-cl--clang-format--clang-tidy)）。
 - **Visual Studio（または Build Tools）も要ります。** Windows の Clang は MSVC のヘッダ、ライブラリ、Windows SDK を使うためです。上の MSVC と同じものを入れてください。
-- 確かめる: `cuno doctor --compiler clang`、または `--compiler clang-cl`。Clang が使えれば `Accepted by the MSVC standard library` の行が出ます。
+- 確かめる: `cuno doctor --compiler clang`、または `--compiler clang-cl`。Clang が使えれば、C++ のプロジェクトとプロジェクトの外では `Accepted by the MSVC standard library` の行が出ます。
 - 既定のビルド対象が MSVC 向け（`*-windows-msvc`）でない Clang（MinGW 向けの Clang など）は使いません。MSVC と混ぜてリンクできないためです。
 
 ### ほかのコンパイラと違うところ
@@ -126,6 +129,7 @@ Windows の Clang は MSVC と同じ ABI（ビルド対象 `x86_64-pc-windows-ms
   ```
 
   Visual Studio を更新したら、LLVM も新しくすることになるかもしれません。C だけのプロジェクトでは、この確認をしません。
+- **Clang でも MSVC のツールセットを 1 つ使います。** 完全でプレビュー版でない Visual Studio のツールセットのうち、cl が最新のものです。`[toolchain.version] msvc` は MSVC を選んだときだけ確かめるので、Clang が使うツールセットは縛りません。`[toolchain.paths] msvc` を書けば、Clang が使う Visual Studio もそこに限られます（[toolchain.md](../specs/toolchain.md#選択)、[manifest.md](../specs/manifest.md#toolchainpaths)）。
 - **リンカは `lld-link`**（LLVM 同梱）です。
 - **`warnings = "pedantic"` は、Windows SDK のヘッダを指摘することがあります。** `IID_PPV_ARGS` などが使う `__uuidof` を拡張として警告するので、`warnings-as-errors` と合わせるとエラーになります。cl は指摘しません（[build.md](../specs/build.md#理由)）。
 - **`[toolchain.paths]` の `clang` と `clang-cl` は、取り違えるとエラーになります。** 中身は同じ実行ファイルでも、名前で振る舞いが変わり、もう一方の形式のフラグを渡すことになるためです（[toolchain.md](../specs/toolchain.md#llvmclang--clang-cl--clang-format--clang-tidy)）。
@@ -148,22 +152,27 @@ MSYS2 の UCRT64 の GCC を使います（ビルド対象 `x86_64-w64-mingw32`�
 
 ### ほかのコンパイラと違うところ
 
-- **GCC のランタイムは、いつも実行ファイルに取り込まれます。** GCC のランタイム（`libgcc`、`libstdc++`）とスレッドのライブラリ（`winpthread`）を静的にリンクし、C ランタイム（UCRT）は Windows のものを使います。これらの DLL は Windows に入っていないので、取り込まないと、作った実行ファイルが cuno の外で起動しないためです。`runtime = "static"` と `"dynamic"` は同じになります（[build.md](../specs/build.md#理由)）。
+- **GCC のランタイムは、いつも実行ファイルに取り込まれます。** GCC のランタイム（`libgcc`、`libstdc++`）とスレッドのライブラリ（`winpthread`）を静的にリンクし、C ランタイム（UCRT）は Windows のものを使います。これらの DLL は Windows に入っていないので、取り込まないと、作った実行ファイルが cuno の外で起動しないためです。`runtime = "static"` と `"dynamic"` は同じになります。MinGW では UCRT を静的にリンクできないためです（[build.md](../specs/build.md#理由)）。
+- **`links` に書いたライブラリは静的にしません。** `ld` が見つけたものをリンクするので、たとえば `links = ["pthread"]` は `libpthread.dll.a` をリンクし、作った実行ファイルは `libwinpthread-1.dll` を要します。
 - **GCC 14 以上の C++ では、`libstdc++exp` もリンクします。** MinGW の libstdc++ は、C++23 の `std::print` / `std::println` が端末に書く部分をこのライブラリに置いているためです。`std::stacktrace` などもリンクできるようになります。
 - **`cuno check` はビルドと同じコンパイルをします**（MSVC と同じ）。配列の範囲外の参照（`-Warray-bounds`）などの診断は、最適化の段階でしか出ないためです。
 - **`lto = true` ではコンパイルが遅くなります。** LTO でも最適化の段階の診断が出るように、`-ffat-lto-objects` を付けるためです。
 - **`subsystem = "windows"` は `-mwindows`** で、入口の指定は要りません。
+- **`exceptions = false` は `-fno-exceptions` だけです。** GCC の標準ライブラリは、それだけで例外を投げない実装を使います（MSVC の標準ライブラリのマクロ `_HAS_EXCEPTIONS` は定義しません）。
+- **`g++` は、使う `gcc` と同じディレクトリのものを使います。** `g++` の場所を別に書く設定はありません（[toolchain.md](../specs/toolchain.md#mingwgcc)）。
 - **GCC の DLL は、作った実行ファイルの環境に足しません。** cuno は GCC を起動するときだけ GCC のディレクトリを `PATH` に加えます。DLL を要する実行ファイルが、cuno の中でだけ動いてしまわないようにするためです。
 
 ### ASCII でないパス
 
 MinGW のアセンブラ（`as`）とリンカ（`ld`）は ANSI コードページで動くため、ASCII でないパスのファイルを開けません。cuno は、プロジェクトの中のパスを相対で渡すなどして、日本語の名前のディレクトリでもビルドできるようにしています。それでも ASCII でないパスを渡すことになる場合は、コンパイルの前にエラーにし、そのパスを示します（[toolchain.md](../specs/toolchain.md#mingwgcc)）。
 
-- 出力先（`target-dir`）のパスが ASCII でない: ASCII のディレクトリにビルドしてください（`--target-dir`、`CUNO_TARGET_DIR`、`[build] target-dir`）。
-- `lib-dirs` のディレクトリが ASCII でない: ライブラリを ASCII のディレクトリに置いてください。
-- `src/bin/` のファイル名から付く実行ファイルの名前が ASCII でない: ASCII の名前に変えるか、`[[bin]]` に ASCII の名前で書いてください。
-- 一時ディレクトリ（`TMP`）が ASCII でなく、8.3 形式の短い名前もない: `TMP` と `TEMP` を ASCII のディレクトリにしてください。
+- 出力先（`target-dir`）のパスが、プロジェクトの中なら cuno がルートからの相対にしても、外ならそのままで、ASCII でない: ASCII のディレクトリにビルドしてください（`--target-dir`、`CUNO_TARGET_DIR`、`[build] target-dir`）。
+- `lib-dirs` のディレクトリのパスが、cuno がプロジェクトのルートからの相対にしても ASCII でない: ライブラリを ASCII のディレクトリに置いてください。リンクするとき（`cuno check` 以外）だけです。
+- `src/bin/` のファイル名から付く実行ファイルの名前が ASCII でない: ASCII の名前に変えるか、`[[bin]]` に ASCII の名前で書いてください。プログラムをリンクするとき（`cuno build`、`cuno run`）だけです。
+- 一時ディレクトリ（`TMP`、なければ `TEMP`）が ASCII でなく 8.3 形式の短い名前もないうえに、LTO を使うか、そのパスを ANSI コードページで表せない: `TMP` と `TEMP` を ASCII のディレクトリにしてください。リンクするときだけです。
+
+一時ディレクトリが ASCII でなくても、短い名前があれば cuno はそれを使います。短い名前がなく、ANSI コードページで表せるパス（日本語版の Windows の日本語のユーザー名など）なら、ふつうのリンクは通るので止めません。ただし、リンクのコマンドラインがとても長い（3 万文字ほど）と、`ld` の文字化けしたパスのエラーで失敗します。それを前もって確かめる確実な方法がないため、cuno はこの場合も止めません。
 
 ## fmt と lint
 
-`cuno fmt` と `cuno lint` は、どのコンパイラを選んでいても LLVM の clang-format と clang-tidy を使います（[dev-tools.md](../specs/dev-tools.md)）。MSVC や GCC だけでビルドするプロジェクトでも、fmt と lint を使うなら LLVM を入れてください。C++ のプロジェクトで MSVC か Clang を選んでいるときは、clang-tidy にも上の標準ライブラリの確認が当たります（[toolchain.md](../specs/toolchain.md#コンパイラの最低バージョン)）。
+`cuno fmt` と `cuno lint` は、どのコンパイラを選んでいても LLVM の clang-format と clang-tidy を使います（[dev-tools.md](../specs/dev-tools.md)）。MSVC や GCC だけでビルドするプロジェクトでも、fmt と lint を使うなら LLVM を入れてください。clang-format と clang-tidy の最低バージョンは 17 です（[dev-tools.md](../specs/dev-tools.md#ツールのバージョン)）。C++ のプロジェクトで MSVC か Clang を選んでいるときは、clang-tidy にも上の標準ライブラリの確認が当たります（[toolchain.md](../specs/toolchain.md#コンパイラの最低バージョン)）。

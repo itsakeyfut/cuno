@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/guides/compilers.md @ blob a0cca113cd72a430a940e3bb47d271f8e1b475eb -->
+<!-- translated-from: docs/ja/guides/compilers.md @ blob 6e5e48d785e31ff650f3f0be55ecc4f64cddf398 -->
 
 # Compiler guide
 
@@ -80,6 +80,10 @@ gcc = ">=13"
 
 If the version is too old, it is an error before the build, showing the version needed ([toolchain.md](../specs/toolchain.md#minimum-compiler-versions)).
 
+## What is the same for every compiler
+
+- **Environment variables that the compiler or linker reads by itself are not used.** `CL` / `_CL_` (cl and clang-cl), `LINK` / `_LINK_` (link.exe and lld-link), `CPATH` / `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` (Clang and GCC), `LIBRARY_PATH` / `GCC_EXEC_PREFIX` / `COMPILER_PATH` (GCC), and `DEPENDENCIES_OUTPUT` / `SUNPRO_DEPENDENCIES` (GCC) are removed from the environment of builds, the standard library check, `cuno doctor` and GCC detection. Build commands warn about each one that was set. This keeps flags that never appear on a command line from producing a build that differs from `Cuno.toml`. Write flags in `Cuno.toml` ([toolchain.md](../specs/toolchain.md#how-it-is-resolved)).
+
 ## MSVC (cl)
 
 The compiler used on Windows when nothing is selected.
@@ -96,7 +100,6 @@ The compiler used on Windows when nothing is selected.
 - **Even with `exceptions = false`, cl cannot detect a `throw` with no `try`.** cuno raises cl's warnings for exceptions being turned off to errors to stop `try` / `catch`, but a `throw` with no `try` is something no flag makes cl detect ([build.md](../specs/build.md#rationale)).
 - **The difference between `warnings = "pedantic"` and `"all"` is small**, because with cl, the standard selection for C++20 and later and for C already includes `/permissive-`.
 - **The linker is `link.exe`.** With `debug-info = true`, incremental linking is turned off (`/INCREMENTAL:NO`) so that, as with lld, no `.ilk` is made.
-- **The environment variables `CL` / `_CL_` / `LINK` / `_LINK_` are not used.** If they are set, cuno warns on every build. Write flags in `Cuno.toml` ([toolchain.md](../specs/toolchain.md#how-it-is-resolved)).
 
 ### What it cannot do
 
@@ -115,7 +118,7 @@ Clang on Windows builds with the same ABI as MSVC (target `x86_64-pc-windows-msv
 
 - Install the **LLVM release for Windows** with the official installer (https://github.com/llvm/llvm-project/releases ). In the default location (`%ProgramFiles%\LLVM\bin`), it is found without adding it to `PATH`. The Clang bundled with Visual Studio (`VC\Tools\Llvm\x64\bin`) is found too ([toolchain.md](../specs/toolchain.md#llvm-clang--clang-cl--clang-format--clang-tidy)).
 - **Visual Studio (or Build Tools) is needed too**, because Clang on Windows uses MSVC's headers and libraries and the Windows SDK. Install the same thing as for MSVC above.
-- To check: `cuno doctor --compiler clang`, or `--compiler clang-cl`. If Clang can be used, the line `Accepted by the MSVC standard library` is shown.
+- To check: `cuno doctor --compiler clang`, or `--compiler clang-cl`. If Clang can be used, the line `Accepted by the MSVC standard library` is shown for a C++ project and outside any project.
 - A Clang whose default target is not MSVC (`*-windows-msvc`), such as a Clang for MinGW, is not used, because it cannot be linked together with MSVC.
 
 ### How it differs from the other compilers
@@ -128,6 +131,7 @@ Clang on Windows builds with the same ABI as MSVC (target `x86_64-pc-windows-msv
   ```
 
   After updating Visual Studio, you may have to update LLVM as well. For a C-only project, this check is not made.
+- **Clang uses one MSVC toolset as well.** It is the one with the newest cl among the complete, non-preview Visual Studio toolsets. `[toolchain.version] msvc` is checked only when MSVC is selected, so it does not constrain the toolset Clang uses. Writing `[toolchain.paths] msvc` limits the Visual Studio that Clang uses to that one as well ([toolchain.md](../specs/toolchain.md#selection), [manifest.md](../specs/manifest.md#toolchainpaths)).
 - **The linker is `lld-link`** (bundled with LLVM).
 - **`warnings = "pedantic"` can flag Windows SDK headers.** It warns about `__uuidof`, used by `IID_PPV_ARGS` and others, as an extension, so combined with `warnings-as-errors` it becomes an error. cl does not flag it ([build.md](../specs/build.md#rationale)).
 - **Mixing up `clang` and `clang-cl` in `[toolchain.paths]` is an error.** Even though they are the same executable, its behaviour changes with its name, so it would be given flags in the other style ([toolchain.md](../specs/toolchain.md#llvm-clang--clang-cl--clang-format--clang-tidy)).
@@ -150,22 +154,27 @@ cuno uses MSYS2's UCRT64 GCC (target `x86_64-w64-mingw32`). It does not use the 
 
 ### How it differs from the other compilers
 
-- **GCC's runtime is always built into the executable.** GCC's runtime (`libgcc`, `libstdc++`) and the threading library (`winpthread`) are linked statically, and the C runtime (UCRT) is the one in Windows. Windows does not ship these DLLs, so without building them in, the executable would not start outside cuno. `runtime = "static"` and `"dynamic"` behave the same ([build.md](../specs/build.md#rationale)).
+- **GCC's runtime is always built into the executable.** GCC's runtime (`libgcc`, `libstdc++`) and the threading library (`winpthread`) are linked statically, and the C runtime (UCRT) is the one in Windows. Windows does not ship these DLLs, so without building them in, the executable would not start outside cuno. `runtime = "static"` and `"dynamic"` behave the same, because MinGW cannot link UCRT statically ([build.md](../specs/build.md#rationale)).
+- **Libraries written in `links` are not made static.** cuno links whatever `ld` finds, so, for example, `links = ["pthread"]` links `libpthread.dll.a`, and the executable built needs `libwinpthread-1.dll`.
 - **For C++ with GCC 14 or later, `libstdc++exp` is linked too.** MinGW's libstdc++ keeps the part of C++23's `std::print` / `std::println` that writes to the terminal in this library. It also makes `std::stacktrace` and others linkable.
 - **`cuno check` compiles the same way as a build** (as with MSVC), because diagnostics such as out-of-bounds array accesses (`-Warray-bounds`) only come from the optimisation stage.
 - **`lto = true` makes compiling slower**, because cuno adds `-ffat-lto-objects` so that diagnostics from the optimisation stage still appear with LTO.
 - **`subsystem = "windows"` is `-mwindows`**, and no entry point needs to be specified.
+- **`exceptions = false` is only `-fno-exceptions`.** With that alone, GCC's standard library uses its non-throwing implementation (the MSVC standard library's macro `_HAS_EXCEPTIONS` is not defined).
+- **`g++` is taken from the same directory as the `gcc` in use.** There is no setting to give the location of `g++` separately ([toolchain.md](../specs/toolchain.md#mingw-gcc)).
 - **GCC's DLLs are not added to the environment of the executables you build.** cuno adds GCC's directory to `PATH` only when it starts GCC, so that an executable that needs those DLLs does not work only inside cuno.
 
 ### Non-ASCII paths
 
 MinGW's assembler (`as`) and linker (`ld`) run in the ANSI code page, so they cannot open files whose paths are not ASCII. cuno makes building possible even in a directory with a Japanese name, for example by passing paths inside the project as relative paths. When a non-ASCII path would still have to be passed, it is an error before compiling, showing that path ([toolchain.md](../specs/toolchain.md#mingw-gcc)).
 
-- The output directory (`target-dir`) path is not ASCII: build into an ASCII directory (`--target-dir`, `CUNO_TARGET_DIR`, `[build] target-dir`).
-- A `lib-dirs` directory is not ASCII: put the library in an ASCII directory.
-- The executable name taken from a file name in `src/bin/` is not ASCII: rename it to an ASCII name, or write it in `[[bin]]` with an ASCII name.
-- The temporary directory (`TMP`) is not ASCII and has no short 8.3 name: set `TMP` and `TEMP` to an ASCII directory.
+- The output directory (`target-dir`) path is not ASCII, even after cuno makes it relative to the root when it is inside the project (outside the project, as it is): build into an ASCII directory (`--target-dir`, `CUNO_TARGET_DIR`, `[build] target-dir`).
+- The path of a `lib-dirs` directory is not ASCII even after cuno makes it relative to the project root: put the library in an ASCII directory. Only when linking (anything other than `cuno check`).
+- The executable name taken from a file name in `src/bin/` is not ASCII: rename it to an ASCII name, or write it in `[[bin]]` with an ASCII name. Only when linking a program (`cuno build`, `cuno run`).
+- The temporary directory (`TMP`, or `TEMP` if that is not set) is not ASCII, has no short 8.3 name, and either LTO is used or the path cannot be represented in the ANSI code page: set `TMP` and `TEMP` to an ASCII directory. Only when linking.
+
+Even when the temporary directory is not ASCII, cuno uses its short name if it has one. If it has no short name and the path can be represented in the ANSI code page (such as a Japanese user name on a Japanese edition of Windows), ordinary linking succeeds, so cuno does not stop. However, if the link command line is very long (around 30,000 characters), linking fails with an `ld` error about a garbled path. There is no reliable way to check for that in advance, so cuno does not stop in this case either.
 
 ## fmt and lint
 
-`cuno fmt` and `cuno lint` use LLVM's clang-format and clang-tidy whichever compiler is selected ([dev-tools.md](../specs/dev-tools.md)). Even for a project built only with MSVC or GCC, install LLVM to use fmt and lint. In a C++ project with MSVC or Clang selected, the standard library check above applies to clang-tidy too ([toolchain.md](../specs/toolchain.md#minimum-compiler-versions)).
+`cuno fmt` and `cuno lint` use LLVM's clang-format and clang-tidy whichever compiler is selected ([dev-tools.md](../specs/dev-tools.md)). Even for a project built only with MSVC or GCC, install LLVM to use fmt and lint. The minimum version of clang-format and clang-tidy is 17 ([dev-tools.md](../specs/dev-tools.md#tool-versions)). In a C++ project with MSVC or Clang selected, the standard library check above applies to clang-tidy too ([toolchain.md](../specs/toolchain.md#minimum-compiler-versions)).
