@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/guides/game-development.md @ blob e1ced74ba8e0c05aa9077eb87713ea9c8e68cd79 -->
+<!-- translated-from: docs/ja/guides/game-development.md @ blob 949e9f89905f3cc299306f49345016723b2f2e1d -->
 # Settings for game development
 
 cuno's defaults are chosen so that any C/C++ project works as it is. Game development often picks settings other than the defaults, such as turning off exceptions and RTTI, or building the C runtime into the executable. This page shows how to write those settings in `Cuno.toml`, and what stops working once they are chosen.
@@ -55,7 +55,8 @@ rtti = false
 runtime = "static"
 ```
 
-- **What changes**: the C runtime (MSVC's CRT, MinGW's libgcc / libstdc++ and so on) is built into the executable. Shipping it then needs no runtime DLLs or redistributable package beside it.
+- **What changes**: with MSVC, clang-cl and clang, the C runtime (MSVC's CRT) is built into the executable. Shipping it then needs no runtime DLLs or redistributable package beside it.
+- **No change with GCC**: MinGW's GCC always builds its own runtime (libgcc, libstdc++) into the executable whatever this setting says, and uses Windows' C runtime (UCRT). `static` and `dynamic` are the same ([build.md](../specs/build.md#settings-and-flags)).
 - **What to watch**: the executable is larger. Code that relies on sharing one runtime, such as allocating memory in one DLL and freeing it in another, has to take care, since each DLL then has a runtime of its own. How it differs from the default `dynamic` is in [manifest.md](../specs/manifest.md#build).
 
 ## Link-time optimisation for release (`lto = true`)
@@ -76,7 +77,7 @@ warnings-as-errors = true
 ```
 
 - **What changes**: a single warning fails the build (`/WX` for MSVC, `-Werror` for GCC and Clang).
-- **Where to write it**: on every build, it stops half-written code from building too. Set it for release only, as above, or only on the CI machine through `.cuno/config.toml`, and everyday work is not stopped ([manifest.md](../specs/manifest.md#cunoconfigtoml)).
+- **Where to write it**: on every build, it stops half-written code from building too. Set for release only, as above, it leaves everyday work alone ([manifest.md](../specs/manifest.md#profilenamebuild)).
 
 ## When that is not enough (`[build.<compiler>]`)
 

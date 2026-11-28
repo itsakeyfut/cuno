@@ -54,7 +54,8 @@ rtti = false
 runtime = "static"
 ```
 
-- **何が変わるか**: C ランタイム（MSVC の CRT、MinGW の libgcc / libstdc++ など）を実行ファイルに取り込みます。配布するときに、ランタイムの DLL や再頒布パッケージを同梱する必要がなくなります。
+- **何が変わるか**: MSVC、clang-cl、clang では、C ランタイム（MSVC の CRT）を実行ファイルに取り込みます。配布するときに、ランタイムの DLL や再頒布パッケージを同梱する必要がなくなります。
+- **GCC では変わらない**: MinGW の GCC は、この設定によらず GCC のランタイム（libgcc、libstdc++）を常に実行ファイルに取り込み、C ランタイム（UCRT）は Windows のものを使います。`static` と `dynamic` は同じです（[build.md](../specs/build.md#設定とフラグの対応)）。
 - **気をつけること**: 実行ファイルが大きくなります。DLL をまたいでメモリを確保・解放するなど、ランタイムを共有することを前提にしたコードは、DLL ごとに別のランタイムを持つことになるので注意が必要です。既定の `dynamic` との違いは [manifest.md](../specs/manifest.md#build) を参照してください。
 
 ## リリースでリンク時最適化を使う（`lto = true`）
@@ -75,7 +76,7 @@ warnings-as-errors = true
 ```
 
 - **何が変わるか**: 警告が 1 つでもあればビルドを失敗にします（MSVC は `/WX`、GCC と Clang は `-Werror`）。
-- **どこに書くか**: すべてのビルドに付けると、書きかけのコードでもビルドが止まります。上のようにリリースだけに付けるか、CI のマシンだけに `.cuno/config.toml` で付けると、手元の作業を止めずに済みます（[manifest.md](../specs/manifest.md#cunoconfigtoml)）。
+- **どこに書くか**: すべてのビルドに付けると、書きかけのコードでもビルドが止まります。上のようにリリースだけに付けると、手元の作業を止めずに済みます（[manifest.md](../specs/manifest.md#profilenamebuild)）。
 
 ## 足りないとき（`[build.<compiler>]`）
 
