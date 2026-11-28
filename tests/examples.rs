@@ -153,6 +153,33 @@ fn executables(dir: &Path) -> Vec<String> {
     found
 }
 
+/// The `expected/<bin>.pe.txt` files of `example`, sorted. An example
+/// whose Cuno.toml sets `runtime` or `subsystem` must have one: those are
+/// the settings only the executable's PE can show.
+fn pe_expectations(example: &Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(example.join("expected"))
+        .map(|entries| {
+            entries
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".pe.txt"))
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    let manifest = std::fs::read_to_string(example.join("Cuno.toml")).unwrap_or_default();
+    let sets_pe = manifest.lines().map(str::trim_start).any(|line| {
+        line.starts_with("runtime ")
+            || line.starts_with("runtime=")
+            || line.starts_with("subsystem")
+    });
+    assert!(
+        !sets_pe || !found.is_empty(),
+        "{}: Cuno.toml sets runtime or subsystem, and expected/ has no .pe.txt to check it",
+        example.display()
+    );
+    found
+}
+
 /// Builds, checks, tests, runs and lints `example` on `name` (its label in
 /// `COMPILERS`), if it is here, as the module comment says. Its `msvc` test
 /// also checks that the example is formatted, which does not depend on the
@@ -194,6 +221,8 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
         return;
     }
     let project = copied(example);
+    let pe_files = pe_expectations(example);
+    let mut applied = std::collections::BTreeSet::new();
     let at = |what: &str| format!("{label} on {name}, {what}");
     for command in ["build", "check"] {
         let run = project.cuno(&[command, "--compiler", name]);
@@ -235,6 +264,7 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
                     .join(dir)
                     .join(format!("{bin}.exe"));
                 support::pe::check(&exe, compiler, &expectations, &at(profile));
+                applied.insert(format!("{bin}.pe.txt"));
             }
             let args = [&["-q", "run", "--compiler", name, "--bin", &bin][..], flags].concat();
             let run = project.cuno(&args);
@@ -247,6 +277,13 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
             );
         }
     }
+    // Every `.pe.txt` named an executable that was built and checked, so a
+    // misnamed one is not silently skipped.
+    assert_eq!(
+        applied.into_iter().collect::<Vec<_>>(),
+        pe_files,
+        "{label}: a .pe.txt in expected/ names no executable built"
+    );
     // Every example passes its `[lint]` (the default, where it writes none)
     // on every compiler: the code people copy lints clean wherever they
     // build it. At least one file is linted, and with this compiler's
@@ -262,6 +299,31 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
             run.stderr
         );
         assert_compiled_with(project.path(), compiler, &at("lint"));
+    }
+}
+
+/// `layered-settings` turns warnings into errors in `release` only: with
+/// an unused local variable added, which `warnings = "all"` reports on every
+/// compiler, the `dev` build passes and the `release` build fails.
+///
+/// Mutation: drop `warnings-as-errors` from `[profile.release.build]`,
+/// move it to `[profile.dev.build]`, or have cuno ignore the profile's
+/// single values; this test fails.
+#[test]
+fn layered_settings_errors_on_warnings_in_release_only() {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/cpp/layered-settings");
+    let main = std::fs::read_to_string(example.join("src/main.cpp")).unwrap();
+    let warned = main.replace("int main() {", "int main() {\n    int unused = 1;");
+    assert_ne!(warned, main, "the warning was not added");
+    for (name, compiler) in COMPILERS {
+        if !here(compiler) {
+            continue;
+        }
+        let project = copied(&example).file("src/main.cpp", &warned);
+        let dev = project.cuno(&["build", "--compiler", name]);
+        assert_eq!(dev.code, Some(0), "{name} dev:\n{}", dev.stderr);
+        let release = project.cuno(&["build", "--release", "--compiler", name]);
+        assert_ne!(release.code, Some(0), "{name} release:\n{}", release.stderr);
     }
 }
 

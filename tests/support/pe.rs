@@ -6,8 +6,9 @@ use std::path::Path;
 
 use super::compilers::Compiler;
 
-/// The PE subsystem an executable was linked for: 2 for Windows GUI, 3 for
-/// console.
+/// The PE subsystem a 64-bit (PE32+) executable was linked for: 2 for
+/// Windows GUI, 3 for console. Panics on a file too short to be one, as a
+/// test should.
 pub fn subsystem(exe: &Path) -> u16 {
     let bytes = std::fs::read(exe).unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
     let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
@@ -17,9 +18,12 @@ pub fn subsystem(exe: &Path) -> u16 {
     u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap())
 }
 
-/// Whether the executable names `dll` (compared without case), as an
-/// import does. A search of the bytes, not of the import table: a DLL's name
-/// appears in an executable only to be imported.
+/// Whether the executable's bytes contain `dll`, compared without case
+/// (linkers write import names in either case). A search of the bytes
+/// rather than of the import table, to keep a PE parser out of the tests:
+/// a DLL's name could also appear in a string or a debug path, so this can
+/// only be trusted for names the program under test does not otherwise
+/// mention.
 pub fn imports(exe: &Path, dll: &str) -> bool {
     let bytes = std::fs::read(exe)
         .unwrap_or_else(|e| panic!("{}: {e}", exe.display()))
@@ -29,15 +33,19 @@ pub fn imports(exe: &Path, dll: &str) -> bool {
 }
 
 /// The DLLs of GCC's own runtime, which cuno links statically under either
-/// `runtime` (`docs/en/specs/build.md`, "Rationale").
+/// `runtime` (`docs/en/specs/build.md`, "Settings and flags", its first
+/// "Rationale"). `libgcc_s` is a prefix, matching the whole family
+/// (`libgcc_s_seh-1.dll` and the like).
 pub const GCC_RUNTIME_DLLS: [&str; 3] = ["libstdc++-6.dll", "libwinpthread-1.dll", "libgcc_s"];
 
-/// Checks `exe`, built by `compiler`, against `expectations`, one per line:
+/// Checks `exe`, built by `compiler`, against `expectations`, one per line,
+/// naming `at` (the example, compiler and profile) in a failure:
 ///
 /// - `subsystem console` / `subsystem windows`: the PE subsystem.
 /// - `runtime static` / `runtime dynamic`: for MSVC, clang and clang-cl,
-///   whether the executable imports `vcruntime140.dll`; for GCC, whose
-///   runtime is static either way, that it imports none of
+///   whether the executable imports the C runtime's `vcruntime140.dll`. For
+///   GCC, whose own runtime is static and whose C runtime (UCRT) is dynamic
+///   under either setting, both mean the same: that it imports none of
 ///   [`GCC_RUNTIME_DLLS`].
 ///
 /// Blank lines are skipped. Any other line fails, so a misspelt

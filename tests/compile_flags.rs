@@ -21,6 +21,16 @@ use cuno_toolchain::{SystemRunner, Version};
 use support::compilers::{Compiler, Language, gcc_dir, require, require_driver};
 use support::pe;
 
+/// The test support's name for `kind`, which `support::pe::check` takes.
+fn test_compiler(kind: CompilerKind) -> Compiler {
+    match kind {
+        CompilerKind::Msvc => Compiler::Msvc,
+        CompilerKind::Clang => Compiler::Clang,
+        CompilerKind::ClangCl => Compiler::ClangCl,
+        CompilerKind::Gcc => Compiler::Gcc,
+    }
+}
+
 /// Each available driver, its program, and the environment it builds in.
 fn drivers() -> Vec<(CompilerKind, PathBuf, Env, Version)> {
     let process = Env::from_process();
@@ -368,8 +378,8 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
     build_settings.links = vec!["user32".into()];
     for (kind, program, env, _) in drivers() {
         for (subsystem, expected, debug, lto) in [
-            (Subsystem::Console, 3, true, false),
-            (Subsystem::Windows, 2, false, true),
+            (Subsystem::Console, "subsystem console", true, false),
+            (Subsystem::Windows, "subsystem windows", false, true),
         ] {
             profile.debug_info = debug;
             profile.lto = lto;
@@ -384,7 +394,7 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
                 mode: Mode::Compile,
             };
             let (dir, exe) = build(kind, &program, &env, &input, subsystem, text);
-            assert_eq!(pe::subsystem(&exe), expected, "{kind:?} {subsystem:?}");
+            pe::check(&exe, test_compiler(kind), expected, &format!("{kind:?}"));
             let status = Command::new(&exe).status().unwrap();
             assert!(status.success(), "{kind:?} {subsystem:?} {status}");
             assert_eq!(
@@ -565,20 +575,12 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
                 ..input
             };
             let (_dir, exe) = build(kind, &program, &env, &input, Subsystem::Console, CXX);
-            match kind {
-                CompilerKind::Gcc => {
-                    for dll in pe::GCC_RUNTIME_DLLS {
-                        assert!(!pe::imports(&exe, dll), "{runtime:?} imports {dll}");
-                    }
-                }
-                CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
-                    assert_eq!(
-                        pe::imports(&exe, "vcruntime140.dll"),
-                        imports,
-                        "{kind:?} {runtime:?}"
-                    );
-                }
-            }
+            let expected = if imports {
+                "runtime dynamic"
+            } else {
+                "runtime static"
+            };
+            pe::check(&exe, test_compiler(kind), expected, &format!("{kind:?}"));
         }
     }
 }
