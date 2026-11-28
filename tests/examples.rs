@@ -223,6 +223,19 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
                     at(profile)
                 )
             });
+            // What the executable's PE says, where `expected/<bin>.pe.txt`
+            // says what it should (`support::pe::check`). Written there
+            // rather than read from Cuno.toml, so that a setting cuno
+            // misreads cannot move the expectation with it.
+            let pe = example.join("expected").join(format!("{bin}.pe.txt"));
+            if let Ok(expectations) = std::fs::read_to_string(&pe) {
+                let exe = project
+                    .path()
+                    .join("target")
+                    .join(dir)
+                    .join(format!("{bin}.exe"));
+                support::pe::check(&exe, compiler, &expectations, &at(profile));
+            }
             let args = [&["-q", "run", "--compiler", name, "--bin", &bin][..], flags].concat();
             let run = project.cuno(&args);
             assert_eq!(run.code, Some(0), "{} `{bin}`: {}", at(profile), run.stderr);
@@ -353,6 +366,7 @@ examples! {
     cpp_fmt_lint = "cpp/fmt-lint",
     cpp_hello = "cpp/hello",
     cpp_include_dirs = "cpp/include-dirs",
+    cpp_layered_settings = "cpp/layered-settings",
     cpp_multi_file = "cpp/multi-file",
     cpp_per_compiler_flags = "cpp/per-compiler-flags",
     cpp_several_bins = "cpp/several-bins",
