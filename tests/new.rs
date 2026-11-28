@@ -74,18 +74,27 @@ fn every_refusal_says_what_to_do() {
     assert_eq!(unknown.code, Some(2), "{}", unknown.stderr);
 }
 
-/// Every edition `cuno new` takes gives a package that builds, passes its
-/// tests and runs on every compiler, and with no warning even at the
-/// strictest settings a user may add (pedantic, warnings as errors, and for
-/// C++ no exceptions or RTTI): the sample is code cuno wrote into their
-/// package. Each sample uses the test entry its standard selects
-/// (`testing.md`, "Recommended split and the `cuno new` sample").
-///
-/// Mutation: give C++17 or C++23 the other entry, put a warning in a
-/// sample, put the tests in the entry file, map an edition to another, or
-/// have `main` print anything else; this test fails.
-#[test]
-fn every_generated_package_builds_tests_and_runs() {
+support::per_compiler! {
+    /// Every edition `cuno new` takes gives a package that builds, passes its
+    /// tests and runs on every compiler, and with no warning even at the
+    /// strictest settings a user may add (pedantic, warnings as errors, and for
+    /// C++ no exceptions or RTTI): the sample is code cuno wrote into their
+    /// package. Each sample uses the test entry its standard selects
+    /// (`testing.md`, "Recommended split and the `cuno new` sample").
+    ///
+    /// Mutation: give C++17 or C++23 the other entry, put a warning in a
+    /// sample, put the tests in the entry file, map an edition to another, or
+    /// have `main` print anything else; a test here fails.
+    every_generated_package_builds_tests_and_runs = generated_package,
+    [msvc = Msvc, clang = Clang, clang_cl = ClangCl]
+}
+
+/// [`every_generated_package_builds_tests_and_runs`] on one compiler, when
+/// it is here.
+fn generated_package(name: &str, compiler: Compiler) {
+    if require(compiler, Language::C, "x.c", "x.exe").is_none() {
+        return;
+    }
     for (edition, test_line) in [
         ("c++20", "test add adds ... ok"),
         ("c++23", "test add adds ... ok"),
@@ -94,46 +103,41 @@ fn every_generated_package_builds_tests_and_runs() {
         ("c17", "test add_adds ... ok"),
         ("c23", "test add_adds ... ok"),
     ] {
-        for (name, compiler) in COMPILERS {
-            if require(compiler, Language::C, "x.c", "x.exe").is_none() {
-                continue;
-            }
-            let p = Project::new();
-            let made = p.cuno(&["new", "app", "--edition", edition, "--vcs", "none"]);
-            assert_eq!(made.code, Some(0), "{edition}: {}", made.stderr);
-            let app = p.path().join("app");
-            // Listed, not opened: the file system here opens either case.
-            let names: Vec<String> = std::fs::read_dir(&app)
-                .unwrap()
-                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-                .collect();
-            assert!(
-                names.contains(&"Cuno.toml".to_owned()),
-                "{edition}: {names:?}"
-            );
-            let manifest = std::fs::read_to_string(app.join("Cuno.toml")).unwrap();
-            assert!(
-                manifest.contains(&format!("edition = \"{edition}\"\n")),
-                "{edition}: {manifest}"
-            );
-            let strict = if edition.starts_with("c++") {
-                "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\nexceptions = false\nrtti = false\n"
-            } else {
-                "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\n"
-            };
-            std::fs::write(app.join("Cuno.toml"), format!("{manifest}{strict}")).unwrap();
-            let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
-            assert_eq!(test.code, Some(0), "{edition} {name}:\n{}", test.stderr);
-            let out = lf(&test.stderr);
-            assert!(out.contains(test_line), "{edition} {name}:\n{out}");
-            assert!(!out.contains("warning"), "{edition} {name}:\n{out}");
-            let run = cuno_in(&p, &app, &["-q", "run", "--compiler", name], &[]);
-            assert_eq!(
-                (run.code, lf(&run.stdout), lf(&run.stderr)),
-                (Some(0), "1 + 2 = 3\n".to_owned(), String::new()),
-                "{edition} {name}"
-            );
-        }
+        let p = Project::new();
+        let made = p.cuno(&["new", "app", "--edition", edition, "--vcs", "none"]);
+        assert_eq!(made.code, Some(0), "{edition}: {}", made.stderr);
+        let app = p.path().join("app");
+        // Listed, not opened: the file system here opens either case.
+        let names: Vec<String> = std::fs::read_dir(&app)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.contains(&"Cuno.toml".to_owned()),
+            "{edition}: {names:?}"
+        );
+        let manifest = std::fs::read_to_string(app.join("Cuno.toml")).unwrap();
+        assert!(
+            manifest.contains(&format!("edition = \"{edition}\"\n")),
+            "{edition}: {manifest}"
+        );
+        let strict = if edition.starts_with("c++") {
+            "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\nexceptions = false\nrtti = false\n"
+        } else {
+            "\n[build]\nwarnings = \"pedantic\"\nwarnings-as-errors = true\n"
+        };
+        std::fs::write(app.join("Cuno.toml"), format!("{manifest}{strict}")).unwrap();
+        let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
+        assert_eq!(test.code, Some(0), "{edition} {name}:\n{}", test.stderr);
+        let out = lf(&test.stderr);
+        assert!(out.contains(test_line), "{edition} {name}:\n{out}");
+        assert!(!out.contains("warning"), "{edition} {name}:\n{out}");
+        let run = cuno_in(&p, &app, &["-q", "run", "--compiler", name], &[]);
+        assert_eq!(
+            (run.code, lf(&run.stdout), lf(&run.stderr)),
+            (Some(0), "1 + 2 = 3\n".to_owned(), String::new()),
+            "{edition} {name}"
+        );
     }
 }
 

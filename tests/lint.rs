@@ -166,30 +166,39 @@ fn fix_leaves_other_packages_alone_and_their_errors_show() {
     );
 }
 
-/// A package fresh from `cuno new`, C or C++, lints clean: nothing in the
-/// templates or in cuno's bundled test headers is a finding under the
-/// default preset.
-///
-/// Mutation: put `bugprone-throwing-static-initialization` or
-/// `bugprone-exception-escape` back in the preset, or drop the NOLINT on
-/// `CUNO_TEST_VALUE`'s conditional; this test fails.
-#[test]
-fn a_fresh_package_lints_clean() {
-    for name in compilers() {
-        for lang in ["c++", "c"] {
-            let parent = Project::new();
-            let made = parent.cuno(&["new", "app", "--lang", lang, "--vcs", "none"]);
-            assert_eq!(made.code, Some(0), "{}", made.stderr);
-            let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
-            cmd.args(["lint", "--compiler", name])
-                .current_dir(parent.path().join("app"));
-            let run = parent.run_command(cmd);
-            assert_eq!(
-                (run.code, run.stderr.as_str()),
-                (Some(0), "      Linted 2 files: 0 warnings, 0 errors\n"),
-                "{name} {lang}"
-            );
-        }
+support::per_compiler! {
+    /// A package fresh from `cuno new`, C or C++, lints clean: nothing in the
+    /// templates or in cuno's bundled test headers is a finding under the
+    /// default preset.
+    ///
+    /// Mutation: put `bugprone-throwing-static-initialization` or
+    /// `bugprone-exception-escape` back in the preset, or drop the NOLINT on
+    /// `CUNO_TEST_VALUE`'s conditional; every test here fails.
+    a_fresh_package_lints_clean = fresh_package_lints_clean,
+    [msvc = Msvc, clang = Clang, clang_cl = ClangCl, gcc = Gcc]
+}
+
+/// [`a_fresh_package_lints_clean`] on one compiler, when it and clang-tidy
+/// are here.
+fn fresh_package_lints_clean(name: &str, compiler: Compiler) {
+    if require_llvm_tool("clang-tidy").is_none()
+        || require(compiler, Language::Cxx, "x.cpp", "x.exe").is_none()
+    {
+        return;
+    }
+    for lang in ["c++", "c"] {
+        let parent = Project::new();
+        let made = parent.cuno(&["new", "app", "--lang", lang, "--vcs", "none"]);
+        assert_eq!(made.code, Some(0), "{}", made.stderr);
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cuno"));
+        cmd.args(["lint", "--compiler", name])
+            .current_dir(parent.path().join("app"));
+        let run = parent.run_command(cmd);
+        assert_eq!(
+            (run.code, run.stderr.as_str()),
+            (Some(0), "      Linted 2 files: 0 warnings, 0 errors\n"),
+            "{name} {lang}"
+        );
     }
 }
 
