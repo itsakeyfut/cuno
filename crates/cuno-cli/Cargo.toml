@@ -15,6 +15,7 @@ clap.workspace = true
 cuno-build.workspace = true
 cuno-core.workspace = true
 cuno-manifest.workspace = true
+cuno-self.workspace = true
 cuno-test.workspace = true
 cuno-toolchain.workspace = true
 cuno-tools.workspace = true

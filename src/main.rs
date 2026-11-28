@@ -14,6 +14,7 @@ fn main() {
         cwd: std::env::current_dir().map_err(|e| e.to_string()),
         host: cuno_cli::HostOs::current(),
         temp: std::env::temp_dir(),
+        exe: std::env::current_exe().map_err(|e| e.to_string()),
         // The default number of jobs; 1 where the system cannot say.
         cores: std::thread::available_parallelism().map_or(std::num::NonZeroU32::MIN, |n| {
             std::num::NonZeroU32::try_from(n).unwrap_or(std::num::NonZeroU32::MAX)

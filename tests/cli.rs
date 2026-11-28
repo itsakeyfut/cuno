@@ -44,6 +44,7 @@ Commands:
   clean      Remove the build's output
   doctor     Diagnose the environment and show a fix for each problem
   toolchain  List the compilers cuno finds, or choose the default one
+  self       Update cuno itself
   help       Print this message or the help of the given subcommand(s)
 
 Options:

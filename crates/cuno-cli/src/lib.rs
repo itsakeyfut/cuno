@@ -13,6 +13,7 @@ mod doctor;
 mod fmt;
 mod lint;
 mod new;
+mod self_cmd;
 mod toolchain;
 
 use std::ffi::OsString;
@@ -44,6 +45,9 @@ pub struct Process {
     pub host: HostOs,
     /// The temporary directory.
     pub temp: PathBuf,
+    /// Where the running executable is, or why that cannot be found. Only
+    /// `cuno self` needs it.
+    pub exe: Result<PathBuf, String>,
     /// How many processors this machine has: the default number of jobs.
     pub cores: NonZeroU32,
     /// Standard output: help, the version and the usage. Any writer, so a
@@ -203,6 +207,19 @@ enum Command {
         #[command(subcommand)]
         command: ToolchainCommand,
     },
+    /// Update cuno itself
+    #[command(name = "self")]
+    SelfCmd {
+        #[command(subcommand)]
+        command: SelfCommand,
+    },
+}
+
+/// `cuno self`'s commands (docs/en/specs/commands.md).
+#[derive(Subcommand)]
+enum SelfCommand {
+    /// Update cuno to the latest release
+    Update,
 }
 
 /// `cuno toolchain`'s commands (docs/en/specs/commands.md).
@@ -324,6 +341,7 @@ pub fn run(process: Process) -> i32 {
         cwd,
         host,
         temp,
+        exe,
         cores,
         mut stdout,
         stdout_is_terminal,
@@ -365,6 +383,7 @@ pub fn run(process: Process) -> i32 {
     let given = Values {
         env: &env,
         cwd: &cwd,
+        exe: &exe,
         host,
         temp: &temp,
         cores,
@@ -419,6 +438,7 @@ struct Values<'a> {
     cwd: &'a Result<PathBuf, String>,
     host: HostOs,
     temp: &'a Path,
+    exe: &'a Result<PathBuf, String>,
     cores: NonZeroU32,
 }
 
@@ -663,6 +683,15 @@ fn dispatch(
                 }
             };
         }
+        Some(Command::SelfCmd { command }) => {
+            // The user's `[term]` alone, as for `cuno new`: cuno itself has
+            // no project.
+            let cwd = given.cwd()?;
+            resolve_user_settings(env, &cwd, shell).map_err(build::boxed)?;
+            return match command {
+                SelfCommand::Update => self_cmd::update(given.exe, env, given.temp, shell),
+            };
+        }
         None => {
             // No command was given. Like Cargo, print the usage to stdout and
             // succeed; see docs/en/specs/commands.md, "Without a command
@@ -859,6 +888,7 @@ mod tests {
             cwd: setup.cwd.map(|_| dir.path().to_owned()),
             host: HostOs::Windows,
             temp: dir.path().to_owned(),
+            exe: Err("not needed".to_owned()),
             cores: NonZeroU32::new(2).unwrap(),
             stdout: Box::new(stdout.clone()),
             stdout_is_terminal: setup.stdout_is_terminal,
