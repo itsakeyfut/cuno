@@ -1,6 +1,6 @@
 # gui-subsystem
 
-An executable linked for the Windows subsystem (`[[bin]] subsystem = "windows"`): started from Explorer, it opens no console window. It keeps a plain `main`, which cuno sets as the entry point, so no `WinMain` is needed. This one opens no window either and exits at once, so it prints nothing.
+An executable linked for the Windows subsystem (`[[bin]] subsystem = "windows"`): started from Explorer, it opens no console window. It keeps a plain `main`, so no `WinMain` is needed: cuno makes `main` the entry point on MSVC, clang and clang-cl, and MinGW's start-up code calls it for a GUI program anyway. This one opens no window either and exits at once, so it prints nothing.
 
 ```sh
 cuno build
