@@ -190,3 +190,74 @@ impl Run {
         );
     }
 }
+
+/// One test per compiler, in a module named after the test the loop was,
+/// so the compilers run in parallel rather than one after another:
+///
+/// ```ignore
+/// support::per_compiler! {
+///     /// (the test's doc comment)
+///     the_test = check,
+///     [msvc = Msvc, clang = Clang, clang_cl = ClangCl]
+/// }
+/// ```
+///
+/// writes `the_test::msvc`, `the_test::clang` and `the_test::clang_cl`, each
+/// calling `check(name, compiler)` with the compiler's entry in the file's
+/// `COMPILERS`. `check` is any expression callable that way, and sees the
+/// file's items. Each test first asserts that its function name is that
+/// entry with `-` read as `_`, so a test cannot run another compiler than
+/// the one it is named for; that would pass, the other compiler building
+/// just as well. The module also gets `every_compiler_is_split`, which fails
+/// when the file's `COMPILERS` and the list given here differ.
+///
+/// The doc comment goes inside the invocation: above it, rustc warns that it
+/// documents nothing.
+// Not every test binary that includes `support` splits a test.
+#[allow(unused_macros)]
+macro_rules! per_compiler {
+    ($(#[$doc:meta])* $test:ident = $check:expr,
+     [$($fn_name:ident = $compiler:ident),+ $(,)?]) => {
+        $(#[$doc])*
+        mod $test {
+            #[allow(unused_imports)]
+            use super::*;
+
+            /// The compilers this test is split over, in order.
+            const SPLIT: &[$crate::support::compilers::Compiler] =
+                &[$($crate::support::compilers::Compiler::$compiler),+];
+
+            /// The compiler's name in the file's `COMPILERS`.
+            fn name(compiler: $crate::support::compilers::Compiler) -> &'static str {
+                COMPILERS
+                    .iter()
+                    .find(|(_, c)| *c == compiler)
+                    .map(|(name, _)| *name)
+                    .unwrap_or_else(|| panic!("{compiler:?} is not in COMPILERS"))
+            }
+
+            $(
+                #[test]
+                fn $fn_name() {
+                    let compiler = $crate::support::compilers::Compiler::$compiler;
+                    let name = name(compiler);
+                    assert_eq!(
+                        stringify!($fn_name),
+                        name.replace('-', "_"),
+                        "the test is named for another compiler than it runs"
+                    );
+                    ($check)(name, compiler);
+                }
+            )+
+
+            /// Every compiler in `COMPILERS` has a test here, and no other.
+            #[test]
+            fn every_compiler_is_split() {
+                let listed: Vec<_> = COMPILERS.iter().map(|(_, c)| *c).collect();
+                assert_eq!(SPLIT, listed.as_slice(), "COMPILERS and the split differ");
+            }
+        }
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use per_compiler;
