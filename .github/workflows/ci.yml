@@ -238,15 +238,21 @@ jobs:
             if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after two installs" }
             if (Test-Path (Join-Path $bin 'cuno.exe.old')) { throw 'cuno.exe.old was left behind' }
 
-            # The directory already there, quoted, with `/` and a trailing
-            # separator, in a REG_SZ value: nothing appended, type kept.
+            # A REG_SZ value without the directory: appended, type kept.
             $other = ((Get-UserPath) -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ine $bin }) -join ';'
+            Set-ItemProperty HKCU:\Environment -Name Path -Value $other -Type String
+            $r = Invoke-Installer @('-File', 'install.ps1')
+            if ($r.Code -ne 0) { throw 'the install into a REG_SZ PATH failed' }
+            if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after an install into REG_SZ" }
+            if ((Get-Item HKCU:\Environment).GetValueKind('Path') -ne 'String') { throw 'the REG_SZ Path changed type' }
+
+            # The directory already there, quoted, with `/` and a trailing
+            # separator: nothing appended.
             $spelled = '"' + $bin.Replace('\', '/') + '/"'
             Set-ItemProperty HKCU:\Environment -Name Path -Value "$other;$spelled" -Type String
             $r = Invoke-Installer @('-File', 'install.ps1')
             if ($r.Code -ne 0) { throw 'the install over another spelling failed' }
             if ((Get-UserPath) -ne "$other;$spelled") { throw "PATH changed though it named ${bin}: $(Get-UserPath)" }
-            if ((Get-Item HKCU:\Environment).GetValueKind('Path') -ne 'String') { throw 'the REG_SZ Path changed type' }
 
             $v = $version -replace '^cuno (\S+).*', '$1'
             $zip = "cuno-$v-x86_64-pc-windows-msvc.zip"
