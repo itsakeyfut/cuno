@@ -506,6 +506,32 @@ mod tests {
         );
     }
 
+    /// A cuno cargo installed loses its home and is pointed to cargo for
+    /// the rest; no `PATH` is edited for it.
+    ///
+    /// Mutation: give it the installer's treatment, or drop the help; this
+    /// test fails.
+    #[test]
+    fn a_cargo_installed_cuno_is_pointed_to_cargo_uninstall() {
+        let s = Setup::new();
+        let cargo = Setup {
+            exe: s.dir.path().join(r"cargoin\cuno.exe"),
+            ..s
+        };
+        let (code, out) = cargo.run(true, "", false);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(
+            out,
+            format!(
+                "     Removed {}
+help: cuno itself was installed by cargo install; run cargo uninstall cuno to remove it
+",
+                cargo.home().display()
+            )
+        );
+        assert!(!cargo.home().exists());
+    }
+
     /// `-y` removes without asking.
     ///
     /// Mutation: ask even with `-y`; this test fails.
