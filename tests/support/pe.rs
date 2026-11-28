@@ -46,7 +46,7 @@ pub const GCC_RUNTIME_DLLS: [&str; 3] = ["libstdc++-6.dll", "libwinpthread-1.dll
 ///   whether the executable imports the C runtime's `vcruntime140.dll`. For
 ///   GCC, whose own runtime is static and whose C runtime (UCRT) is dynamic
 ///   under either setting, both mean the same: that it imports none of
-///   [`GCC_RUNTIME_DLLS`].
+///   [`GCC_RUNTIME_DLLS`], nor MSVC's `vcruntime140.dll`.
 ///
 /// Blank lines are skipped. Any other line fails, so a misspelt
 /// expectation is not silently left unchecked.
@@ -65,6 +65,11 @@ pub fn check(exe: &Path, compiler: Compiler, expectations: &str, at: &str) {
                     for dll in GCC_RUNTIME_DLLS {
                         assert!(!imports(exe, dll), "{at}: imports {dll}");
                     }
+                    // MinGW's C runtime is UCRT, never MSVC's vcruntime.
+                    assert!(
+                        !imports(exe, "vcruntime140.dll"),
+                        "{at}: imports vcruntime140.dll"
+                    );
                 }
                 Compiler::Msvc | Compiler::Clang | Compiler::ClangCl => assert_eq!(
                     imports(exe, "vcruntime140.dll"),
