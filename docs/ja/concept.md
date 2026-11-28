@@ -146,7 +146,7 @@ cuno は長期的に育てるプロジェクトです。
 | MVP | Windows 11 + MSVC / Clang。`new` / `build` / `run` / `check` / `clean` / `test` / `fmt` / `lint` / `doctor` |
 | MVP 直後 | GCC 対応、`cuno init`、ツールチェーンの一覧と選択 |
 | 依存管理 | Git / URL 指定 → レシピインデックス（`cuno add sdl3`）→ 将来は公開パッケージサービス |
-| その後 | ライブラリ・ワークスペース、Linux / macOS、クロスコンパイル（Android / WebAssembly）、IDE 連携、ビルドキャッシュ |
+| その後 | ライブラリ・ワークスペース、Linux / macOS、クロスコンパイル（Android / WebAssembly）、IDE 連携、ビルドキャッシュ、OS・組み込み開発（freestanding） |
 | 将来 | 自作フォーマッタ、コンパイラの自動インストール、C++20 モジュール |
 
 ### safec について
