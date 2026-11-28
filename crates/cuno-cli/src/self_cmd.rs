@@ -96,24 +96,28 @@ pub fn uninstall(
     input: Input<'_>,
     shell: &mut Shell,
 ) -> Result<i32, Box<dyn CunoError>> {
+    let remove_rest = |home: &Path| uninstall::remove_after_exit(home, std::process::id(), env);
     uninstall_with(
         exe,
         env,
         yes,
         input,
         &RegistryPath { env: env.clone() },
+        &remove_rest,
         shell,
     )
 }
 
-/// [`uninstall()`] with the user's `PATH` given, so tests never touch the
-/// registry.
+/// [`uninstall()`] with the user's `PATH`, and what removes the rest of the
+/// home once cuno has exited, given: tests touch neither the registry nor
+/// a real process.
 fn uninstall_with(
     exe: &Result<PathBuf, String>,
     env: &Env,
     yes: bool,
     input: Input<'_>,
     path: &dyn UserPath,
+    remove_rest: &dyn Fn(&Path) -> Result<(), SelfError>,
     shell: &mut Shell,
 ) -> Result<i32, Box<dyn CunoError>> {
     let exe = exe.clone().map_err(|e| boxed(SelfError::Exe(e)))?;
@@ -151,7 +155,7 @@ fn uninstall_with(
         shell.status("Removed", format!("{} from PATH", bin.display()));
     }
     if report.exe_left {
-        uninstall::remove_after_exit(&home, std::process::id(), env).map_err(boxed)?;
+        remove_rest(&home).map_err(boxed)?;
     }
     shell.status("Removed", home.display());
     match method {
@@ -452,6 +456,7 @@ mod tests {
                 yes,
                 input,
                 &FakePath::default(),
+                &|_: &Path| -> Result<(), SelfError> { panic!("nothing is left running here") },
                 &mut shell,
             ) {
                 Ok(code) => code,
@@ -568,6 +573,124 @@ mod tests {
                 "warning: nothing to remove: {} does not exist\n",
                 s.home().display()
             )
+        );
+    }
+
+    /// A `PATH` answering `present`, recording what it was asked.
+    struct AnsweringPath {
+        present: bool,
+        asked: std::cell::RefCell<Vec<PathBuf>>,
+    }
+
+    impl UserPath for AnsweringPath {
+        fn remove(&self, dir: &Path) -> Result<bool, SelfError> {
+            self.asked.borrow_mut().push(dir.to_owned());
+            Ok(self.present)
+        }
+    }
+
+    /// Uninstalls the installer's cuno, at `<home>\bin\cuno.exe`, answering
+    /// `answer`, with a `PATH` that holds the entry or not and a remover of
+    /// the rest that fails or not: the exit code, what was printed, and the
+    /// home the remover was given.
+    fn run_installer(
+        answer: &str,
+        present: bool,
+        rest_fails: bool,
+    ) -> (i32, String, Vec<PathBuf>, Setup) {
+        let s = Setup::new();
+        let bin = s.home().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("cuno.exe"), "").unwrap();
+        let installed = Setup {
+            exe: bin.join("cuno.exe"),
+            ..s
+        };
+        let out = Captured::default();
+        let mut shell = Shell::new(Box::new(out.clone()), None, &installed.env, false);
+        let mut stdin = std::io::Cursor::new(answer.as_bytes().to_vec());
+        let input = Input {
+            stdin: &mut stdin,
+            is_terminal: true,
+        };
+        let path = AnsweringPath {
+            present,
+            asked: std::cell::RefCell::new(Vec::new()),
+        };
+        let given = std::cell::RefCell::new(Vec::new());
+        let remove_rest = |home: &Path| {
+            given.borrow_mut().push(home.to_owned());
+            if rest_fails {
+                return Err(SelfError::Helper {
+                    reason: "gone".into(),
+                });
+            }
+            Ok(())
+        };
+        let code = match uninstall_with(
+            &Ok(installed.exe.clone()),
+            &installed.env,
+            false,
+            input,
+            &path,
+            &remove_rest,
+            &mut shell,
+        ) {
+            Ok(code) => code,
+            Err(e) => {
+                shell.error(&e);
+                e.exit_class().code()
+            }
+        };
+        assert_eq!(*path.asked.borrow(), [bin]);
+        (code, out.text(), given.into_inner(), installed)
+    }
+
+    /// The installer's cuno: the question names the `PATH` entry too, `y`
+    /// is a yes, the entry's removal is said, and the rest of the home is
+    /// handed to the remover that runs once cuno exits.
+    ///
+    /// Mutation: leave the `PATH` line out of the question, take only `yes`
+    /// as a yes, say the `PATH` line whatever was removed, or never start
+    /// the remover; this test fails.
+    #[test]
+    fn the_installers_cuno_names_its_path_entry_and_leaves_the_rest_to_go() {
+        let (code, out, given, s) = run_installer("y\n", true, false);
+        let home = s.home();
+        let bin = home.join("bin");
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(
+            out,
+            format!(
+                "This removes:\n  {}\n  {} from PATH\nContinue? [y/N]      Removed {} from PATH\n     Removed {}\n",
+                home.display(),
+                bin.display(),
+                bin.display(),
+                home.display()
+            )
+        );
+        assert_eq!(given, std::slice::from_ref(&home));
+        assert_eq!(std::fs::read_dir(&home).unwrap().count(), 1);
+
+        let (code, out, _, s) = run_installer("y\n", false, false);
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.contains("from PATH\n     Removed"), "{out}");
+        assert!(
+            out.ends_with(&format!("     Removed {}\n", s.home().display())),
+            "{out}"
+        );
+    }
+
+    /// A remover that cannot start is an error, not a success.
+    ///
+    /// Mutation: ignore the remover's failure; this test fails.
+    #[test]
+    fn a_remover_that_cannot_start_is_an_error() {
+        let (code, out, _, _) = run_installer("y\n", true, true);
+        assert_eq!(code, 3, "{out}");
+        assert!(
+            out.contains("error: cannot start the process that removes cuno.exe: gone"),
+            "{out}"
         );
     }
 }

@@ -1104,4 +1104,56 @@ mod tests {
         assert_eq!(parser_color(None, false, true), Clap::Always);
         assert_eq!(parser_color(None, false, false), Clap::Never);
     }
+
+    /// `cuno self uninstall` through the whole command line: without `-y`
+    /// and with no terminal it refuses, with `-y` (or `--yes`) it removes.
+    /// The cuno it runs as is placed outside its home, so no `PATH` is
+    /// edited and nothing is left running.
+    ///
+    /// Mutation: pass `!yes`, drop `-y`'s short name, or pass the terminal
+    /// flag as true; this test fails.
+    #[test]
+    fn self_uninstall_takes_yes_and_the_terminal_from_the_command_line() {
+        for (args, code, gone) in [
+            (vec!["self", "uninstall"], 2, false),
+            (vec!["self", "uninstall", "-y"], 0, true),
+            (vec!["self", "uninstall", "--yes"], 0, true),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join("home");
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(home.join("config.toml"), "").unwrap();
+            let env = Env::from_pairs(
+                [
+                    ("CUNO_HOME".into(), home.clone().into_os_string()),
+                    (
+                        "USERPROFILE".into(),
+                        dir.path().join("user").into_os_string(),
+                    ),
+                ],
+                NameCase::Insensitive,
+            );
+            let stderr = Captured::default();
+            let got = run(Process {
+                args: std::iter::once("cuno")
+                    .chain(args.iter().copied())
+                    .map(OsString::from)
+                    .collect(),
+                env,
+                cwd: Ok(dir.path().to_owned()),
+                host: HostOs::Windows,
+                temp: dir.path().to_owned(),
+                exe: Ok(dir.path().join("tools").join("cuno.exe")),
+                cores: NonZeroU32::new(2).unwrap(),
+                stdout: Box::new(Captured::default()),
+                stdout_is_terminal: false,
+                stderr: Box::new(stderr.clone()),
+                stderr_is_terminal: false,
+                stdin: Box::new(std::io::empty()),
+                stdin_is_terminal: false,
+            });
+            assert_eq!(got, code, "{args:?}: {}", stderr.text());
+            assert_eq!(!home.exists(), gone, "{args:?}");
+        }
+    }
 }

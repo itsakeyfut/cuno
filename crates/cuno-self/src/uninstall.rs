@@ -102,22 +102,70 @@ impl UserPath for RegistryPath {
     }
 }
 
-/// Refuses a cuno home that is not a directory of cuno's own: a drive's
-/// root, the user's home directory, or one holding it. A mistaken
-/// `CUNO_HOME` would otherwise remove the user's files wholesale.
+/// `path` without a `\?\` prefix: `\?\C:\x` as `C:\x`, `\?\UNC\s\x` as
+/// `\s\x`, so the two spellings of a place compare alike.
+fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\?\UNC\") {
+        PathBuf::from(format!(r"\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_owned()
+    }
+}
+
+/// Refuses a cuno home that is not a directory of cuno's own: the root of a
+/// drive or a share, the user's home directory, or one holding it, however
+/// spelled. A mistaken `CUNO_HOME` would otherwise remove the user's files
+/// wholesale.
 pub fn guard(home: &Path, env: &Env) -> Result<(), SelfError> {
     let refuse = || SelfError::NotOwnHome {
         home: home.to_owned(),
     };
-    let root = paths::lexical(home).parent().is_none();
-    if root {
+    let plain_home = plain(home);
+    // A root has a prefix and a root and nothing under them, whether a
+    // drive's (`C:\`) or a share's (`\server\share`).
+    let named = paths::lexical(&plain_home)
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .count();
+    if named == 0 {
         return Err(refuse());
     }
     for name in ["USERPROFILE", "HOME"] {
         if let Some(user) = env.set_value(name)
-            && paths::within(Path::new(user), home, env.case())
+            && paths::within(&plain(Path::new(user)), &plain_home, env.case())
         {
             return Err(refuse());
+        }
+    }
+    Ok(())
+}
+
+/// Whether `path` is a link: a symbolic link, or on Windows any reparse
+/// point, junctions among them.
+fn is_link(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// Refuses a home, or a `bin` in it, that is a link: removing through it
+/// would remove what it leads to, outside the home.
+pub fn refuse_links(home: &Path) -> Result<(), SelfError> {
+    for path in [home.to_owned(), home.join("bin")] {
+        if is_link(&path) {
+            return Err(SelfError::Link { path });
         }
     }
     Ok(())
@@ -144,6 +192,7 @@ pub fn uninstall(
     path: &dyn UserPath,
     case: NameCase,
 ) -> Result<Report, SelfError> {
+    refuse_links(home)?;
     match method {
         Method::Installer => {
             let bin = home.join("bin");
@@ -187,9 +236,14 @@ fn remove_all_but(dir: &Path, keep: &Path, case: NameCase) -> Result<(), SelfErr
     Ok(())
 }
 
-/// Removes a file, or a directory and everything in it.
+/// Removes a file, or a directory and everything in it. A link is removed
+/// itself, and what it leads to is left alone.
 fn remove(path: &Path) -> Result<(), SelfError> {
-    let result = if path.is_dir() {
+    let result = if is_link(path) {
+        // A directory link (a junction, a directory symlink) is removed as
+        // an empty directory, which removes the link and not its target.
+        std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path))
+    } else if path.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
         std::fs::remove_file(path)
@@ -230,6 +284,9 @@ pub fn remove_after_exit(home: &Path, pid: u32, env: &Env) -> Result<(), SelfErr
         .env_clear()
         .envs(env.vars())
         .env("CUNO_UNINSTALL_HOME", home)
+        // Not cuno's own directory, which may be inside the home: a process
+        // working in a directory keeps it from being removed.
+        .current_dir(home.parent().unwrap_or(home))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -437,6 +494,263 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(2));
         assert!(home.exists(), "removed while cuno still ran");
         cuno.wait().unwrap();
+        let gone = (0..40).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            !home.exists()
+        });
+        assert!(gone, "{} is still there", home.display());
+    }
+
+    /// `link` made a junction to `target`.
+    fn junction(link: &Path, target: &Path) {
+        let made = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    }
+
+    /// A home, or its `bin`, that is a junction is refused whatever the
+    /// method, and what it leads to is left as it was.
+    ///
+    /// Mutation: drop `refuse_links`, or check only the home; this test
+    /// fails.
+    #[test]
+    fn a_linked_home_or_bin_is_refused() {
+        for method in [Method::Installer, Method::Other] {
+            let t = tempfile::tempdir().unwrap();
+            let target = t.path().join("elsewhere");
+            std::fs::create_dir_all(target.join("bin")).unwrap();
+            std::fs::write(target.join("precious.txt"), "").unwrap();
+            let home = t.path().join(".cuno");
+            junction(&home, &target);
+            let exe = home.join(r"bin\cuno.exe");
+            let result = uninstall(
+                &home,
+                &exe,
+                method,
+                &FakePath::default(),
+                NameCase::Insensitive,
+            );
+            assert_eq!(result, Err(SelfError::Link { path: home.clone() }));
+            assert!(target.join("precious.txt").exists());
+        }
+        let t = tempfile::tempdir().unwrap();
+        let target = t.path().join("elsewhere");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("precious.txt"), "").unwrap();
+        let home = t.path().join(".cuno");
+        std::fs::create_dir_all(&home).unwrap();
+        junction(&home.join("bin"), &target);
+        let exe = home.join(r"bin\cuno.exe");
+        let result = uninstall(
+            &home,
+            &exe,
+            Method::Installer,
+            &FakePath::default(),
+            NameCase::Insensitive,
+        );
+        assert_eq!(
+            result,
+            Err(SelfError::Link {
+                path: home.join("bin")
+            })
+        );
+        assert!(target.join("precious.txt").exists());
+    }
+
+    /// A junction inside the home is removed itself; what it leads to is
+    /// not.
+    ///
+    /// Mutation: remove a link's contents as a directory's; this test
+    /// fails.
+    #[test]
+    fn a_link_inside_the_home_is_removed_but_not_followed() {
+        for method in [Method::Installer, Method::Other] {
+            let (parent, home, exe) = home();
+            let target = parent.path().join(r"sibling\kept");
+            std::fs::create_dir_all(&target).unwrap();
+            std::fs::write(target.join("precious.txt"), "").unwrap();
+            junction(&home.join("toolchains"), &target);
+            let elsewhere = parent.path().join(r"tools\cuno.exe");
+            let exe = if method == Method::Installer {
+                exe
+            } else {
+                elsewhere
+            };
+            uninstall(
+                &home,
+                &exe,
+                method,
+                &FakePath::default(),
+                NameCase::Insensitive,
+            )
+            .unwrap();
+            assert!(!home.join("toolchains").exists());
+            assert!(target.join("precious.txt").exists(), "{method:?}");
+        }
+    }
+
+    /// The `PATH` entry goes before any file, so a file that cannot be
+    /// removed never leaves an entry pointing at a half-removed home; a
+    /// `PATH` that cannot be edited stops it with nothing removed; and with
+    /// no entry, none is reported.
+    ///
+    /// Mutation: remove the files first, swallow the `PATH` error, or
+    /// report an entry regardless; this test fails.
+    #[test]
+    fn path_goes_first_and_its_failure_removes_nothing() {
+        /// A `PATH` that answers `answer`, noting whether the home still held
+        /// its settings when asked.
+        struct Watching<'a> {
+            home: &'a Path,
+            fail: bool,
+            saw_settings: RefCell<Option<bool>>,
+        }
+        impl UserPath for Watching<'_> {
+            fn remove(&self, _: &Path) -> Result<bool, SelfError> {
+                *self.saw_settings.borrow_mut() = Some(self.home.join("config.toml").exists());
+                if self.fail {
+                    return Err(SelfError::PathEdit {
+                        reason: "denied".into(),
+                    });
+                }
+                Ok(false)
+            }
+        }
+        let (_parent, home, exe) = home();
+        let path = Watching {
+            home: &home,
+            fail: false,
+            saw_settings: RefCell::new(None),
+        };
+        let report =
+            uninstall(&home, &exe, Method::Installer, &path, NameCase::Insensitive).unwrap();
+        assert_eq!(*path.saw_settings.borrow(), Some(true));
+        assert!(!report.path_removed);
+
+        let (_parent, home, exe) = super::tests::home();
+        let failing = Watching {
+            home: &home,
+            fail: true,
+            saw_settings: RefCell::new(None),
+        };
+        let result = uninstall(
+            &home,
+            &exe,
+            Method::Installer,
+            &failing,
+            NameCase::Insensitive,
+        );
+        assert!(
+            matches!(result, Err(SelfError::PathEdit { .. })),
+            "{result:?}"
+        );
+        assert!(home.join("config.toml").exists());
+    }
+
+    /// The root of a share, and the user's home spelled with `\\?\`, are
+    /// refused like a drive's root and the plain spelling; case is compared
+    /// as the host compares it.
+    ///
+    /// Mutation: test only for a drive's root, compare the `\\?\` spelling
+    /// as written, or ignore `env.case()`; this test fails.
+    #[test]
+    fn every_spelling_of_a_root_or_the_users_home_is_refused() {
+        let user = tempfile::tempdir().unwrap();
+        let env = Env::from_pairs(
+            [("USERPROFILE".into(), user.path().as_os_str().to_owned())],
+            NameCase::Insensitive,
+        );
+        let verbatim = format!(r"\\?\{}", user.path().display());
+        for home in [
+            r"\\server\share",
+            r"\\server\share\",
+            r"\\?\UNC\server\share",
+            r"\\?\C:\",
+            verbatim.as_str(),
+        ] {
+            assert!(
+                matches!(
+                    guard(Path::new(home), &env),
+                    Err(SelfError::NotOwnHome { .. })
+                ),
+                "{home}"
+            );
+        }
+        assert_eq!(guard(Path::new(r"\\server\share\cuno"), &env), Ok(()));
+        // Paths on no drive here, so the file system cannot settle the case.
+        let folded = |case| {
+            let env = Env::from_pairs([("USERPROFILE".into(), r"Q:\Users\Me".into())], case);
+            guard(Path::new(r"q:\users\me"), &env)
+        };
+        assert!(matches!(
+            folded(NameCase::Insensitive),
+            Err(SelfError::NotOwnHome { .. })
+        ));
+        assert_eq!(folded(NameCase::Sensitive), Ok(()));
+    }
+
+    /// With no `SystemRoot`, Windows' usual place.
+    ///
+    /// Mutation: change the default; this test fails.
+    #[test]
+    fn powershell_defaults_to_the_usual_windows() {
+        let env = Env::from_pairs([], NameCase::Insensitive);
+        assert_eq!(
+            powershell(&env),
+            PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+        );
+    }
+
+    /// The process that removes what is left works outside the home, so a
+    /// cuno started inside it does not keep it; it removes read-only files;
+    /// and it tries again while a file is still held.
+    ///
+    /// Mutation: leave the helper in cuno's directory, drop `-Force`, or try
+    /// once; this test fails.
+    #[test]
+    fn what_is_left_goes_even_when_held_for_a_while() {
+        let parent = tempfile::tempdir().unwrap();
+        let home = parent.path().join(".cuno");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        let read_only = home.join("settings.toml");
+        std::fs::write(&read_only, "").unwrap();
+        let mut permissions = std::fs::metadata(&read_only).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&read_only, permissions).unwrap();
+        let held = home.join(r"bin\held.txt");
+        std::fs::write(&held, "").unwrap();
+        let env = Env::from_process();
+        // A file held, without sharing, for about 3 seconds after cuno exits.
+        let lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&held)
+                .unwrap()
+        };
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            drop(lock);
+        });
+        let mut cuno = Command::new(powershell(&env))
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 1"])
+            .current_dir(&home)
+            .spawn()
+            .unwrap();
+        // The helper is started from inside the home, as from a cuno whose
+        // directory it is.
+        let here = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&home).unwrap();
+        let started = remove_after_exit(&home, cuno.id(), &env);
+        std::env::set_current_dir(here).unwrap();
+        started.unwrap();
+        cuno.wait().unwrap();
+        release.join().unwrap();
         let gone = (0..40).any(|_| {
             std::thread::sleep(std::time::Duration::from_millis(500));
             !home.exists()

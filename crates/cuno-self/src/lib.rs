@@ -104,6 +104,11 @@ pub enum SelfError {
         /// Why.
         reason: String,
     },
+    /// The cuno home, or its `bin`, is a link.
+    Link {
+        /// The link.
+        path: PathBuf,
+    },
     /// Uninstalling would ask, and standard input is not a terminal.
     NoAnswer,
 }
@@ -155,6 +160,11 @@ impl fmt::Display for SelfError {
                     "cannot start the process that removes cuno.exe: {reason}"
                 )
             }
+            SelfError::Link { path } => write!(
+                f,
+                "refusing to remove {}: it is a link; remove it and what it leads to by hand",
+                path.display()
+            ),
             SelfError::NoAnswer => f.write_str(
                 "cuno self uninstall asks before deleting, and standard input is not a terminal",
             ),
@@ -183,7 +193,8 @@ impl CunoError for SelfError {
             | SelfError::NotOwnHome { .. }
             | SelfError::Remove { .. }
             | SelfError::PathEdit { .. }
-            | SelfError::Helper { .. } => ExitClass::Setup,
+            | SelfError::Helper { .. }
+            | SelfError::Link { .. } => ExitClass::Setup,
         }
     }
 
@@ -208,7 +219,8 @@ impl CunoError for SelfError {
             | SelfError::NotOwnHome { .. }
             | SelfError::Remove { .. }
             | SelfError::PathEdit { .. }
-            | SelfError::Helper { .. } => None,
+            | SelfError::Helper { .. }
+            | SelfError::Link { .. } => None,
         }
     }
 }
@@ -342,6 +354,10 @@ mod tests {
                     reason: "gone".into(),
                 },
                 "cannot start the process that removes cuno.exe: gone",
+            ),
+            (
+                SelfError::Link { path: p(r"C:\h") },
+                r"refusing to remove C:\h: it is a link; remove it and what it leads to by hand",
             ),
         ];
         for (error, message) in cases {
