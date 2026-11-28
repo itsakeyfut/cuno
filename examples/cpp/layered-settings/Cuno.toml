@@ -1,0 +1,21 @@
+[package]
+name = "layered-settings"
+version = "0.1.0"
+
+[build]
+defines = ["FROM_BUILD"]
+warnings = "all"
+runtime = "static"                  # MSVC and Clang: the C runtime inside the executable
+
+[platform.windows.build]
+defines = ["FROM_WINDOWS"]          # added on Windows
+
+[platform.linux.build]
+defines = ["FROM_LINUX"]            # not on Windows: a layer that does not apply
+
+[profile.dev.build]
+defines = ["FROM_DEV"]
+
+[profile.release.build]
+defines = ["FROM_RELEASE"]
+warnings-as-errors = true           # a single value, set for release only

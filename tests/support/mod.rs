@@ -19,6 +19,7 @@
 #![allow(dead_code)]
 
 pub mod compilers;
+pub mod pe;
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};

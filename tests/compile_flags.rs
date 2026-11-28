@@ -19,6 +19,17 @@ use cuno_toolchain::msvc::{self, SystemRegistry};
 use cuno_toolchain::select::CompilerKind;
 use cuno_toolchain::{SystemRunner, Version};
 use support::compilers::{Compiler, Language, gcc_dir, require, require_driver};
+use support::pe;
+
+/// The test support's name for `kind`, which `support::pe::check` takes.
+fn test_compiler(kind: CompilerKind) -> Compiler {
+    match kind {
+        CompilerKind::Msvc => Compiler::Msvc,
+        CompilerKind::Clang => Compiler::Clang,
+        CompilerKind::ClangCl => Compiler::ClangCl,
+        CompilerKind::Gcc => Compiler::Gcc,
+    }
+}
 
 /// Each available driver, its program, and the environment it builds in.
 fn drivers() -> Vec<(CompilerKind, PathBuf, Env, Version)> {
@@ -179,17 +190,6 @@ fn build_and_run(
     let (_dir, exe) = build(kind, program, env, input, Subsystem::Console, text);
     let output = Command::new(&exe).output().unwrap();
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
-/// The PE subsystem an executable was linked for: 2 for Windows GUI, 3 for
-/// console.
-fn pe_subsystem(exe: &Path) -> u16 {
-    let bytes = std::fs::read(exe).unwrap();
-    let pe = u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
-    // The signature (4 bytes), the file header (20), then the optional
-    // header, whose Subsystem field is at 68 in PE32+.
-    let at = pe + 4 + 20 + 68;
-    u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap())
 }
 
 /// Every edition compiles with each driver and the program reports that
@@ -378,8 +378,8 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
     build_settings.links = vec!["user32".into()];
     for (kind, program, env, _) in drivers() {
         for (subsystem, expected, debug, lto) in [
-            (Subsystem::Console, 3, true, false),
-            (Subsystem::Windows, 2, false, true),
+            (Subsystem::Console, "subsystem console", true, false),
+            (Subsystem::Windows, "subsystem windows", false, true),
         ] {
             profile.debug_info = debug;
             profile.lto = lto;
@@ -394,7 +394,7 @@ int main() { return GetSystemMetrics(SM_CXSCREEN) >= 0 ? 0 : 1; }
                 mode: Mode::Compile,
             };
             let (dir, exe) = build(kind, &program, &env, &input, subsystem, text);
-            assert_eq!(pe_subsystem(&exe), expected, "{kind:?} {subsystem:?}");
+            pe::check(&exe, test_compiler(kind), expected, &format!("{kind:?}"));
             let status = Command::new(&exe).status().unwrap();
             assert!(status.success(), "{kind:?} {subsystem:?} {status}");
             assert_eq!(
@@ -559,7 +559,7 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
             link_args(&link, &[object], &exe),
         );
         match kind {
-            CompilerKind::Gcc => assert_eq!(pe_subsystem(&exe), 3, "a console program"),
+            CompilerKind::Gcc => assert_eq!(pe::subsystem(&exe), 3, "a console program"),
             CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
                 assert!(!linked, "{kind:?} linked WinMain as a console program");
             }
@@ -575,22 +575,12 @@ fn console_is_stated_and_the_runtime_is_the_ones_asked_for() {
                 ..input
             };
             let (_dir, exe) = build(kind, &program, &env, &input, Subsystem::Console, CXX);
-            let bytes = std::fs::read(&exe).unwrap().to_ascii_lowercase();
-            let has = |name: &[u8]| bytes.windows(name.len()).any(|w| w == name);
-            match kind {
-                CompilerKind::Gcc => {
-                    for dll in [&b"libstdc++-6.dll"[..], b"libwinpthread-1.dll", b"libgcc_s"] {
-                        assert!(
-                            !has(dll),
-                            "{runtime:?} imports {}",
-                            String::from_utf8_lossy(dll)
-                        );
-                    }
-                }
-                CompilerKind::Msvc | CompilerKind::Clang | CompilerKind::ClangCl => {
-                    assert_eq!(has(b"vcruntime140.dll"), imports, "{kind:?} {runtime:?}");
-                }
-            }
+            let expected = if imports {
+                "runtime dynamic"
+            } else {
+                "runtime static"
+            };
+            pe::check(&exe, test_compiler(kind), expected, &format!("{kind:?}"));
         }
     }
 }
