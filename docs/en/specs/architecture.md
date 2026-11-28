@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob c7391385d92abc1db5fb2d0dfc4686ed02215240 -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob 88938129f7afd2755895061e44001ceaaf7da854 -->
 
 # Internal Structure of cuno Itself
 
@@ -67,7 +67,7 @@ The command modules are limited to those in the following table. `tests/architec
 | `lint` | `lint` |
 | `new` | `new`, `init` |
 | `toolchain` | `toolchain list`, `toolchain default` |
-| `self_cmd` | `self update` |
+| `self_cmd` | `self update`, `self uninstall` |
 
 - `build` holds four commands because they share one build flow, as in [commands.md](commands.md#available-for-build-commands-build--run--check--test).
 - Rationale: when there is a place to put processing that several commands share, processing accumulates there without anyone asking which crate should answer, and rules get duplicated (the toolchain preparation shared by the build and doctor, and doctor holding a copy of the compiler selection order). Removing the shared place forces the decision of where something belongs at the time it is written. Also, because only `main.rs` reads the process, commands can be called with values alone.

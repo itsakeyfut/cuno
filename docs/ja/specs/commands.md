@@ -445,7 +445,9 @@ cuno の管理ディレクトリを消し、cuno 自身のインストーラで�
 | `-y` / `--yes` | 確認せずに消す |
 
 - 消すもの: 管理ディレクトリ全体（`config.toml`、展開した同梱ヘッダ、自動インストールしたコンパイラなど）と、cuno 自身のインストーラで入れた場合は、ユーザーの `PATH` の `<管理ディレクトリ>\bin`。プロジェクトの中のもの（`.cuno/`、`target/`）と、ほかの場所のものには触れない。
-- 消す前に、消すものを示して `Continue? [y/N]` と聞く（標準エラー）。`y` か `yes`（大文字・小文字を問わない）なら続け、それ以外は何も消さずに終わる（終了コード 0）。
+- 管理ディレクトリが、ドライブのルートか、利用者のホームディレクトリ（`USERPROFILE`、`HOME`）か、それらを含むディレクトリなら、何も消さずに `error: refusing to remove <home>: it is not a directory of cuno's own` （`<home>` は管理ディレクトリ）でエラー（終了コード 3）。
+  - 理由: `CUNO_HOME` を誤って設定していると、利用者のファイルをまとめて消してしまう。
+- 消す前に、消すものを 1 行ずつ示して `Continue? [y/N]` と聞く（標準エラー）。`y` か `yes`（大文字・小文字を問わない）なら続け、それ以外は何も消さずに終わる（終了コード 0）。
   - `-y` があれば聞かない。
   - `-y` がなく、標準入力が端末でなければ、何も消さずに `error: cuno self uninstall asks before deleting, and standard input is not a terminal` と `help: pass -y to remove without asking`（終了コード 2）。
   - 理由: 待っても答えが来ない入力で止まらないように。
@@ -453,10 +455,14 @@ cuno の管理ディレクトリを消し、cuno 自身のインストーラで�
   - cuno 自身のインストーラで入れたもの: `PATH` から除き、管理ディレクトリを消す。実行中の `cuno.exe` 自身は消せないので、それ以外を消したうえで、cuno の終了を待って `cuno.exe` と残ったディレクトリを消す PowerShell のプロセスを起動して終わる。
   - `cargo install` で入れたもの: 管理ディレクトリだけを消し、`help: cuno itself was installed by cargo install; run cargo uninstall cuno to remove it`（終了コード 0）。
   - それ以外: 管理ディレクトリだけを消し、`help: cuno itself is at <exe>; remove it yourself`（終了コード 0）。
-- 管理ディレクトリがなければ、消すものがないことを示す（終了コード 0）。
+- 管理ディレクトリがなければ、`warning: nothing to remove: <home> does not exist` を示す（終了コード 0）。
 - 表示（標準エラー）:
 
 ```
+This removes:
+  C:\Users\me\.cuno
+  C:\Users\me\.cuno\bin from PATH
+Continue? [y/N] y
      Removed C:\Users\me\.cuno\bin from PATH
      Removed C:\Users\me\.cuno
 ```
