@@ -75,8 +75,8 @@ cuno replaces CMake, Ninja, ctest, and hand-written `.clang-format` / `.clang-ti
 
 | Language | Concept | Roadmap | Specifications | Guides |
 |---|---|---|---|---|
-| English | [docs/en/concept.md](docs/en/concept.md) | [docs/en/roadmap.md](docs/en/roadmap.md) | [docs/en/specs/](docs/en/specs/README.md) | [migration](docs/en/guides/migration.md), [game development](docs/en/guides/game-development.md) |
-| 日本語 | [docs/ja/concept.md](docs/ja/concept.md) | [docs/ja/roadmap.md](docs/ja/roadmap.md) | [docs/ja/specs/](docs/ja/specs/README.md) | [移行](docs/ja/guides/migration.md)、[ゲーム開発](docs/ja/guides/game-development.md) |
+| English | [docs/en/concept.md](docs/en/concept.md) | [docs/en/roadmap.md](docs/en/roadmap.md) | [docs/en/specs/](docs/en/specs/README.md) | [docs/en/guides/](docs/en/guides/README.md) |
+| 日本語 | [docs/ja/concept.md](docs/ja/concept.md) | [docs/ja/roadmap.md](docs/ja/roadmap.md) | [docs/ja/specs/](docs/ja/specs/README.md) | [docs/ja/guides/](docs/ja/guides/README.md) |
 
 Coming from CMake, Visual Studio, ctest, clang-format, clang-tidy, vcpkg, Conan, Cargo, Premake, Meson or Bazel? The migration guide shows, tool by tool, what you did there and what you do in cuno.
 
