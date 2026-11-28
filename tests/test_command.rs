@@ -9,8 +9,8 @@
 
 mod support;
 
-use support::Project;
 use support::compilers::{Compiler, Language, require};
+use support::{Project, assert_compiled_with};
 
 const COMPILERS: [(&str, Compiler); 3] = [
     ("msvc", Compiler::Msvc),
@@ -433,47 +433,51 @@ const BUILDS: [(&str, &[&str], &str); 3] = [
     ),
 ];
 
-/// Every shape of package, in every build, on every compiler: `cuno test`
-/// runs both in-source tests in the package's executable and the one test
-/// in the `tests/` executable, and says so in the `test result:` lines.
-/// The ways tests have been lost before each have a guard of their own;
-/// this one holds the count through cuno's own flags, `lto` included
-/// (`testing.md`, "Execution").
-///
-/// Mutations, each failing this test, naming the shape, build and
-/// compiler: drop the `/include` pragma that keeps a C registration in
-/// `crates/cuno-build/headers/cuno/test.h` (`c, release with lto, msvc`); compile the test
-/// build without `CUNO_TEST`, with the assert in `graph::plan` removed
-/// (every combination); run only the first test executable (the `tests/`
-/// line missing).
-#[test]
-fn no_test_is_lost_in_any_build() {
+support::per_compiler! {
+    /// Every shape of package, in every build, on every compiler: `cuno test`
+    /// runs both in-source tests in the package's executable and the one test
+    /// in the `tests/` executable, and says so in the `test result:` lines.
+    /// The ways tests have been lost before each have a guard of their own;
+    /// this one holds the count through cuno's own flags, `lto` included
+    /// (`testing.md`, "Execution").
+    ///
+    /// Mutations, each failing a test here, naming the shape, build and
+    /// compiler: drop the `/include` pragma that keeps a C registration in
+    /// `crates/cuno-build/headers/cuno/test.h` (`c, release with lto, msvc`,
+    /// in `no_test_is_lost_in_any_build::msvc`); compile the test build without `CUNO_TEST`, with the
+    /// assert in `graph::plan` removed (every combination); run only the
+    /// first test executable (the `tests/` line missing).
+    no_test_is_lost_in_any_build = no_test_is_lost,
+    [msvc = Msvc, clang = Clang, clang_cl = ClangCl]
+}
+
+/// [`no_test_is_lost_in_any_build`] on one compiler, when it is here.
+fn no_test_is_lost(name: &str, compiler: Compiler) {
+    if !here(compiler) {
+        return;
+    }
     let want = "ok. 2 passed; 0 failed; 0 skipped\nok. 1 passed; 0 failed; 0 skipped\n";
     for (shape, lang, files) in SHAPES {
         for (build, flags, profile) in BUILDS {
             let manifest = format!("{MANIFEST}{lang}{profile}");
-            for (name, compiler) in COMPILERS {
-                if !here(compiler) {
-                    continue;
-                }
-                let p = files.iter().fold(
-                    Project::new().file("Cuno.toml", &manifest),
-                    |p, (path, text)| p.file(path, text),
-                );
-                let at = format!("{shape}, {build}, {name}");
-                let run = p.cuno(&[&["-q", "test", "--compiler", name][..], flags].concat());
-                let err = run.stderr.replace("\r\n", "\n");
-                assert_eq!(run.code, Some(0), "{at}:\n{err}");
-                let results: String = err
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("test result: "))
-                    .map(|line| {
-                        let kept = line.split_once("; finished in ").map_or(line, |(k, _)| k);
-                        format!("{kept}\n")
-                    })
-                    .collect();
-                assert_eq!(results, want, "{at}:\n{err}");
-            }
+            let p = files.iter().fold(
+                Project::new().file("Cuno.toml", &manifest),
+                |p, (path, text)| p.file(path, text),
+            );
+            let at = format!("{shape}, {build}, {name}");
+            let run = p.cuno(&[&["-q", "test", "--compiler", name][..], flags].concat());
+            let err = run.stderr.replace("\r\n", "\n");
+            assert_eq!(run.code, Some(0), "{at}:\n{err}");
+            assert_compiled_with(p.path(), compiler, &at);
+            let results: String = err
+                .lines()
+                .filter_map(|line| line.strip_prefix("test result: "))
+                .map(|line| {
+                    let kept = line.split_once("; finished in ").map_or(line, |(k, _)| k);
+                    format!("{kept}\n")
+                })
+                .collect();
+            assert_eq!(results, want, "{at}:\n{err}");
         }
     }
 }

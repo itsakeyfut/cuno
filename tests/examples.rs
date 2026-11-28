@@ -5,9 +5,9 @@
 //!
 //! An example is a directory under `examples/c/` or `examples/cpp/`, by its
 //! package's language.
-//! Every example is a test of its own, so the examples run in parallel, and
-//! a new one fails [`every_example_has_a_test`] until it is added to
-//! `examples!`.
+//! Every example is a module of one test per compiler (`c_hello::msvc`),
+//! so the examples and their compilers run in parallel, and a new one fails
+//! [`every_example_has_a_test`] until it is added to `examples!`.
 //!
 //! An example is copied into a fresh directory per compiler: building in
 //! place could find an earlier build's `target/` and compile nothing.
@@ -16,8 +16,8 @@ mod support;
 
 use std::path::Path;
 
-use support::Project;
 use support::compilers::{Compiler, Language, require};
+use support::{Project, assert_compiled_with};
 
 const COMPILERS: [(&str, Compiler); 4] = [
     ("msvc", Compiler::Msvc),
@@ -152,10 +152,10 @@ fn executables(dir: &Path) -> Vec<String> {
     found
 }
 
-/// Builds, checks, tests and runs `example` on every compiler here, as the
-/// module comment says.
-fn check(example: &Path) {
-    let name = example
+/// Builds, checks, tests and runs `example` on `name` (its label in
+/// `COMPILERS`), if it is here, as the module comment says.
+fn check(example: &Path, name: &str, compiler: Compiler) {
+    let label = example
         .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"))
         .unwrap_or(example)
         .to_string_lossy()
@@ -163,73 +163,73 @@ fn check(example: &Path) {
     let tests = std::fs::read_to_string(example.join("expected").join("test.txt")).ok();
     assert!(
         tests.is_some() || !has_tests(example),
-        "{name} has tests and no expected/test.txt"
+        "{label} has tests and no expected/test.txt"
     );
-    for (compiler, kind) in COMPILERS {
-        if !here(kind) {
-            continue;
-        }
-        let project = copied(example);
-        let at = |what: &str| format!("{name} on {compiler}, {what}");
-        for command in ["build", "check"] {
-            let run = project.cuno(&[command, "--compiler", compiler]);
-            assert_eq!(run.code, Some(0), "{}: {}", at(command), run.stderr);
-        }
-        if let Some(want) = &tests {
-            let run = project.cuno(&["-q", "test", "--compiler", compiler]);
-            let err = run.stderr.replace("\r\n", "\n");
-            assert_eq!(run.code, Some(0), "{}:\n{err}", at("test"));
-            assert_eq!(
-                &test_results(&err),
-                want,
-                "{} reported other results:\n{err}",
-                at("test")
-            );
-        }
-        for (profile, flags, dir) in PROFILES {
-            let built = project.cuno(&[&["build", "--compiler", compiler][..], flags].concat());
-            assert_eq!(built.code, Some(0), "{}: {}", at(profile), built.stderr);
-            let bins = executables(&project.path().join("target").join(dir));
-            assert!(!bins.is_empty(), "{}: nothing was built", at(profile));
-            for bin in bins {
-                let want = expected(example, &bin, compiler, profile).unwrap_or_else(|| {
-                    panic!(
-                        "{}: no expected output for `{bin}` in expected/",
-                        at(profile)
-                    )
-                });
-                let args = [
-                    &["-q", "run", "--compiler", compiler, "--bin", &bin][..],
-                    flags,
-                ]
-                .concat();
-                let run = project.cuno(&args);
-                assert_eq!(run.code, Some(0), "{} `{bin}`: {}", at(profile), run.stderr);
-                assert_eq!(
-                    run.stdout.replace("\r\n", "\n"),
-                    want,
-                    "{} `{bin}` printed something else",
+    if !here(compiler) {
+        return;
+    }
+    let project = copied(example);
+    let at = |what: &str| format!("{label} on {name}, {what}");
+    for command in ["build", "check"] {
+        let run = project.cuno(&[command, "--compiler", name]);
+        assert_eq!(run.code, Some(0), "{}: {}", at(command), run.stderr);
+    }
+    assert_compiled_with(project.path(), compiler, &at("build"));
+    if let Some(want) = &tests {
+        let run = project.cuno(&["-q", "test", "--compiler", name]);
+        let err = run.stderr.replace("\r\n", "\n");
+        assert_eq!(run.code, Some(0), "{}:\n{err}", at("test"));
+        assert_eq!(
+            &test_results(&err),
+            want,
+            "{} reported other results:\n{err}",
+            at("test")
+        );
+    }
+    for (profile, flags, dir) in PROFILES {
+        let built = project.cuno(&[&["build", "--compiler", name][..], flags].concat());
+        assert_eq!(built.code, Some(0), "{}: {}", at(profile), built.stderr);
+        let bins = executables(&project.path().join("target").join(dir));
+        assert!(!bins.is_empty(), "{}: nothing was built", at(profile));
+        for bin in bins {
+            let want = expected(example, &bin, name, profile).unwrap_or_else(|| {
+                panic!(
+                    "{}: no expected output for `{bin}` in expected/",
                     at(profile)
-                );
-            }
+                )
+            });
+            let args = [&["-q", "run", "--compiler", name, "--bin", &bin][..], flags].concat();
+            let run = project.cuno(&args);
+            assert_eq!(run.code, Some(0), "{} `{bin}`: {}", at(profile), run.stderr);
+            assert_eq!(
+                run.stdout.replace("\r\n", "\n"),
+                want,
+                "{} `{bin}` printed something else",
+                at(profile)
+            );
         }
     }
 }
 
-/// One test per example, so the harness runs the examples in parallel;
-/// [`every_example_has_a_test`] holds this list to `examples/`.
+/// One test per example and compiler, so the harness runs them in
+/// parallel; [`every_example_has_a_test`] holds this list to `examples/`.
 macro_rules! examples {
     ($($test:ident = $dir:literal),+ $(,)?) => {
-        /// The example directories with a test of their own.
+        /// The example directories with tests of their own.
         const TESTED: &[&str] = &[$($dir),+];
         $(
-            /// Mutation: make the example's source not compile, change what
-            /// it prints, remove one of its expected files, break one of its
-            /// tests, or change what `cuno test` counts; this test fails,
-            /// naming the compiler and the profile or `test`.
-            #[test]
-            fn $test() {
-                check(&Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join($dir));
+            support::per_compiler! {
+                /// Mutation: make the example's source not compile, change
+                /// what it prints, remove one of its expected files, break
+                /// one of its tests, or change what `cuno test` counts; a
+                /// test here fails, naming the compiler and the profile or
+                /// `test`.
+                $test = |name, compiler| check(
+                    &Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join($dir),
+                    name,
+                    compiler,
+                ),
+                [msvc = Msvc, clang = Clang, clang_cl = ClangCl, gcc = Gcc]
             }
         )+
     };

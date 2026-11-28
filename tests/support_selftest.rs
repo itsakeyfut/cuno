@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::compilers::{Missing, Outcome, on_missing};
+use support::compilers::{Compiler, Missing, Outcome, on_missing};
 use support::{Project, Run, hermetic};
 
 /// Mutation: make `Project::file` write to `path` relative to the current
@@ -311,4 +311,38 @@ fn failing_vcvars_is_reported_with_its_output() {
         "{}",
         missing.detail
     );
+}
+
+/// The compilers `per_compiler!` is held to here, every one of them: no
+/// test below starts a compiler.
+const COMPILERS: [(&str, Compiler); 4] = [
+    ("msvc", Compiler::Msvc),
+    ("clang", Compiler::Clang),
+    ("clang-cl", Compiler::ClangCl),
+    ("gcc", Compiler::Gcc),
+];
+
+support::per_compiler! {
+    /// Each test `per_compiler!` writes calls its check with the compiler it
+    /// is named for and that compiler's name in `COMPILERS`. The check reads
+    /// which test it is in from the thread libtest runs it on, named after
+    /// the test, so it holds the macro's wiring without relying on the
+    /// macro's own assertion.
+    ///
+    /// Mutations, each failing the tests here other than `msvc`: have the
+    /// macro call the check with `("msvc", Compiler::Msvc)` whatever the test
+    /// is for, or with its own name and `Compiler::Msvc`; swap two names
+    /// (`clang_cl = Clang, clang = ClangCl`) with the macro's assertion
+    /// removed. Drop one pair; `every_compiler_is_split` fails.
+    per_compiler_passes_each_test_its_own_compiler = |name: &str, compiler: Compiler| {
+        let listed = COMPILERS.iter().find(|(_, c)| *c == compiler).map(|(n, _)| *n);
+        assert_eq!(listed, Some(name), "{compiler:?} was called with {name}");
+        let test = std::thread::current().name().unwrap_or_default().to_owned();
+        assert_eq!(
+            test.rsplit("::").next(),
+            Some(name.replace('-', "_").as_str()),
+            "{test} was called with {name}"
+        );
+    },
+    [msvc = Msvc, clang = Clang, clang_cl = ClangCl, gcc = Gcc]
 }
