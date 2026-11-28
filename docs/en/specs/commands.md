@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 8f799a3abd01be077cbe52dd143a74ecb4d31a78 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 59fe274acb793fa9fe24b01f2497defa85a2db22 -->
 
 # Commands
 
@@ -30,7 +30,7 @@ The command structure is based on cargo, with additions for C/C++ and for circum
 | Environment diagnostics | `doctor` | Diagnose whether VS / Clang / clang-format, etc. are usable, and suggest fixes | MVP |
 | Distribution | `install` | Install built executables | Later |
 | | `package` / `publish` | Package / publish | Future (Dependency management stage 3) |
-| cuno itself | `self update` | Self-update cuno ([distribution.md](distribution.md)) | Right after MVP |
+| cuno itself | `self update` / `self uninstall` | Update or uninstall cuno itself ([distribution.md](distribution.md#self-update)) | M5 |
 | Information | `metadata` | Output project information as JSON (for IDE and external tool integration) | Later |
 
 See [dependencies.md](dependencies.md) for the stages of dependency management.
@@ -416,6 +416,58 @@ Writes the default compiler to `[toolchain] compiler` in the per-user `<cuno hom
   - Where the command runs, a layer with higher precedence (`--compiler`, `CUNO_COMPILER`, the project's `.cuno/config.toml` or `Cuno.toml`) selects another compiler: `warning: gcc is the default, but here [toolchain] compiler in Cuno.toml selects clang`.
   - The compiler is not found on this machine, or cannot be used: the `warning:` gives the reason a build would give, and `help:` says how to install it.
   - Rationale: the default is a setting for all of this user's builds, and choosing a compiler before installing it is a legitimate use, so the write itself is not stopped. A mismatch with what the next build will select should still be visible when the default is written.
+
+### `cuno self update`
+
+Updates cuno to the latest release.
+
+- Runs outside a project too. It does not ask first (installing again the same way undoes it).
+- By how cuno was installed ([distribution.md](distribution.md#self-update)):
+  - By cuno's own installer: it finds the latest version, and when that is newer than the running cuno, downloads the zip and its `.sha256`, checks them, and replaces `cuno.exe`.
+  - By `cargo install`: it does nothing, with `error: cuno was installed by cargo install, so cargo updates it` and `help: run cargo install cuno` (exit code 3).
+  - Otherwise: it does nothing, with `error: <exe> was not installed by cuno's installer, so cuno cannot update it` (`<exe>` is where the running `cuno.exe` is) and `help: install cuno with: powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/install.ps1 | iex"` (exit code 3).
+  - Reason: with exit code 0, a script left to update cuno would take it as updated.
+- The latest version is learnt from where `https://github.com/itsakeyfut/cuno/releases/latest` redirects to (`…/releases/tag/v<version>`), and compared with the running one as `x.y.z`. Anything not of the form `x.y.z` is an error (exit code 3).
+  - When it is the running version, `   Unchanged cuno 0.2.0 is the latest release`; when the running one is newer (a build before a release, say), `   Unchanged cuno 0.3.0 is newer than the latest release, 0.2.0`; nothing is done (exit code 0). It never goes back to an older version.
+- Replacing: `bin\cuno.exe` is renamed aside to `bin\cuno.exe.old` (a running file cannot be deleted, but can be renamed) and the new `cuno.exe` written. If it cannot be written, `cuno.exe.old` is renamed back. The next `cuno self update` or `cuno self uninstall` deletes `cuno.exe.old`.
+- Output (standard error):
+
+```
+ Downloading cuno 0.2.0
+     Updated cuno 0.1.0 -> 0.2.0
+```
+
+- These are errors (exit code 3), and `cuno.exe` is not replaced:
+  - `curl` cannot be run, or the download fails ([distribution.md](distribution.md#downloads));
+  - the SHA-256 does not match: `error: <zip> does not match its checksum` (`<zip>` is the zip's name);
+  - the zip holds no `cuno.exe`, or it cannot be taken out or put in place: the reason and the place are shown.
+
+### `cuno self uninstall`
+
+Removes cuno's home and, for a cuno installed by cuno's own installer, its `cuno.exe` and `PATH` entry too.
+
+| Option | Description |
+|---|---|
+| `-y` / `--yes` | Remove without asking |
+
+- What it removes: the whole cuno home (`config.toml`, the unpacked bundled headers, compilers installed automatically and so on) and, when cuno's own installer installed it, `<cuno home>\bin` on the user's `PATH`. Nothing in a project (`.cuno/`, `target/`) or anywhere else is touched.
+- Before removing, it shows what it will remove and asks `Continue? [y/N]` (standard error). `y` or `yes`, in any case, goes on; anything else ends with nothing removed (exit code 0).
+  - With `-y`, it does not ask.
+  - Without `-y`, when standard input is not a terminal, nothing is removed, with `error: cuno self uninstall asks before deleting, and standard input is not a terminal` and `help: pass -y to remove without asking` (exit code 2).
+  - Reason: so that it never waits for an answer that cannot come.
+- By how cuno was installed:
+  - By cuno's own installer: it takes the entry out of `PATH` and removes the cuno home. The running `cuno.exe` cannot delete itself, so cuno removes everything else, then starts a PowerShell process that waits for cuno to exit and removes `cuno.exe` and the directories left.
+  - By `cargo install`: it removes the cuno home only, with `help: cuno itself was installed by cargo install; run cargo uninstall cuno to remove it` (exit code 0).
+  - Otherwise: it removes the cuno home only, with `help: cuno itself is at <exe>; remove it yourself` (exit code 0).
+- With no cuno home, it says there is nothing to remove (exit code 0).
+- Output (standard error):
+
+```
+     Removed C:\Users\me\.cuno\bin from PATH
+     Removed C:\Users\me\.cuno
+```
+
+- Anything it cannot remove (other than `cuno.exe`) is an error (exit code 3), naming the place and the reason.
 
 ## Output
 

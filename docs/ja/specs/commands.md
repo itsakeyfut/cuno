@@ -28,7 +28,7 @@ cargo を基準に、C/C++ と cuno 固有の事情を加えたコマンド体�
 | 環境診断 | `doctor` | VS / Clang / clang-format 等が使えるかを診断し、対処法を案内 | MVP |
 | 配布 | `install` | ビルドした実行ファイルをインストール | 後 |
 | | `package` / `publish` | パッケージ化・公開 | 将来（依存管理 段階 3） |
-| cuno 自体 | `self update` | cuno の自己更新（[distribution.md](distribution.md)） | MVP 直後 |
+| cuno 自体 | `self update` / `self uninstall` | cuno の自己更新・アンインストール（[distribution.md](distribution.md#自己更新)） | M5 |
 | 情報 | `metadata` | プロジェクト情報を JSON で出力（IDE・外部ツール連携用） | 後 |
 
 依存管理の段階は [dependencies.md](dependencies.md) を参照。
@@ -409,6 +409,58 @@ clang-tidy    22.1.8       C:\Program Files\LLVM\bin\clang-tidy.exe
   - 実行した場所では、より優先される層（`--compiler`、`CUNO_COMPILER`、プロジェクトの `.cuno/config.toml`・`Cuno.toml`）が別のコンパイラを選んでいる: `warning: gcc is the default, but here [toolchain] compiler in Cuno.toml selects clang`。
   - そのコンパイラが、このマシンで見つからない、または使えない: `warning:` に、ビルドしたときと同じ理由を書き、`help:` に入れ方を書く。
   - 理由: 既定はそのユーザーのすべてのビルドに効く設定で、これから入れるコンパイラを先に選んでおく使い方もあるため、書くこと自体は止めない。ただ、次のビルドが選ぶものと違うことには、書いた時点で気づけるようにする。
+
+### `cuno self update`
+
+cuno を最新のリリースに更新する。
+
+- プロジェクトの外でも実行できる。確認はしない（同じ手順で入れ直せば戻せるため）。
+- 入れ方（[distribution.md](distribution.md#自己更新)）ごとに次のようにする。
+  - cuno 自身のインストーラで入れたもの: 最新の版を調べ、実行中の cuno より新しければ、zip と `.sha256` をダウンロードして照合し、`cuno.exe` を置き換える。
+  - `cargo install` で入れたもの: 何もせず、`error: cuno was installed by cargo install, so cargo updates it` と `help: run cargo install cuno`（終了コード 3）。
+  - それ以外: 何もせず、`error: <exe> was not installed by cuno's installer, so cuno cannot update it`（`<exe>` は実行中の `cuno.exe` の場所） と `help: install cuno with: powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/install.ps1 | iex"`（終了コード 3）。
+  - 理由: 終了コード 0 にすると、更新を任せたスクリプトが、更新されたと受け取る。
+- 最新の版は、`https://github.com/itsakeyfut/cuno/releases/latest` の転送先（`…/releases/tag/v<version>`）から知り、`x.y.z` として実行中の版と比べる。`x.y.z` の形でなければエラー（終了コード 3）。
+  - 実行中の版と同じなら `   Unchanged cuno 0.2.0 is the latest release`、実行中の方が新しければ（リリース前のビルドなど）`   Unchanged cuno 0.3.0 is newer than the latest release, 0.2.0` で、何もしない（終了コード 0）。古い版に戻すことはしない。
+- 置き換え: `bin\cuno.exe` を `bin\cuno.exe.old` に名前を変えて退け（実行中のファイルは消せないが、名前は変えられる）、新しい `cuno.exe` を書く。書けなければ `cuno.exe.old` を元の名前に戻す。`cuno.exe.old` は、次の `cuno self update` と `cuno self uninstall` が消す。
+- 表示（標準エラー）:
+
+```
+ Downloading cuno 0.2.0
+     Updated cuno 0.1.0 -> 0.2.0
+```
+
+- 次の場合はエラー（終了コード 3）で、`cuno.exe` を置き換えない。
+  - `curl` を起動できない、ダウンロードに失敗した（[distribution.md](distribution.md#ダウンロード)）。
+  - SHA-256 が合わない: `error: <zip> does not match its checksum`（`<zip>` は zip の名前）。
+  - zip に `cuno.exe` がない、取り出せない、置き換えられない: 理由と場所を示す。
+
+### `cuno self uninstall`
+
+cuno の管理ディレクトリを消し、cuno 自身のインストーラで入れた cuno なら、その `cuno.exe` と `PATH` の項目も消す。
+
+| オプション | 内容 |
+|---|---|
+| `-y` / `--yes` | 確認せずに消す |
+
+- 消すもの: 管理ディレクトリ全体（`config.toml`、展開した同梱ヘッダ、自動インストールしたコンパイラなど）と、cuno 自身のインストーラで入れた場合は、ユーザーの `PATH` の `<管理ディレクトリ>\bin`。プロジェクトの中のもの（`.cuno/`、`target/`）と、ほかの場所のものには触れない。
+- 消す前に、消すものを示して `Continue? [y/N]` と聞く（標準エラー）。`y` か `yes`（大文字・小文字を問わない）なら続け、それ以外は何も消さずに終わる（終了コード 0）。
+  - `-y` があれば聞かない。
+  - `-y` がなく、標準入力が端末でなければ、何も消さずに `error: cuno self uninstall asks before deleting, and standard input is not a terminal` と `help: pass -y to remove without asking`（終了コード 2）。
+  - 理由: 待っても答えが来ない入力で止まらないように。
+- 入れ方ごとに次のようにする。
+  - cuno 自身のインストーラで入れたもの: `PATH` から除き、管理ディレクトリを消す。実行中の `cuno.exe` 自身は消せないので、それ以外を消したうえで、cuno の終了を待って `cuno.exe` と残ったディレクトリを消す PowerShell のプロセスを起動して終わる。
+  - `cargo install` で入れたもの: 管理ディレクトリだけを消し、`help: cuno itself was installed by cargo install; run cargo uninstall cuno to remove it`（終了コード 0）。
+  - それ以外: 管理ディレクトリだけを消し、`help: cuno itself is at <exe>; remove it yourself`（終了コード 0）。
+- 管理ディレクトリがなければ、消すものがないことを示す（終了コード 0）。
+- 表示（標準エラー）:
+
+```
+     Removed C:\Users\me\.cuno\bin from PATH
+     Removed C:\Users\me\.cuno
+```
+
+- 消せないもの（`cuno.exe` 以外）があれば、エラー（終了コード 3）で、その場所と理由を示す。
 
 ## 出力
 
