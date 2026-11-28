@@ -193,3 +193,59 @@ jobs:
       # here and nothing is run: the integration tests, which start the
       # compilers, run once, in the test job.
       - run: cargo check --workspace --all-targets
+
+  # install.ps1, run as a user would against the latest release, then again
+  # over it, against a release whose checksum is wrong, and with a relative
+  # CUNO_HOME (docs/en/specs/distribution.md, "The PowerShell one-liner").
+  # The runner's user PATH is put back at the end.
+  installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install, install again, and refuse a bad checksum or a relative home
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $saved = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $root = Join-Path $env:RUNNER_TEMP 'installer'
+          $home_ = Join-Path $root 'home'
+          $bin = Join-Path $home_ 'bin'
+          function Get-Entries {
+            $p = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+            @($p -split ';' | Where-Object { $_.TrimEnd('\') -ieq $bin })
+          }
+          function Invoke-Installer([string[]]$extra) {
+            powershell -NoProfile -File install.ps1 @extra
+            $LASTEXITCODE
+          }
+          try {
+            $env:CUNO_HOME = $home_
+            if ((Invoke-Installer @()) -ne 0) { throw 'the first install failed' }
+            $version = & (Join-Path $bin 'cuno.exe') --version
+            if ($version -notmatch '^cuno \d+\.\d+\.\d+') { throw "unexpected --version: $version" }
+            if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after one install" }
+
+            if ((Invoke-Installer @()) -ne 0) { throw 'the second install failed' }
+            if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after two installs" }
+            if (Test-Path (Join-Path $bin 'cuno.exe.old')) { throw 'cuno.exe.old was left behind' }
+
+            $v = $version -replace '^cuno (\S+).*', '$1'
+            $zip = "cuno-$v-x86_64-pc-windows-msvc.zip"
+            $rel = Join-Path $root "rel\download\v$v"
+            New-Item -ItemType Directory -Force $rel | Out-Null
+            & "$env:SystemRoot\System32\curl.exe" -fsSL -o (Join-Path $rel $zip) "https://github.com/itsakeyfut/cuno/releases/download/v$v/$zip"
+            Set-Content (Join-Path $rel "$zip.sha256") ('0' * 64 + "  $zip")
+            $before = (Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc
+            $url = 'file:///' + ((Join-Path $root 'rel') -replace '\', '/')
+            if ((Invoke-Installer @('-Version', $v, '-Releases', $url)) -eq 0) { throw 'a bad checksum installed' }
+            if ((Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc -ne $before) { throw 'a bad checksum replaced cuno.exe' }
+            if (Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'cuno-install-*') { throw 'a temporary directory was left behind' }
+
+            $env:CUNO_HOME = 'relative\home'
+            if ((Invoke-Installer @()) -eq 0) { throw 'a relative CUNO_HOME installed' }
+            if (Test-Path 'relative') { throw 'a relative CUNO_HOME created something' }
+          } finally {
+            Set-ItemProperty HKCU:\Environment -Name Path -Value $saved -Type ExpandString
+          }

@@ -23,6 +23,14 @@ cuno run
 
 cuno runs on Windows x64. It builds with the compilers already on the machine: Visual Studio's MSVC (Build Tools with "Desktop development with C++" are enough) or LLVM's clang and clang-cl. `cuno fmt` and `cuno lint` use LLVM's clang-format and clang-tidy, 17 or later. `cuno doctor` says what it finds and what is missing.
 
+**With the installer.** In PowerShell:
+
+```powershell
+powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/install.ps1 | iex"
+```
+
+It puts `cuno.exe` in `%USERPROFILE%\.cuno\bin` (or `%CUNO_HOME%\bin`), checked against the release's SHA-256, and adds that folder to your user `PATH`; open a new terminal to use it. See [distribution](docs/en/specs/distribution.md#the-powershell-one-liner).
+
 **From a release.** Download `cuno-<version>-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/itsakeyfut/cuno/releases), check it against the `.sha256` beside it, unzip it, and put the folder holding `cuno.exe` on your `PATH`:
 
 ```powershell
