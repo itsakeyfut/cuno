@@ -29,12 +29,17 @@ pub struct Curl {
     /// The protocols curl may use, as `--proto` takes them: `=https`, and
     /// more only in tests, which serve files and a local `http://`.
     pub protocols: String,
+    /// How long a connection may take, and how long a transfer may stay
+    /// below one byte a second, before curl gives up, in seconds:
+    /// 30, and less only in tests, which would otherwise wait
+    /// that long for a server that never answers.
+    pub stall_seconds: u32,
 }
 
-/// How long a connection may take, and how long a transfer may stay below
-/// one byte a second, before curl gives up, in seconds. The whole download
-/// has no limit, so a large one that is slow but moving is not stopped.
-const STALL_SECONDS: &str = "30";
+/// The stall limit cuno runs curl with. The whole download has no limit,
+/// so a large one that is slow but moving is not stopped. See
+/// docs/en/specs/distribution.md, "Downloads".
+const STALL_SECONDS: u32 = 30;
 
 impl Curl {
     /// Windows' own `curl.exe` under `SystemRoot`, else the first `curl.exe`
@@ -60,6 +65,7 @@ impl Curl {
             program,
             env: env.clone(),
             protocols: "=https".to_owned(),
+            stall_seconds: STALL_SECONDS,
         })
     }
 
@@ -67,6 +73,7 @@ impl Curl {
     /// `-f` makes an HTTP error a failure rather than a page saved as the
     /// file; `-sS` keeps the progress meter out and the error in.
     fn run(&self, args: &[&str], url: &str) -> Result<String, SelfError> {
+        let stall = self.stall_seconds.to_string();
         let output = Command::new(&self.program)
             .args([
                 "-fsS",
@@ -75,8 +82,8 @@ impl Curl {
                 "--proto-redir",
                 &self.protocols,
             ])
-            .args(["--connect-timeout", STALL_SECONDS])
-            .args(["--speed-limit", "1", "--speed-time", STALL_SECONDS])
+            .args(["--connect-timeout", &stall])
+            .args(["--speed-limit", "1", "--speed-time", &stall])
             .args(args)
             .arg(url)
             .env_clear()
@@ -168,6 +175,7 @@ mod tests {
         let env = Env::from_process().with("NO_PROXY", "127.0.0.1".into());
         Curl {
             protocols: "=https,http,file".to_owned(),
+            stall_seconds: 1,
             ..Curl::find(&env).unwrap()
         }
     }
@@ -282,7 +290,8 @@ mod tests {
     }
 
     /// A server that accepts and then says nothing is given up on, rather
-    /// than waited on for ever.
+    /// than waited on for ever. The tests' curl gives up after one second
+    /// (`local_curl`), so this does not wait the 30 seconds cuno's does.
     ///
     /// Mutation: drop `--speed-limit` / `--speed-time`; this test fails
     /// (after its own limit).
@@ -290,10 +299,11 @@ mod tests {
     fn a_silent_server_is_given_up_on() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/latest", listener.local_addr().unwrap());
-        // Accepted and held open, never answered.
+        // Accepted and held open, never answered, for longer than the test
+        // waits.
         let held = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(90));
+            std::thread::sleep(std::time::Duration::from_secs(30));
             drop(stream);
         });
         let (done, result) = std::sync::mpsc::channel();
@@ -301,8 +311,8 @@ mod tests {
             let _ = done.send(local_curl().redirect(&url));
         });
         let got = result
-            .recv_timeout(std::time::Duration::from_secs(60))
-            .expect("curl still waiting after 60 s");
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .expect("curl still waiting after 15 s");
         assert!(matches!(got, Err(SelfError::Download { .. })), "{got:?}");
         drop(held);
     }
@@ -336,6 +346,17 @@ mod tests {
             absent.download(&missing, &dir.path().join("x")),
             Err(SelfError::NoCurl { .. })
         ));
+    }
+
+    /// The curl cuno runs gives up after the spec's 30 seconds: the tests
+    /// run theirs with less, so this is what holds the real value.
+    ///
+    /// Mutation: change `STALL_SECONDS`, or leave `stall_seconds` out of
+    /// `Curl::find`; this test fails (the second does not compile).
+    #[test]
+    fn cunos_curl_gives_up_after_30_seconds() {
+        let curl = Curl::find(&Env::from_process()).unwrap();
+        assert_eq!(curl.stall_seconds, 30);
     }
 
     /// Windows' own curl comes first, then `PATH`; with neither, there is
