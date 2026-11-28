@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/concept.md @ blob 103113c7857d2658301e8a1c2a30e8975eeb1c45 -->
+<!-- translated-from: docs/ja/concept.md @ blob 9070d3a918d4787283b3f7e4af3e60f02475c92c -->
 
 # cuno concept
 
@@ -148,7 +148,7 @@ cuno is a project meant to be grown over the long term.
 | MVP | Windows 11 + MSVC / Clang. `new` / `build` / `run` / `check` / `clean` / `test` / `fmt` / `lint` / `doctor` |
 | Right after MVP | GCC support, `cuno init`, listing and selecting toolchains |
 | Dependency management | Git / URL sources → recipe index (`cuno add sdl3`) → a public package service in the future |
-| Later | Libraries and workspaces, Linux / macOS, cross-compilation (Android / WebAssembly), IDE integration, build cache |
+| Later | Libraries and workspaces, Linux / macOS, cross-compilation (Android / WebAssembly), IDE integration, build cache, OS and embedded development (freestanding) |
 | Future | In-house formatter, automatic compiler installation, C++20 modules |
 
 ### About safec

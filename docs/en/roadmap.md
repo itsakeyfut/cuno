@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/roadmap.md @ blob add1528c64b1fb261af98619735c641c83e2339f -->
+<!-- translated-from: docs/ja/roadmap.md @ blob f62d263e0eb15456c429d465c2532bb3535609bd -->
 
 # cuno Roadmap
 
@@ -25,11 +25,13 @@
 | M8 | Multi-platform | v0.5.0 | Later |
 | M9 | IDE integration and build efficiency | v0.6.0 | Later |
 | M10 | Expanded testing and distribution | v0.7.0 | Later |
+| M11 | OS and embedded development (freestanding) | v0.8.0 | Later |
 | — | Future considerations | — | Future |
 
 - M1–M4 make up the MVP. Because the MVP is large, it is split into four parts so that working pieces can be built up one at a time.
 - From M6 onward, items with strong dependencies come first (e.g. dependency management requires library support).
 - Making existing libraries such as SDL3 usable (M7) takes priority over Linux / macOS support (M8). This is to establish practical usefulness for game development first.
+- OS and embedded development (M11) comes after custom rules (M7), which make its images, and cross-compilation (M8), which brings bare-metal targets. IDE integration (M9) and expanded testing (M10), which serve game development, come first.
 - GCC support (M5) is not urgent, but is placed before dependency management (M6). Adding a third compiler family early lets us check at an early stage that the compiler abstraction is not biased toward MSVC / Clang.
 
 ## M0: Development foundation
@@ -148,6 +150,19 @@ Make day-to-day development comfortable.
 - `cuno install`
 
 **Completion criteria**: existing test suites using GTest can be run with `cuno test`.
+
+## M11: OS and embedded development (freestanding)
+
+Enable building what runs with no standard library and no OS (an OS kernel, a bootloader, microcontroller firmware) from `Cuno.toml` alone.
+
+- Assembly sources (`.S` / `.s` / `.asm`)
+- Freestanding settings (no standard library and no C runtime linked in, builtin replacements turned off)
+- Link settings (entry point, linker script, map file, output format: ELF / raw binary / EFI)
+- Bare-metal targets and toolchains (extending `--target`, detecting cross GCCs and `clang --target`, sysroots)
+- Running `cuno run` through QEMU or a flashing tool (a runner), and testing the parts that run on the host
+- Guides for OS and embedded development
+
+**Completion criteria**: a project with an assembly entry and a C kernel builds with `cuno build` for bare-metal x86_64 and boots under QEMU with `cuno run`. Firmware for ARM Cortex-M builds with both GCC and Clang.
 
 ## Future considerations
 
