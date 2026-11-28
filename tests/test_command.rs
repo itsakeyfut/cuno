@@ -9,8 +9,8 @@
 
 mod support;
 
-use support::Project;
 use support::compilers::{Compiler, Language, require};
+use support::{Project, assert_compiled_with};
 
 const COMPILERS: [(&str, Compiler); 3] = [
     ("msvc", Compiler::Msvc),
@@ -444,7 +444,7 @@ support::per_compiler! {
     /// Mutations, each failing a test here, naming the shape, build and
     /// compiler: drop the `/include` pragma that keeps a C registration in
     /// `crates/cuno-build/headers/cuno/test.h` (`c, release with lto, msvc`,
-    /// in `::msvc`); compile the test build without `CUNO_TEST`, with the
+    /// in `no_test_is_lost_in_any_build::msvc`); compile the test build without `CUNO_TEST`, with the
     /// assert in `graph::plan` removed (every combination); run only the
     /// first test executable (the `tests/` line missing).
     no_test_is_lost_in_any_build = no_test_is_lost,
@@ -468,6 +468,7 @@ fn no_test_is_lost(name: &str, compiler: Compiler) {
             let run = p.cuno(&[&["-q", "test", "--compiler", name][..], flags].concat());
             let err = run.stderr.replace("\r\n", "\n");
             assert_eq!(run.code, Some(0), "{at}:\n{err}");
+            assert_compiled_with(p.path(), compiler, &at);
             let results: String = err
                 .lines()
                 .filter_map(|line| line.strip_prefix("test result: "))

@@ -5,8 +5,8 @@
 
 mod support;
 
-use support::Project;
 use support::compilers::{Compiler, Language, require, require_llvm_tool};
+use support::{Project, assert_compiled_with};
 
 const MANIFEST: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n";
 
@@ -173,13 +173,13 @@ support::per_compiler! {
     ///
     /// Mutation: put `bugprone-throwing-static-initialization` or
     /// `bugprone-exception-escape` back in the preset, or drop the NOLINT on
-    /// `CUNO_TEST_VALUE`'s conditional; every test here fails.
+    /// `CUNO_TEST_VALUE`'s conditional; the test of each compiler here fails.
     a_fresh_package_lints_clean = fresh_package_lints_clean,
     [msvc = Msvc, clang = Clang, clang_cl = ClangCl, gcc = Gcc]
 }
 
 /// [`a_fresh_package_lints_clean`] on one compiler, when it and clang-tidy
-/// are here.
+/// are here: what `compilers()` asks of each compiler, asked of this one.
 fn fresh_package_lints_clean(name: &str, compiler: Compiler) {
     if require_llvm_tool("clang-tidy").is_none()
         || require(compiler, Language::Cxx, "x.cpp", "x.exe").is_none()
@@ -198,6 +198,11 @@ fn fresh_package_lints_clean(name: &str, compiler: Compiler) {
             (run.code, run.stderr.as_str()),
             (Some(0), "      Linted 2 files: 0 warnings, 0 errors\n"),
             "{name} {lang}"
+        );
+        assert_compiled_with(
+            &parent.path().join("app"),
+            compiler,
+            &format!("{name} {lang}"),
         );
     }
 }

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 
 use support::compilers::{Compiler, Language, require};
-use support::{Project, Run};
+use support::{Project, Run, assert_compiled_with};
 
 const COMPILERS: [(&str, Compiler); 3] = [
     ("msvc", Compiler::Msvc),
@@ -129,6 +129,7 @@ fn generated_package(name: &str, compiler: Compiler) {
         std::fs::write(app.join("Cuno.toml"), format!("{manifest}{strict}")).unwrap();
         let test = cuno_in(&p, &app, &["-q", "test", "--compiler", name], &[]);
         assert_eq!(test.code, Some(0), "{edition} {name}:\n{}", test.stderr);
+        assert_compiled_with(&app, compiler, &format!("{edition} {name}"));
         let out = lf(&test.stderr);
         assert!(out.contains(test_line), "{edition} {name}:\n{out}");
         assert!(!out.contains("warning"), "{edition} {name}:\n{out}");

@@ -191,6 +191,39 @@ impl Run {
     }
 }
 
+/// Asserts that the last build in the project at `root` compiled with
+/// `compiler`: the program `compile_commands.json` names. A test written
+/// once and called for each compiler (see [`per_compiler`]) could otherwise
+/// build every time with one compiler and pass, the others never run.
+#[track_caller]
+pub fn assert_compiled_with(root: &Path, compiler: compilers::Compiler, at: &str) {
+    use compilers::Compiler;
+    let path = root.join("compile_commands.json");
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{at}: {}: {e}", path.display()));
+    let entries: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{at}: {}: {e}", path.display()));
+    let program = entries[0]["arguments"][0]
+        .as_str()
+        .unwrap_or_else(|| panic!("{at}: no compiler in {}", path.display()));
+    let stem = Path::new(program)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    // The C and C++ drivers of each compiler; a match, so a new compiler
+    // has to say what it is run as.
+    let expected: &[&str] = match compiler {
+        Compiler::Msvc => &["cl"],
+        Compiler::Clang => &["clang", "clang++"],
+        Compiler::ClangCl => &["clang-cl"],
+        Compiler::Gcc => &["gcc", "g++"],
+    };
+    assert!(
+        expected.contains(&stem.as_str()),
+        "{at}: compiled with {program}, not {compiler:?}"
+    );
+}
+
 /// One test per compiler, in a module named after the test the loop was,
 /// so the compilers run in parallel rather than one after another:
 ///
@@ -205,21 +238,28 @@ impl Run {
 /// writes `the_test::msvc`, `the_test::clang` and `the_test::clang_cl`, each
 /// calling `check(name, compiler)` with the compiler's entry in the file's
 /// `COMPILERS`. `check` is any expression callable that way, and sees the
-/// file's items. Each test first asserts that its function name is that
-/// entry with `-` read as `_`, so a test cannot run another compiler than
-/// the one it is named for; that would pass, the other compiler building
-/// just as well. The module also gets `every_compiler_is_split`, which fails
-/// when the file's `COMPILERS` and the list given here differ.
+/// file's items.
+///
+/// Each test first asserts that its function name is that entry with `-`
+/// read as `_`: a test named for one compiler and handed another would
+/// pass, the other compiler building just as well, and only this assertion
+/// would catch it. That holds the macro to what it hands `check`; whether
+/// `check` then builds with it is held by [`assert_compiled_with`], which
+/// every `check` calls. The module also gets `every_compiler_is_split`,
+/// which fails when the file's `COMPILERS` and the list given here differ.
 ///
 /// The doc comment goes inside the invocation: above it, rustc warns that it
 /// documents nothing.
-// Not every test binary that includes `support` splits a test.
+// Defined in `support`, which every test binary includes, and used by only
+// some of them.
 #[allow(unused_macros)]
 macro_rules! per_compiler {
     ($(#[$doc:meta])* $test:ident = $check:expr,
      [$($fn_name:ident = $compiler:ident),+ $(,)?]) => {
         $(#[$doc])*
         mod $test {
+            // The file's items, `COMPILERS` and the check among them; a check
+            // written inline may use nothing else from the file.
             #[allow(unused_imports)]
             use super::*;
 
@@ -259,5 +299,7 @@ macro_rules! per_compiler {
         }
     };
 }
+// The path `support::per_compiler!` the test files call it by; unused, as
+// the macro is, in the binaries that split nothing.
 #[allow(unused_imports)]
 pub(crate) use per_compiler;
