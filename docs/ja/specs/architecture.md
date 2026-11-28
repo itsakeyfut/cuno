@@ -14,6 +14,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `cuno-build` | ビルドグラフの構築・実行、差分判定、compile_commands.json の出力（[build.md](build.md)） | MVP |
 | `cuno-test` | テストの検出・実行・結果表示（[testing.md](testing.md)） | MVP |
 | `cuno-tools` | fmt / lint（clang-format / clang-tidy の呼び出し）（[dev-tools.md](dev-tools.md)） | MVP |
+| `cuno-self` | cuno 自体の更新とアンインストール：入れ方の見分け、リリースの版と名前、`curl` によるダウンロード、SHA-256 の照合、実行ファイルの置き換え（[distribution.md](distribution.md#自己更新)） | M5 |
 | `cuno-script` | Lua ビルドスクリプトの組み込み | 後 |
 | `cuno-deps` | 依存の解決・取得・ロックファイル（[dependencies.md](dependencies.md)） | 依存管理 段階 1 |
 
@@ -64,6 +65,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `lint` | `lint` |
 | `new` | `new`、`init` |
 | `toolchain` | `toolchain list`、`toolchain default` |
+| `self_cmd` | `self update` |
 
 - `build` が 4 つのコマンドを持つのは、[commands.md](commands.md#ビルド系コマンドbuild--run--check--testで使えるもの) のとおり 1 つのビルドの流れを共有するため。
 - 理由: 複数のコマンドが共有する処理を置ける場所があると、どのクレートが答えるべきかを問わないまま処理が溜まり、規則が二重になる（ビルドと doctor が共有するツールチェーンの準備や、doctor がコンパイラの選択の順序を写し持っていたこと）。共有の置き場をなくし、置く場所を書く時点で決めさせる。また、`main.rs` だけがプロセスを読むことで、コマンドを値だけで呼べる。
@@ -82,6 +84,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `cuno-build` | `cuno-core`、`cuno-manifest`、`cuno-toolchain` |
 | `cuno-test` | `cuno-core` |
 | `cuno-tools` | `cuno-core`、`cuno-manifest`、`cuno-toolchain` |
+| `cuno-self` | `cuno-core` |
 | `cuno-deps`（後） | `cuno-core`、`cuno-manifest`、`cuno-toolchain` |
 | `cuno-script`（後） | `cuno-core`、`cuno-build` |
 | `cuno-cli` | すべて |
@@ -143,6 +146,7 @@ cuno/
 | clap | コマンド引数の解析 | MVP |
 | serde + toml | 設定ファイルの読み込み | MVP |
 | toml_edit | 設定ファイルの書き換え（`cuno toolchain default`。コメントとほかのキーを残す） | M5 |
+| sha2 | ダウンロードしたリリースの SHA-256 の照合（`cuno self update`） | M5 |
 | mlua | Lua の組み込み | 後 |
 
 ## cuno 自体のテスト

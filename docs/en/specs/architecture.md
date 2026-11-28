@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/architecture.md @ blob f198420e9457a882707bc4d0366e466d7964214b -->
+<!-- translated-from: docs/ja/specs/architecture.md @ blob c7391385d92abc1db5fb2d0dfc4686ed02215240 -->
 
 # Internal Structure of cuno Itself
 
@@ -16,6 +16,7 @@ A Rust workspace, with crates split by role.
 | `cuno-build` | Building and executing the build graph, change detection, outputting compile_commands.json ([build.md](build.md)) | MVP |
 | `cuno-test` | Test discovery, execution, and result output ([testing.md](testing.md)) | MVP |
 | `cuno-tools` | fmt / lint (invoking clang-format / clang-tidy) ([dev-tools.md](dev-tools.md)) | MVP |
+| `cuno-self` | Updating and uninstalling cuno itself: telling how it was installed, the release's version and names, downloading with `curl`, checking the SHA-256, replacing the executable ([distribution.md](distribution.md#self-update)) | M5 |
 | `cuno-script` | Embedding Lua build scripts | Later |
 | `cuno-deps` | Dependency resolution, fetching, and the lock file ([dependencies.md](dependencies.md)) | Dependency management stage 1 |
 
@@ -66,6 +67,7 @@ The command modules are limited to those in the following table. `tests/architec
 | `lint` | `lint` |
 | `new` | `new`, `init` |
 | `toolchain` | `toolchain list`, `toolchain default` |
+| `self_cmd` | `self update` |
 
 - `build` holds four commands because they share one build flow, as in [commands.md](commands.md#available-for-build-commands-build--run--check--test).
 - Rationale: when there is a place to put processing that several commands share, processing accumulates there without anyone asking which crate should answer, and rules get duplicated (the toolchain preparation shared by the build and doctor, and doctor holding a copy of the compiler selection order). Removing the shared place forces the decision of where something belongs at the time it is written. Also, because only `main.rs` reads the process, commands can be called with values alone.
@@ -84,6 +86,7 @@ The allowed directions of dependency are limited to the following. `tests/archit
 | `cuno-build` | `cuno-core`, `cuno-manifest`, `cuno-toolchain` |
 | `cuno-test` | `cuno-core` |
 | `cuno-tools` | `cuno-core`, `cuno-manifest`, `cuno-toolchain` |
+| `cuno-self` | `cuno-core` |
 | `cuno-deps` (later) | `cuno-core`, `cuno-manifest`, `cuno-toolchain` |
 | `cuno-script` (later) | `cuno-core`, `cuno-build` |
 | `cuno-cli` | all |
@@ -145,6 +148,7 @@ cuno/
 | clap | Command-line argument parsing | MVP |
 | serde + toml | Loading configuration files | MVP |
 | toml_edit | Rewriting configuration files (`cuno toolchain default`, keeping comments and other keys) | M5 |
+| sha2 | Checking a downloaded release's SHA-256 (`cuno self update`) | M5 |
 | mlua | Embedding Lua | Later |
 
 ## Testing cuno itself

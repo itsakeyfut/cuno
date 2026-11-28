@@ -37,6 +37,7 @@ const COLOR: &[(&str, Row)] = &[
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
     ("toolchain", Runs(&["toolchain", "list"])),
+    ("self", Runs(&["self", "update"])),
 ];
 
 /// Outside a project the missing project is the error, whatever the
@@ -65,6 +66,10 @@ const OUTSIDE_A_PROJECT: &[(&str, Row)] = &[
         "toolchain",
         DoesNotApply("it lists the machine's compilers, in a project or not"),
     ),
+    (
+        "self",
+        DoesNotApply("it updates cuno itself, in a project or not"),
+    ),
 ];
 
 /// The output directory is judged as the file system names it: a setting
@@ -81,6 +86,7 @@ const OUTPUT_DIRECTORY: &[(&str, Row)] = &[
     ("clean", Runs(&["clean"])),
     ("doctor", Runs(&["doctor"])),
     ("toolchain", Runs(&["toolchain", "list"])),
+    ("self", DoesNotApply("it has no output directory")),
 ];
 
 /// A configured tool copy that cannot be used is reported, even when
@@ -102,6 +108,7 @@ const CONFIGURED_COPY: &[(&str, Row)] = &[
             "it lists the copy as not usable, with this reason, on stdout; reporting it as a problem is doctor's",
         ),
     ),
+    ("self", DoesNotApply("it runs no tool")),
 ];
 
 /// Every rule's table, named.

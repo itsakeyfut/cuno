@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob 014a6375997e8cb857337713590e8dad8b1d2081 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob 6465dc5ff48dce40f5697b2372eb43382206eec5 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -65,9 +65,12 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 
 ## Downloads
 
-- When cuno fetches from the network (`cuno self update`, fetching for dependency management), it runs `curl`. On Windows, the `curl.exe` that Windows 10 1803 and later include is found on `PATH`.
+- When cuno fetches from the network (`cuno self update`, fetching for dependency management), it runs `curl`. On Windows, it runs `%SystemRoot%\System32\curl.exe`, which Windows 10 1803 and later include, by its location, and otherwise the `curl.exe` found on `PATH`.
+  - Reason: an older curl earlier on `PATH` (Git for Windows') would otherwise be run. `PATH` is searched too, so that where Windows' own has been removed, a curl the user installed works.
   - Reason: Windows' `curl.exe` verifies TLS against the Windows certificate store and follows the proxy variables such as `HTTPS_PROXY`, so it works behind a company proxy or TLS inspection without the user configuring anything. Building a Rust HTTP library in would leave cuno to handle these itself, and make the binary larger.
-- If `curl` cannot be run, it is an error (exit code 3), with a `help:` saying that Windows 10 1803 and later include it and that it has to be found on `PATH`.
+- If there is neither, it is an error (exit code 3), with a `help:` saying that Windows 10 1803 and later include it, and that otherwise `winget install cURL.cURL` installs it.
+- Only `https://` is used, and a redirect is followed only to `https://`. A connection that takes 30 seconds, or a transfer slower than 1 byte a second for 30 seconds in a row, is stopped as a failure (the whole download has no time limit).
+  - Reason: so that cuno never waits forever on a connection that does not answer, while a large download that is slow but moving is not stopped.
 - A failed download (an HTTP error included) is an error (exit code 3) naming the URL and the error from `curl`.
 
 ## Self-update
@@ -76,6 +79,7 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 - How cuno was installed is told by where the running `cuno.exe` is (compared by path identity).
   - `<cuno home>\bin\cuno.exe`: installed by cuno's own installer (the one-liner). cuno updates and removes it.
   - `<CARGO_HOME>\bin\cuno.exe` (`%USERPROFILE%\.cargo` when `CARGO_HOME` is not set): installed by `cargo install`. cuno points to cargo for updating and removing it.
+  - When the two are the same place (`CARGO_HOME` is the cuno home), it counts as installed by cuno's own installer.
   - Anywhere else (a zip unpacked by hand, for example): cuno does not rewrite itself, and points to installing again with the one-liner.
   - Reason: if the installer recorded how cuno was installed, a record that disagrees with where cuno actually is (when a cuno elsewhere is run, for example) could have the wrong `cuno.exe` rewritten. Telling by location leaves no record to disagree.
 - Uninstalling is `cuno self uninstall` ([commands.md](commands.md#cuno-self-uninstall)).

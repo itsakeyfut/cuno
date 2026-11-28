@@ -422,7 +422,8 @@ cuno を最新のリリースに更新する。
   - 理由: 終了コード 0 にすると、更新を任せたスクリプトが、更新されたと受け取る。
 - 最新の版は、`https://github.com/itsakeyfut/cuno/releases/latest` の転送先（`…/releases/tag/v<version>`）から知り、`x.y.z` として実行中の版と比べる。`x.y.z` の形でなければエラー（終了コード 3）。
   - 実行中の版と同じなら `   Unchanged cuno 0.2.0 is the latest release`、実行中の方が新しければ（リリース前のビルドなど）`   Unchanged cuno 0.3.0 is newer than the latest release, 0.2.0` で、何もしない（終了コード 0）。古い版に戻すことはしない。
-- 置き換え: `bin\cuno.exe` を `bin\cuno.exe.old` に名前を変えて退け（実行中のファイルは消せないが、名前は変えられる）、新しい `cuno.exe` を書く。書けなければ `cuno.exe.old` を元の名前に戻す。`cuno.exe.old` は、次の `cuno self update` と `cuno self uninstall` が消す。
+- 置き換え: 新しい `cuno.exe` を `bin\cuno.exe.new` に書いてから、`bin\cuno.exe` を `bin\cuno.exe.old` に名前を変えて退け（実行中のファイルは消せないが、名前は変えられる）、`cuno.exe.new` を `cuno.exe` に名前を変える。最後の名前の変更ができなければ `cuno.exe.old` を元の名前に戻し、それもできなければ、エラーに元の cuno が `cuno.exe.old` にあることを書く。`cuno.exe.old` は、次の `cuno self update` と `cuno self uninstall` が消す。
+  - 理由: 途中で止まっても、`cuno.exe` がなくなる、または書きかけになる間を、名前の変更 2 回の間だけにする。
 - 表示（標準エラー）:
 
 ```
