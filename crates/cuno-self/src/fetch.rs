@@ -30,9 +30,9 @@ pub struct Curl {
     /// more only in tests, which serve files and a local `http://`.
     pub protocols: String,
     /// How long a connection may take, and how long a transfer may stay
-    /// below one byte a second, before curl gives up, in seconds:
-    /// 30, and less only in tests, which would otherwise wait
-    /// that long for a server that never answers.
+    /// below one byte a second, before curl gives up, in seconds: 30, and
+    /// less only in tests, which would otherwise wait that long for a
+    /// server that never answers.
     pub stall_seconds: u32,
 }
 
