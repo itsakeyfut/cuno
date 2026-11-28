@@ -445,8 +445,10 @@ cuno の管理ディレクトリを消し、cuno 自身のインストーラで�
 | `-y` / `--yes` | 確認せずに消す |
 
 - 消すもの: 管理ディレクトリ全体（`config.toml`、展開した同梱ヘッダ、自動インストールしたコンパイラなど）と、cuno 自身のインストーラで入れた場合は、ユーザーの `PATH` の `<管理ディレクトリ>\bin`。プロジェクトの中のもの（`.cuno/`、`target/`）と、ほかの場所のものには触れない。
-- 管理ディレクトリが、ドライブのルートか、利用者のホームディレクトリ（`USERPROFILE`、`HOME`）か、それらを含むディレクトリなら、何も消さずに `error: refusing to remove <home>: it is not a directory of cuno's own` （`<home>` は管理ディレクトリ）でエラー（終了コード 3）。
+- 管理ディレクトリが、ドライブか共有（`\\server\share`）のルートか、利用者のホームディレクトリ（`USERPROFILE`、`HOME`）か、それらを含むディレクトリなら（`\\?\` を付けた書き方でも同じ）、何も消さずに `error: refusing to remove <home>: it is not a directory of cuno's own` （`<home>` は管理ディレクトリ）でエラー（終了コード 3）。
   - 理由: `CUNO_HOME` を誤って設定していると、利用者のファイルをまとめて消してしまう。
+- 管理ディレクトリか `<管理ディレクトリ>\bin` がリンク（ジャンクション、シンボリックリンク）なら、何も消さずに `error: refusing to remove <path>: it is a link; remove it and what it leads to by hand` でエラー（終了コード 3）。管理ディレクトリの中にあるリンクは、リンクそのものだけを消し、リンク先は辿らない。
+  - 理由: リンクを辿ると、管理ディレクトリの外のファイルを消してしまう。
 - 消す前に、消すものを 1 行ずつ示して `Continue? [y/N]` と聞く（標準エラー）。`y` か `yes`（大文字・小文字を問わない）なら続け、それ以外は何も消さずに終わる（終了コード 0）。
   - `-y` があれば聞かない。
   - `-y` がなく、標準入力が端末でなければ、何も消さずに `error: cuno self uninstall asks before deleting, and standard input is not a terminal` と `help: pass -y to remove without asking`（終了コード 2）。
