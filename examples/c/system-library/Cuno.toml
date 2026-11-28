@@ -1,0 +1,7 @@
+[package]
+name = "system-library"
+version = "0.1.0"
+lang = "c"
+
+[build]
+links = ["shlwapi"]   # shlwapi.lib for MSVC and clang-cl, -lshlwapi for clang and GCC

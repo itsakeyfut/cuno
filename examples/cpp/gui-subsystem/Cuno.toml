@@ -1,0 +1,8 @@
+[package]
+name = "gui-subsystem"
+version = "0.1.0"
+
+[[bin]]
+name = "gui"
+path = "src/main.cpp"
+subsystem = "windows"   # no console window; a plain main() still works
