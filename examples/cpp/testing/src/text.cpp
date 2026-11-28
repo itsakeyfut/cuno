@@ -3,11 +3,9 @@
 namespace {
 
 // Not visible outside this file, and still tested below.
-bool is_space(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-}
+bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-}  // namespace
+} // namespace
 
 std::string trim(std::string_view text) {
     while (!text.empty() && is_space(text.front())) {
@@ -33,8 +31,6 @@ static cuno::test::suite tests = [] {
         expect(!is_space('x'));
     });
 
-    test("trim of only spaces is empty", [] {
-        expect(eq(trim("   "), std::string()));
-    });
+    test("trim of only spaces is empty", [] { expect(eq(trim("   "), std::string())); });
 };
 #endif

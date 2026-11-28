@@ -1,11 +1,9 @@
 #include "stats.h"
 
 /* Not visible outside this file, and still tested below. */
-static int at_least_zero(int count) {
-    return count < 0 ? 0 : count;
-}
+static int at_least_zero(int count) { return count < 0 ? 0 : count; }
 
-int sum(const int* values, int count) {
+int sum(const int *values, int count) {
     int total = 0;
     for (int i = 0; i < at_least_zero(count); ++i) {
         total += values[i];
@@ -13,7 +11,7 @@ int sum(const int* values, int count) {
     return total;
 }
 
-int mean(const int* values, int count) {
+int mean(const int *values, int count) {
     count = at_least_zero(count);
     return count == 0 ? 0 : sum(values, count) / count;
 }
