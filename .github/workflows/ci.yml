@@ -82,7 +82,10 @@ jobs:
             ~/.cargo/git/db
             target
           key: ${{ runner.os }}-${{ github.job }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-      - run: cargo doc --workspace --no-deps
+      # Private items too: most doc comments here are on them, and rustdoc
+      # resolves an item's links only when it documents the item, so a
+      # broken link in a private doc passes otherwise.
+      - run: cargo doc --workspace --no-deps --document-private-items
 
   # What decides a release (.github/workflows/release.yml), tested here so
   # it is proven before a release depends on it.
