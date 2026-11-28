@@ -63,9 +63,12 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 
 ## ダウンロード
 
-- cuno がネットワークから取得するとき（`cuno self update`、依存管理の取得）は、`curl` を起動する。Windows では、Windows 10 1803 以降に標準で入っている `curl.exe` が `PATH` で見つかる。
+- cuno がネットワークから取得するとき（`cuno self update`、依存管理の取得）は、`curl` を起動する。Windows では、Windows 10 1803 以降に標準で入っている `%SystemRoot%\System32\curl.exe` を場所で指して使い、それがなければ `PATH` で見つかる `curl.exe` を使う。
+  - 理由: `PATH` の先に古い curl（Git for Windows のもの）があると、それが使われてしまう。Windows 標準のものを消された環境でも、利用者が入れた curl で動くよう、`PATH` も探す。
   - 理由: Windows の `curl.exe` は Windows の証明書ストアで TLS を検証し、`HTTPS_PROXY` などのプロキシの環境変数にも従う。会社のプロキシや TLS の検査の下でも、利用者が設定を足さずに動く。Rust の HTTP ライブラリを組み込むと、これらを cuno が自前で扱うことになり、バイナリも大きくなる。
-- `curl` を起動できなければエラー（終了コード 3）で、`help:` に、Windows 10 1803 以降に入っていること、`PATH` で見つかるようにすることを書く。
+- どちらにもなければエラー（終了コード 3）で、`help:` に、Windows 10 1803 以降に入っていること、なければ `winget install cURL.cURL` で入れられることを書く。
+- `https://` だけを使い、転送先も `https://` に限る。接続に 30 秒、または 30 秒続けて 1 バイト毎秒より遅ければ、止めて失敗とする（ダウンロード全体の時間は区切らない）。
+  - 理由: 応答しない接続で cuno が止まり続けないように。遅くても進んでいる大きなダウンロードは止めない。
 - ダウンロードに失敗したら（HTTP のエラーを含む）エラー（終了コード 3）で、URL と `curl` のエラーを示す。
 
 ## 自己更新
@@ -74,6 +77,7 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 - 入れ方は、実行中の `cuno.exe` の場所で見分ける（パスの同一性で比べる）。
   - `<管理ディレクトリ>\bin\cuno.exe`: cuno 自身のインストーラ（ワンライナー）で入れたもの。cuno が更新・削除する。
   - `<CARGO_HOME>\bin\cuno.exe`（`CARGO_HOME` がなければ `%USERPROFILE%\.cargo`）: `cargo install` で入れたもの。cargo で更新・削除するよう案内する。
+  - 2 つが同じ場所なら（`CARGO_HOME` と管理ディレクトリが同じ）、cuno 自身のインストーラで入れたものとして扱う。
   - それ以外（zip を手で展開したものなど）: cuno は自分を書き換えず、ワンライナーで入れ直すよう案内する。
   - 理由: インストーラが入れ方を記録すると、記録と実際の場所が食い違ったとき（別の場所の cuno から実行したときなど）に、違う `cuno.exe` を書き換えうる。場所で見分ければ、食い違う記録がない。
 - アンインストールは `cuno self uninstall`（[commands.md](commands.md#cuno-self-uninstall)）。

@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 59fe274acb793fa9fe24b01f2497defa85a2db22 -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 84dfa2f146c1bc8256b9d0ec05cbf5db56401b5b -->
 
 # Commands
 
@@ -429,7 +429,8 @@ Updates cuno to the latest release.
   - Reason: with exit code 0, a script left to update cuno would take it as updated.
 - The latest version is learnt from where `https://github.com/itsakeyfut/cuno/releases/latest` redirects to (`…/releases/tag/v<version>`), and compared with the running one as `x.y.z`. Anything not of the form `x.y.z` is an error (exit code 3).
   - When it is the running version, `   Unchanged cuno 0.2.0 is the latest release`; when the running one is newer (a build before a release, say), `   Unchanged cuno 0.3.0 is newer than the latest release, 0.2.0`; nothing is done (exit code 0). It never goes back to an older version.
-- Replacing: `bin\cuno.exe` is renamed aside to `bin\cuno.exe.old` (a running file cannot be deleted, but can be renamed) and the new `cuno.exe` written. If it cannot be written, `cuno.exe.old` is renamed back. The next `cuno self update` or `cuno self uninstall` deletes `cuno.exe.old`.
+- Replacing: the new `cuno.exe` is written to `bin\cuno.exe.new`, then `bin\cuno.exe` is renamed aside to `bin\cuno.exe.old` (a running file cannot be deleted, but can be renamed) and `cuno.exe.new` renamed to `cuno.exe`. If that last rename fails, `cuno.exe.old` is renamed back, and if that fails too, the error says the previous cuno is at `cuno.exe.old`. The next `cuno self update` or `cuno self uninstall` deletes `cuno.exe.old`.
+  - Reason: so that a run stopped part way leaves `cuno.exe` missing or half-written only between two renames.
 - Output (standard error):
 
 ```
