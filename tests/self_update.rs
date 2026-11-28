@@ -61,3 +61,27 @@ fn a_cargo_installed_cuno_is_pointed_to_cargo() {
         "error: cuno was installed by cargo install, so cargo updates it\nhelp: run cargo install cuno\n",
     );
 }
+
+/// Like every command but `cuno new`, it reads the project's configuration
+/// too, and a broken one stops it before anything else
+/// (`docs/en/specs/commands.md`, "Available for all commands").
+///
+/// Mutation: read only the user's configuration, as `cuno new` does; this
+/// test fails.
+#[test]
+fn a_broken_project_configuration_stops_it() {
+    let p = Project::new()
+        .file(
+            "Cuno.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )
+        .file(".cuno/config.toml", "this is = = not toml\n");
+    let run = p.cuno(&["self", "update"]);
+    assert_eq!(run.code, Some(3), "{}", run.stderr);
+    assert!(
+        run.stderr.contains(".cuno") && run.stderr.contains("config.toml"),
+        "{}",
+        run.stderr
+    );
+    assert!(!run.stderr.contains("installer"), "{}", run.stderr);
+}

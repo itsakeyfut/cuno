@@ -30,6 +30,18 @@ pub enum Check {
     },
 }
 
+/// Refuses a cuno its installer did not put in place: cargo updates one,
+/// and cuno rewrites no other.
+pub fn refuse(method: Method, exe: &Path) -> Result<(), SelfError> {
+    match method {
+        Method::Installer => Ok(()),
+        Method::Cargo => Err(SelfError::Cargo),
+        Method::Other => Err(SelfError::NotInstaller {
+            exe: exe.to_owned(),
+        }),
+    }
+}
+
 /// Compares the running version with the latest release. A cuno its
 /// installer did not put in place is refused before anything is fetched.
 pub fn check(
@@ -39,15 +51,7 @@ pub fn check(
     fetch: &dyn Fetch,
     releases: &str,
 ) -> Result<Check, SelfError> {
-    match method {
-        Method::Installer => {}
-        Method::Cargo => return Err(SelfError::Cargo),
-        Method::Other => {
-            return Err(SelfError::NotInstaller {
-                exe: exe.to_owned(),
-            });
-        }
-    }
+    refuse(method, exe)?;
     let latest = release::latest(fetch, releases)?;
     Ok(if latest > current {
         Check::Newer { latest }
@@ -147,30 +151,51 @@ fn unpack(tar: &Path, zip_path: &Path, zip: &str, dir: &Path) -> Result<PathBuf,
     Ok(exe)
 }
 
+/// Where the new executable is written before it is renamed into place.
+fn staged(exe: &Path) -> PathBuf {
+    let mut name = exe.file_name().unwrap_or_default().to_owned();
+    name.push(".new");
+    exe.with_file_name(name)
+}
+
 /// Puts `new` at `exe`. A running executable cannot be deleted or
-/// overwritten on Windows, but can be renamed, so `exe` is renamed aside
-/// first, and renamed back if the copy fails.
+/// overwritten on Windows, but can be renamed. So `new` is first copied
+/// beside `exe`, then `exe` renamed aside and the copy renamed into its
+/// place: a run stopped part way leaves `exe` missing only between the two
+/// renames. If the second fails, `exe` is renamed back, and if that fails
+/// too the error says where the previous cuno is.
 pub fn replace(exe: &Path, new: &Path) -> Result<(), SelfError> {
     let aside = renamed_aside(exe);
-    let replace_error = |e: std::io::Error| SelfError::Replace {
+    let staged = staged(exe);
+    let replace_error = |reason: String| SelfError::Replace {
         exe: exe.to_owned(),
-        reason: e.to_string(),
+        reason,
     };
     // One a running cuno still holds cannot be deleted, and a rename onto
     // it would fail with a less clear reason.
     if aside.exists() {
-        std::fs::remove_file(&aside).map_err(|e| SelfError::Replace {
-            exe: exe.to_owned(),
-            reason: format!(
+        std::fs::remove_file(&aside).map_err(|e| {
+            replace_error(format!(
                 "{} cannot be removed, perhaps because an earlier cuno is still running: {e}",
                 aside.display()
-            ),
+            ))
         })?;
     }
-    std::fs::rename(exe, &aside).map_err(replace_error)?;
-    if let Err(e) = std::fs::copy(new, exe) {
-        let _ = std::fs::rename(&aside, exe);
-        return Err(replace_error(e));
+    let _ = std::fs::remove_file(&staged);
+    if let Err(e) = std::fs::copy(new, &staged) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(replace_error(e.to_string()));
+    }
+    if let Err(e) = std::fs::rename(exe, &aside) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(replace_error(e.to_string()));
+    }
+    if let Err(e) = std::fs::rename(&staged, exe) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(match std::fs::rename(&aside, exe) {
+            Ok(()) => replace_error(e.to_string()),
+            Err(_) => replace_error(format!("{e}; the previous cuno is at {}", aside.display())),
+        });
     }
     Ok(())
 }
@@ -346,6 +371,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(&exe).unwrap(), b"old");
         assert!(!renamed_aside(&exe).exists());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 
     /// A release missing a file is a download error, and changes nothing.
@@ -363,6 +389,7 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 
     /// Waits, so that a copy of this test binary runs while another test
@@ -404,26 +431,123 @@ mod tests {
         assert!(renamed_aside(&exe).exists());
     }
 
-    /// What an earlier update left aside is removed first; a copy that fails
-    /// puts the executable back.
+    /// What an earlier update left aside is removed first, and the new
+    /// executable goes in by rename, leaving no staged copy behind; a copy
+    /// that fails leaves the executable as it was, never renamed aside.
     ///
-    /// Mutation: keep a stale `.old` (so the rename fails), or drop the
-    /// rename back; this test fails.
+    /// Mutation: keep a stale `.old` (so the rename fails), leave the
+    /// staged `.new` behind, or rename `exe` aside before the copy; this
+    /// test fails.
     #[test]
-    fn a_stale_copy_is_removed_and_a_failed_copy_undone() {
+    fn a_stale_copy_is_removed_and_a_failed_copy_changes_nothing() {
         let (_home, exe) = installed(b"current");
         std::fs::write(renamed_aside(&exe), b"stale").unwrap();
         let new = exe.with_file_name("new.exe");
         std::fs::write(&new, b"new").unwrap();
         replace(&exe, &new).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
         assert_eq!(std::fs::read(renamed_aside(&exe)).unwrap(), b"current");
+        assert!(!staged(&exe).exists());
 
+        std::fs::remove_file(renamed_aside(&exe)).unwrap();
         let missing = exe.with_file_name("missing.exe");
         let result = replace(&exe, &missing);
         assert!(
             matches!(result, Err(SelfError::Replace { .. })),
             "{result:?}"
         );
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new");
+        assert!(!renamed_aside(&exe).exists());
+        assert!(!staged(&exe).exists());
+    }
+
+    /// The names the spec gives: `cuno.exe.old` beside the executable, which
+    /// the next run removes.
+    ///
+    /// Mutation: change the suffix, or make `remove_renamed` do nothing;
+    /// this test fails.
+    #[test]
+    fn the_copy_left_aside_is_cuno_exe_old_and_is_removed_next_time() {
+        let (_home, exe) = installed(b"current");
+        assert_eq!(renamed_aside(&exe), exe.with_file_name("cuno.exe.old"));
+        std::fs::write(exe.with_file_name("cuno.exe.old"), b"old").unwrap();
+        remove_renamed(&exe);
+        assert!(!exe.with_file_name("cuno.exe.old").exists());
+        assert!(exe.exists());
+    }
+
+    /// A zip without `cuno.exe`, or a `tar` that cannot run, is an unpack
+    /// error, and changes nothing.
+    ///
+    /// Mutation: ignore tar's exit status or the missing file, or carry on
+    /// past the failure; this test fails.
+    #[test]
+    fn a_zip_without_cuno_exe_changes_nothing() {
+        let (_home, exe) = installed(b"old");
+        let temp = tempfile::tempdir().unwrap();
+        let mut files = server("0.2.0", b"new", false);
+        // The zip's only file is named otherwise.
+        let other = {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("other.exe"), b"x").unwrap();
+            let zip = dir.path().join("out.zip");
+            let status = Command::new(tar())
+                .args(["-a", "-cf"])
+                .arg(&zip)
+                .arg("-C")
+                .arg(dir.path())
+                .arg("other.exe")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            std::fs::read(zip).unwrap()
+        };
+        let digest: String = Sha256::digest(&other)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let name = release::zip_name("0.2.0");
+        let base = format!("{RELEASES}/download/v0.2.0");
+        files.served.insert(format!("{base}/{name}"), other);
+        files.served.insert(
+            format!("{base}/{name}.sha256"),
+            format!("{digest}  {name}\n").into_bytes(),
+        );
+        let result = install(&exe, v("0.2.0"), &files, RELEASES, temp.path(), &tar());
+        assert!(
+            matches!(result, Err(SelfError::Unpack { .. })),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+
+        let good = server("0.2.0", b"new", false);
+        let no_tar = temp.path().join("no-tar.exe");
+        let result = install(&exe, v("0.2.0"), &good, RELEASES, temp.path(), &no_tar);
+        assert!(
+            matches!(result, Err(SelfError::Unpack { .. })),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+    }
+
+    /// The published SHA-256 may be in capitals.
+    ///
+    /// Mutation: compare the digests case-sensitively; this test fails.
+    #[test]
+    fn the_checksum_is_compared_without_case() {
+        let (_home, exe) = installed(b"old");
+        let temp = tempfile::tempdir().unwrap();
+        let mut files = server("0.2.0", b"new", false);
+        for (url, bytes) in &mut files.served {
+            if url.ends_with(".sha256") {
+                *bytes = String::from_utf8(bytes.clone())
+                    .unwrap()
+                    .to_uppercase()
+                    .into_bytes();
+            }
+        }
+        install(&exe, v("0.2.0"), &files, RELEASES, temp.path(), &tar()).unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new");
     }
 }

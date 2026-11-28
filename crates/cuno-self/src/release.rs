@@ -142,12 +142,12 @@ mod tests {
     }
 
     /// A fetch that answers one redirect.
-    struct Redirect(Option<&'static str>);
+    struct Redirect(Option<String>);
 
     impl Fetch for Redirect {
         fn redirect(&self, url: &str) -> Result<Option<String>, SelfError> {
             assert_eq!(url, "https://r/latest");
-            Ok(self.0.map(str::to_owned))
+            Ok(self.0.clone())
         }
         fn download(&self, _: &str, _: &Path) -> Result<(), SelfError> {
             unreachable!("the lookup downloads nothing")
@@ -160,7 +160,7 @@ mod tests {
     /// this test fails.
     #[test]
     fn the_latest_version_is_the_redirects_tag() {
-        let latest = |to| latest(&Redirect(to), "https://r");
+        let latest = |to: Option<&str>| latest(&Redirect(to.map(str::to_owned)), "https://r");
         assert_eq!(
             latest(Some("https://r/tag/v0.12.3")),
             Ok(Version {
@@ -175,6 +175,22 @@ mod tests {
                 tag: "nightly".to_owned()
             })
         );
+        assert_eq!(
+            latest(Some("https://r/tag/v0.2.0/")),
+            Ok(Version {
+                major: 0,
+                minor: 2,
+                patch: 0
+            })
+        );
+        for tag in ["0.2.0", "vv0.2.0"] {
+            assert_eq!(
+                latest(Some(&format!("https://r/tag/{tag}"))),
+                Err(SelfError::Tag {
+                    tag: tag.to_owned()
+                })
+            );
+        }
         assert_eq!(
             latest(None),
             Err(SelfError::NotRedirected {

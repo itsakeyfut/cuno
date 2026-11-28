@@ -130,7 +130,7 @@ impl CunoError for SelfError {
             SelfError::Cargo => Some("run cargo install cuno".to_owned()),
             SelfError::NotInstaller { .. } => Some(format!("install cuno with: {INSTALL_COMMAND}")),
             SelfError::NoCurl { .. } => Some(
-                "cuno downloads with curl, which Windows 10 (1803) and later include; make sure curl.exe is found on PATH"
+                "curl.exe is part of Windows 10 (1803) and later; without it, install curl with: winget install cURL.cURL"
                     .to_owned(),
             ),
             SelfError::Exe(_)
@@ -176,5 +176,96 @@ mod tests {
         );
         assert_eq!(SelfError::Cargo.exit_class(), ExitClass::Setup);
         assert_eq!(other.exit_class(), ExitClass::Setup);
+    }
+
+    /// Every error's message as the user reads it, each exit code 3, and
+    /// the curl help naming where curl comes from.
+    ///
+    /// Mutation: reword any message, classify any variant otherwise, or
+    /// drop the curl help; this test fails.
+    #[test]
+    fn every_error_reads_as_the_spec_words_it() {
+        let p = PathBuf::from;
+        let cases = [
+            (
+                SelfError::Exe("denied".into()),
+                "cannot find where cuno itself is: denied",
+            ),
+            (
+                SelfError::Cargo,
+                "cuno was installed by cargo install, so cargo updates it",
+            ),
+            (
+                SelfError::NoCurl {
+                    reason: "gone".into(),
+                },
+                "cannot run curl: gone",
+            ),
+            (
+                SelfError::Download {
+                    url: "https://x/a.zip".into(),
+                    reason: "curl: (22) 404".into(),
+                },
+                "cannot download https://x/a.zip: curl: (22) 404",
+            ),
+            (
+                SelfError::NotRedirected {
+                    url: "https://x/latest".into(),
+                },
+                "https://x/latest did not redirect to a release",
+            ),
+            (
+                SelfError::Tag {
+                    tag: "nightly".into(),
+                },
+                "the latest release's tag is not a version: nightly",
+            ),
+            (
+                SelfError::Checksum {
+                    zip: "a.zip".into(),
+                },
+                "a.zip does not match its checksum",
+            ),
+            (
+                SelfError::Unpack {
+                    zip: "a.zip".into(),
+                    reason: "not found".into(),
+                },
+                "cannot take cuno.exe out of a.zip: not found",
+            ),
+            (
+                SelfError::Replace {
+                    exe: p(r"C:\h\bin\cuno.exe"),
+                    reason: "denied".into(),
+                },
+                r"cannot replace C:\h\bin\cuno.exe: denied",
+            ),
+            (
+                SelfError::Io {
+                    path: p(r"C:\t\a.sha256"),
+                    reason: "denied".into(),
+                },
+                r"cannot use C:\t\a.sha256: denied",
+            ),
+            (
+                SelfError::Temp("cannot create C:\t".into()),
+                "cannot create C:\t",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+            assert_eq!(error.exit_class(), ExitClass::Setup, "{message}");
+        }
+        assert_eq!(
+            SelfError::NoCurl {
+                reason: String::new()
+            }
+            .help()
+            .as_deref(),
+            Some(
+                "curl.exe is part of Windows 10 (1803) and later; without it, install curl with: winget install cURL.cURL"
+            )
+        );
+        assert_eq!(SelfError::Checksum { zip: String::new() }.help(), None);
     }
 }

@@ -119,4 +119,50 @@ mod tests {
         );
         assert_eq!(cargo_home(&env(&[])), None);
     }
+
+    /// `HOME` serves when `USERPROFILE` is unset or empty, as for the cuno
+    /// home.
+    ///
+    /// Mutation: drop the `HOME` fallback, or take an empty value; this
+    /// test fails.
+    #[test]
+    fn home_serves_when_userprofile_does_not() {
+        let env = |pairs: &[(&str, &str)]| {
+            Env::from_pairs(
+                pairs.iter().map(|(k, v)| ((*k).into(), (*v).into())),
+                NameCase::Insensitive,
+            )
+        };
+        assert_eq!(
+            cargo_home(&env(&[("HOME", "/home/u")])),
+            Some(PathBuf::from("/home/u/.cargo"))
+        );
+        assert_eq!(
+            cargo_home(&env(&[("USERPROFILE", ""), ("HOME", "/home/u")])),
+            Some(PathBuf::from("/home/u/.cargo"))
+        );
+    }
+
+    /// Where names are compared with case, another case is another place;
+    /// a cargo home that is the cuno home counts as the installer's.
+    ///
+    /// Mutation: fold case whatever `case` says, or check cargo's place
+    /// first; this test fails.
+    #[test]
+    fn case_follows_the_host_and_a_shared_home_is_the_installers() {
+        let sensitive = method(
+            Path::new("/home/me/.cuno/BIN/cuno"),
+            Path::new("/home/me/.cuno"),
+            None,
+            NameCase::Sensitive,
+        );
+        assert_eq!(sensitive, Method::Other);
+        let shared = method(
+            Path::new(r"C:\u\.cuno\bin\cuno.exe"),
+            Path::new(r"C:\u\.cuno"),
+            Some(Path::new(r"C:\u\.cuno")),
+            NameCase::Insensitive,
+        );
+        assert_eq!(shared, Method::Installer);
+    }
 }

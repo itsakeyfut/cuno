@@ -181,6 +181,7 @@ dependencies = [
  "cuno-test",
  "cuno-toolchain",
  "cuno-tools",
+ "sha2",
  "tempfile",
 ]
 

@@ -684,10 +684,20 @@ fn dispatch(
             };
         }
         Some(Command::SelfCmd { command }) => {
-            // The user's `[term]` alone, as for `cuno new`: cuno itself has
-            // no project.
+            // Every layer, as for any command but `cuno new`
+            // (docs/en/specs/commands.md, "Available for all commands"):
+            // a broken configuration file stops it like any other.
             let cwd = given.cwd()?;
-            resolve_user_settings(env, &cwd, shell).map_err(build::boxed)?;
+            resolve_settings(
+                Inputs {
+                    cwd: &cwd,
+                    env,
+                    cores: given.cores,
+                    cli: &CliSettings::default(),
+                },
+                shell,
+            )
+            .map_err(build::boxed)?;
             return match command {
                 SelfCommand::Update => self_cmd::update(given.exe, env, given.temp, shell),
             };

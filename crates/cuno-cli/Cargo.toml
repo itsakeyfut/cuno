@@ -21,6 +21,8 @@ cuno-toolchain.workspace = true
 cuno-tools.workspace = true
 
 [dev-dependencies]
+# The SHA-256 a fake release publishes (self_cmd tests).
+sha2.workspace = true
 tempfile.workspace = true
 
 [lints]
