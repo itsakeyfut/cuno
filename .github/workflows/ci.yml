@@ -241,7 +241,7 @@ jobs:
             # The directory already there, quoted, with `/` and a trailing
             # separator, in a REG_SZ value: nothing appended, type kept.
             $other = ((Get-UserPath) -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ine $bin }) -join ';'
-            $spelled = '"' + ($bin -replace '\', '/') + '/"'
+            $spelled = '"' + $bin.Replace('\', '/') + '/"'
             Set-ItemProperty HKCU:\Environment -Name Path -Value "$other;$spelled" -Type String
             $r = Invoke-Installer @('-File', 'install.ps1')
             if ($r.Code -ne 0) { throw 'the install over another spelling failed' }
@@ -255,7 +255,7 @@ jobs:
             & "$env:SystemRoot\System32\curl.exe" -fsSL -o (Join-Path $rel $zip) "https://github.com/itsakeyfut/cuno/releases/download/v$v/$zip"
             Set-Content (Join-Path $rel "$zip.sha256") ('0' * 64 + "  $zip")
             $before = (Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc
-            $url = 'file:///' + ((Join-Path $root 'rel') -replace '\', '/')
+            $url = 'file:///' + (Join-Path $root 'rel').Replace('\', '/')
             $r = Invoke-Installer @('-File', 'install.ps1', '-Version', $v, '-Releases', $url)
             if ($r.Code -eq 0 -or $r.Out -notmatch 'does not match its checksum') { throw 'a bad checksum was not refused for its checksum' }
             if ((Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc -ne $before) { throw 'a bad checksum replaced cuno.exe' }
