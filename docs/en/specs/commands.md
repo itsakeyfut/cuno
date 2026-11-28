@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/commands.md @ blob 84dfa2f146c1bc8256b9d0ec05cbf5db56401b5b -->
+<!-- translated-from: docs/ja/specs/commands.md @ blob 1af609bbe7f2d4a31b587735c4782acedb93d3e9 -->
 
 # Commands
 
@@ -452,7 +452,11 @@ Removes cuno's home and, for a cuno installed by cuno's own installer, its `cuno
 | `-y` / `--yes` | Remove without asking |
 
 - What it removes: the whole cuno home (`config.toml`, the unpacked bundled headers, compilers installed automatically and so on) and, when cuno's own installer installed it, `<cuno home>\bin` on the user's `PATH`. Nothing in a project (`.cuno/`, `target/`) or anywhere else is touched.
-- Before removing, it shows what it will remove and asks `Continue? [y/N]` (standard error). `y` or `yes`, in any case, goes on; anything else ends with nothing removed (exit code 0).
+- If the cuno home is the root of a drive or of a share (`\\server\share`), the user's home directory (`USERPROFILE`, `HOME`) or a directory holding one of them (spelled with `\\?\` or not), nothing is removed and it is an error (exit code 3): `error: refusing to remove <home>: it is not a directory of cuno's own` (`<home>` is the cuno home).
+  - Reason: a mistaken `CUNO_HOME` would otherwise remove the user's files wholesale.
+- If the cuno home or `<cuno home>\bin` is a link (a junction, a symbolic link), nothing is removed and it is an error (exit code 3): `error: refusing to remove <path>: it is a link; remove it and what it leads to by hand`. A link inside the cuno home is removed itself, and what it leads to is not followed.
+  - Reason: following a link would remove files outside the cuno home.
+- Before removing, it shows what it will remove, one line each, and asks `Continue? [y/N]` (standard error). `y` or `yes`, in any case, goes on; anything else ends with nothing removed (exit code 0).
   - With `-y`, it does not ask.
   - Without `-y`, when standard input is not a terminal, nothing is removed, with `error: cuno self uninstall asks before deleting, and standard input is not a terminal` and `help: pass -y to remove without asking` (exit code 2).
   - Reason: so that it never waits for an answer that cannot come.
@@ -460,10 +464,14 @@ Removes cuno's home and, for a cuno installed by cuno's own installer, its `cuno
   - By cuno's own installer: it takes the entry out of `PATH` and removes the cuno home. The running `cuno.exe` cannot delete itself, so cuno removes everything else, then starts a PowerShell process that waits for cuno to exit and removes `cuno.exe` and the directories left.
   - By `cargo install`: it removes the cuno home only, with `help: cuno itself was installed by cargo install; run cargo uninstall cuno to remove it` (exit code 0).
   - Otherwise: it removes the cuno home only, with `help: cuno itself is at <exe>; remove it yourself` (exit code 0).
-- With no cuno home, it says there is nothing to remove (exit code 0).
+- With no cuno home, it shows `warning: nothing to remove: <home> does not exist` (exit code 0).
 - Output (standard error):
 
 ```
+This removes:
+  C:\Users\me\.cuno
+  C:\Users\me\.cuno\bin from PATH
+Continue? [y/N] y
      Removed C:\Users\me\.cuno\bin from PATH
      Removed C:\Users\me\.cuno
 ```

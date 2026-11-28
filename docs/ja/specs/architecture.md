@@ -65,7 +65,7 @@ Rust のワークスペースで、役割ごとにクレートを分ける。
 | `lint` | `lint` |
 | `new` | `new`、`init` |
 | `toolchain` | `toolchain list`、`toolchain default` |
-| `self_cmd` | `self update` |
+| `self_cmd` | `self update`、`self uninstall` |
 
 - `build` が 4 つのコマンドを持つのは、[commands.md](commands.md#ビルド系コマンドbuild--run--check--testで使えるもの) のとおり 1 つのビルドの流れを共有するため。
 - 理由: 複数のコマンドが共有する処理を置ける場所があると、どのクレートが答えるべきかを問わないまま処理が溜まり、規則が二重になる（ビルドと doctor が共有するツールチェーンの準備や、doctor がコンパイラの選択の順序を写し持っていたこと）。共有の置き場をなくし、置く場所を書く時点で決めさせる。また、`main.rs` だけがプロセスを読むことで、コマンドを値だけで呼べる。
