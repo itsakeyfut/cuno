@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob 75854b7614bd102a7054e30d7afbc6ad4b0ed7e0 -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob 014a6375997e8cb857337713590e8dad8b1d2081 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -19,7 +19,7 @@
   - The binary is not code-signed. Windows SmartScreen may show a warning the first time it is run.
     - Reason: signing requires obtaining and managing a certificate, which would become a prerequisite for every release. It will be reconsidered when supporting winget and similar channels.
   - In the same release, all crates are published to crates.io (installable with `cargo install cuno`).
-- Windows: winget / Scoop / a PowerShell one-liner.
+- Windows: a PowerShell one-liner ([below](#the-powershell-one-liner)). winget / Scoop come later.
 - For Rust users: `cargo install cuno`.
 
 ## cuno home directory
@@ -41,9 +41,44 @@
 
 - A command that builds writes the bundled headers before it builds. A file whose content is already the same is not rewritten. If they cannot be written, it is an error (exit code 3).
 
+### The PowerShell one-liner
+
+```
+powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/install.ps1 | iex"
+```
+
+- `install.ps1` sits at the root of the repository and is attached to each release beside the zip. The URL always points at the latest release's.
+  - Reason: the script and the binary are always from the same release. Serving the script from `main` would let a change made before a release disagree with the releases already published.
+- Steps:
+  1. Decide the cuno home: `CUNO_HOME` if set (as in cuno, a path that is not absolute is an error and nothing is done), otherwise `%USERPROFILE%\.cuno`.
+  2. Learn the latest version from where `https://github.com/itsakeyfut/cuno/releases/latest` redirects to (`…/releases/tag/v<version>`).
+  3. Download the zip and its `.sha256` into a temporary directory, and check the SHA-256.
+  4. Take `cuno.exe` from the zip and put it at `<cuno home>\bin\cuno.exe`, replacing one already there.
+  5. If `<cuno home>\bin` is not on the user's `PATH` (`Path` under `HKCU\Environment` in the registry), append it and tell other processes of the change. The value's type (`REG_EXPAND_SZ`) and unexpanded forms such as `%USERPROFILE%` are kept as they are.
+  6. Print the version installed and where, and say that `cuno` works in a newly opened terminal.
+- On failure, it removes the temporary directory, leaves any `cuno.exe` already there and `PATH` unchanged, prints the error and stops. A checksum that does not match puts nothing in place either.
+- A saved `install.ps1` takes arguments (`irm … | iex` cannot pass them).
+  - `-Version <x.y.z>`: the version to install, skipping step 2.
+  - `-Releases <URL>`: where releases are fetched from, `https://github.com/itsakeyfut/cuno/releases` by default. The zip is fetched from `<URL>/download/v<version>/`. For a company mirror, or for testing the installer. Anything but `https://` or `file://` is an error (the SHA-256 checked against comes from the same place, so `http://`, which can be rewritten on the way, is not accepted).
+- It downloads with `curl.exe`, as cuno does ([Downloads](#downloads)), and unpacks the zip with `tar.exe`, both the ones Windows includes, run from `%SystemRoot%\System32`.
+  - Reason: in PowerShell 5.1, `curl` is an alias of `Invoke-WebRequest`, and a `PATH` with Git for Windows' tools first finds a GNU tar that cannot read a zip.
+
+## Downloads
+
+- When cuno fetches from the network (`cuno self update`, fetching for dependency management), it runs `curl`. On Windows, the `curl.exe` that Windows 10 1803 and later include is found on `PATH`.
+  - Reason: Windows' `curl.exe` verifies TLS against the Windows certificate store and follows the proxy variables such as `HTTPS_PROXY`, so it works behind a company proxy or TLS inspection without the user configuring anything. Building a Rust HTTP library in would leave cuno to handle these itself, and make the binary larger.
+- If `curl` cannot be run, it is an error (exit code 3), with a `help:` saying that Windows 10 1803 and later include it and that it has to be found on `PATH`.
+- A failed download (an HTTP error included) is an error (exit code 3) naming the URL and the error from `curl`.
+
 ## Self-update
 
-- `cuno self update` (same approach as rustup).
+- `cuno self update` updates cuno to the latest release ([commands.md](commands.md#cuno-self-update)).
+- How cuno was installed is told by where the running `cuno.exe` is (compared by path identity).
+  - `<cuno home>\bin\cuno.exe`: installed by cuno's own installer (the one-liner). cuno updates and removes it.
+  - `<CARGO_HOME>\bin\cuno.exe` (`%USERPROFILE%\.cargo` when `CARGO_HOME` is not set): installed by `cargo install`. cuno points to cargo for updating and removing it.
+  - Anywhere else (a zip unpacked by hand, for example): cuno does not rewrite itself, and points to installing again with the one-liner.
+  - Reason: if the installer recorded how cuno was installed, a record that disagrees with where cuno actually is (when a cuno elsewhere is run, for example) could have the wrong `cuno.exe` rewritten. Telling by location leaves no record to disagree.
+- Uninstalling is `cuno self uninstall` ([commands.md](commands.md#cuno-self-uninstall)).
 
 ## Platforms supported by cuno itself
 
