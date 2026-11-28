@@ -84,7 +84,7 @@ The Japanese documents are the source of truth. The English version is a transla
 
 ## Examples
 
-[`examples/`](examples/) holds small C and C++ projects, one per feature cuno supports today: a single file, several files and headers, several executables, `[[bin]]`, `include-dirs`, the language edition and the release profile, per-compiler flags, C inside a C++ package, `[fmt]` and `[lint]` for a package with vendored code, and settings layered by OS and profile with warnings as errors and the static C runtime. Each builds, checks, runs and lints on MSVC, Clang, clang-cl and GCC in CI, and is formatted in cuno's default style.
+[`examples/`](examples/) holds small C and C++ projects, one per feature cuno supports today: a single file, several files and headers, several executables, `[[bin]]`, `include-dirs`, the language edition and the release profile, per-compiler flags, C inside a C++ package, `[fmt]` and `[lint]` for a package with vendored code, settings layered by OS and profile with warnings as errors and the static C runtime, a Windows system library, and a GUI-subsystem executable. Each builds, checks, runs and lints on MSVC, Clang, clang-cl and GCC in CI, and is formatted in cuno's default style.
 
 ## License
 
