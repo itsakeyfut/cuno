@@ -194,8 +194,9 @@ jobs:
       # compilers, run once, in the test job.
       - run: cargo check --workspace --all-targets
 
-  # install.ps1, run as a user would against the latest release, then again
-  # over it, against a release whose checksum is wrong, and with a relative
+  # install.ps1 as a user runs it (`irm | iex`, here from the checkout),
+  # then again over it, over a PATH that already names the directory in
+  # another spelling, against a wrong checksum and with a relative
   # CUNO_HOME (docs/en/specs/distribution.md, "The PowerShell one-liner").
   # The runner's user PATH is put back at the end.
   installer:
@@ -205,31 +206,47 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v7
-      - name: Install, install again, and refuse a bad checksum or a relative home
+      - name: Install, reinstall, and refuse a bad checksum or a relative home
         run: |
           $ErrorActionPreference = 'Stop'
           $saved = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $savedKind = (Get-Item HKCU:\Environment).GetValueKind('Path')
           $root = Join-Path $env:RUNNER_TEMP 'installer'
           $home_ = Join-Path $root 'home'
           $bin = Join-Path $home_ 'bin'
-          function Get-Entries {
-            $p = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
-            @($p -split ';' | Where-Object { $_.TrimEnd('\') -ieq $bin })
-          }
-          function Invoke-Installer([string[]]$extra) {
-            powershell -NoProfile -File install.ps1 @extra
-            $LASTEXITCODE
+          function Get-UserPath { (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames') }
+          function Get-Entries { @((Get-UserPath) -split ';' | Where-Object { $_.Trim().Trim('"').TrimEnd('\') -ieq $bin }) }
+          # The exit code and everything printed, apart: a function's
+          # output would otherwise mix the child's lines into its result.
+          function Invoke-Installer([string[]]$command) {
+            $ErrorActionPreference = 'Continue'
+            $out = (& powershell -NoProfile @command 2>&1 | ForEach-Object { "$_" }) -join "`n"
+            Write-Host $out
+            [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
           }
           try {
             $env:CUNO_HOME = $home_
-            if ((Invoke-Installer @()) -ne 0) { throw 'the first install failed' }
+            $r = Invoke-Installer @('-Command', 'Get-Content -Raw install.ps1 | iex; ''EAP='' + $ErrorActionPreference')
+            if ($r.Code -ne 0) { throw 'the install through iex failed' }
+            if ($r.Out -notmatch 'EAP=Continue') { throw 'iex left the session with another error preference' }
             $version = & (Join-Path $bin 'cuno.exe') --version
             if ($version -notmatch '^cuno \d+\.\d+\.\d+') { throw "unexpected --version: $version" }
             if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after one install" }
 
-            if ((Invoke-Installer @()) -ne 0) { throw 'the second install failed' }
+            $r = Invoke-Installer @('-File', 'install.ps1')
+            if ($r.Code -ne 0) { throw 'the second install failed' }
             if ((Get-Entries).Count -ne 1) { throw "PATH holds $bin $((Get-Entries).Count) times after two installs" }
             if (Test-Path (Join-Path $bin 'cuno.exe.old')) { throw 'cuno.exe.old was left behind' }
+
+            # The directory already there, quoted, with `/` and a trailing
+            # separator, in a REG_SZ value: nothing appended, type kept.
+            $other = ((Get-UserPath) -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ine $bin }) -join ';'
+            $spelled = '"' + ($bin -replace '\', '/') + '/"'
+            Set-ItemProperty HKCU:\Environment -Name Path -Value "$other;$spelled" -Type String
+            $r = Invoke-Installer @('-File', 'install.ps1')
+            if ($r.Code -ne 0) { throw 'the install over another spelling failed' }
+            if ((Get-UserPath) -ne "$other;$spelled") { throw "PATH changed though it named $bin: $(Get-UserPath)" }
+            if ((Get-Item HKCU:\Environment).GetValueKind('Path') -ne 'String') { throw 'the REG_SZ Path changed type' }
 
             $v = $version -replace '^cuno (\S+).*', '$1'
             $zip = "cuno-$v-x86_64-pc-windows-msvc.zip"
@@ -239,13 +256,15 @@ jobs:
             Set-Content (Join-Path $rel "$zip.sha256") ('0' * 64 + "  $zip")
             $before = (Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc
             $url = 'file:///' + ((Join-Path $root 'rel') -replace '\', '/')
-            if ((Invoke-Installer @('-Version', $v, '-Releases', $url)) -eq 0) { throw 'a bad checksum installed' }
+            $r = Invoke-Installer @('-File', 'install.ps1', '-Version', $v, '-Releases', $url)
+            if ($r.Code -eq 0 -or $r.Out -notmatch 'does not match its checksum') { throw 'a bad checksum was not refused for its checksum' }
             if ((Get-Item (Join-Path $bin 'cuno.exe')).LastWriteTimeUtc -ne $before) { throw 'a bad checksum replaced cuno.exe' }
             if (Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'cuno-install-*') { throw 'a temporary directory was left behind' }
 
             $env:CUNO_HOME = 'relative\home'
-            if ((Invoke-Installer @()) -eq 0) { throw 'a relative CUNO_HOME installed' }
+            $r = Invoke-Installer @('-Command', 'Get-Content -Raw install.ps1 | iex')
+            if ($r.Code -eq 0 -or $r.Out -notmatch 'CUNO_HOME must be an absolute path') { throw 'a relative CUNO_HOME was not refused' }
             if (Test-Path 'relative') { throw 'a relative CUNO_HOME created something' }
           } finally {
-            Set-ItemProperty HKCU:\Environment -Name Path -Value $saved -Type ExpandString
+            Set-ItemProperty HKCU:\Environment -Name Path -Value $saved -Type $savedKind
           }
