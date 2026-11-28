@@ -16,7 +16,7 @@ mod support;
 
 use std::path::Path;
 
-use support::compilers::{Compiler, Language, require};
+use support::compilers::{Compiler, Language, require, require_llvm_tool};
 use support::{Project, assert_compiled_with};
 
 const COMPILERS: [(&str, Compiler); 4] = [
@@ -77,7 +77,16 @@ fn files(dir: &Path, under: &Path, out: &mut Vec<String>) {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        if ["target", "expected", "compile_commands.json"].contains(&relative.as_str()) {
+        // What a build, `cuno fmt` or `cuno lint` run in the example leaves
+        // behind, and the expected results.
+        let generated = [
+            "target",
+            "expected",
+            "compile_commands.json",
+            ".clang-format",
+            ".clang-tidy",
+        ];
+        if generated.contains(&relative.as_str()) {
             continue;
         }
         if path.is_dir() {
@@ -152,8 +161,10 @@ fn executables(dir: &Path) -> Vec<String> {
     found
 }
 
-/// Builds, checks, tests and runs `example` on `name` (its label in
-/// `COMPILERS`), if it is here, as the module comment says.
+/// Builds, checks, tests, runs and lints `example` on `name` (its label in
+/// `COMPILERS`), if it is here, as the module comment says. Its `msvc` test
+/// also checks that the example is formatted, which does not depend on the
+/// compiler, whether or not MSVC is here.
 fn check(example: &Path, name: &str, compiler: Compiler) {
     let label = example
         .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"))
@@ -165,6 +176,16 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
         tests.is_some() || !has_tests(example),
         "{label} has tests and no expected/test.txt"
     );
+    if compiler == Compiler::Msvc && require_llvm_tool("clang-format").is_some() {
+        let run = copied(example).cuno(&["fmt", "--check"]);
+        assert_eq!(
+            run.code,
+            Some(0),
+            "{label} is not formatted:
+{}",
+            run.stderr
+        );
+    }
     if !here(compiler) {
         return;
     }
@@ -209,6 +230,18 @@ fn check(example: &Path, name: &str, compiler: Compiler) {
             );
         }
     }
+    // Every example passes the default `[lint]` on every compiler: the code
+    // people copy lints clean wherever they build it.
+    if require_llvm_tool("clang-tidy").is_some() {
+        let run = project.cuno(&["lint", "--compiler", name]);
+        assert!(
+            run.code == Some(0) && run.stderr.contains(": 0 warnings, 0 errors"),
+            "{}:
+{}",
+            at("lint"),
+            run.stderr
+        );
+    }
 }
 
 /// One test per example and compiler, so the harness runs them in
@@ -223,7 +256,8 @@ macro_rules! examples {
                 /// what it prints, remove one of its expected files, break
                 /// one of its tests, or change what `cuno test` counts; a
                 /// test here fails, naming the compiler and the profile or
-                /// `test`.
+                /// `test`. Misformat a source; the `msvc` test fails. Add a
+                /// lint finding; every compiler's test fails, naming `lint`.
                 $test = |name, compiler| check(
                     &Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join($dir),
                     name,
@@ -243,6 +277,7 @@ examples! {
     cpp_bin_path = "cpp/bin-path",
     cpp_c_in_cpp = "cpp/c-in-cpp",
     cpp_edition_release = "cpp/edition-release",
+    cpp_fmt_lint = "cpp/fmt-lint",
     cpp_hello = "cpp/hello",
     cpp_include_dirs = "cpp/include-dirs",
     cpp_multi_file = "cpp/multi-file",
