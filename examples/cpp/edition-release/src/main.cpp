@@ -8,6 +8,7 @@ constexpr const char* profile = "release";
 constexpr const char* profile = "dev";
 #endif
 
+// The smallest base type that holds its values (lint: performance-enum-size).
 enum class Level : std::uint8_t { Low = 1, High = 2 };
 
 int main() {
