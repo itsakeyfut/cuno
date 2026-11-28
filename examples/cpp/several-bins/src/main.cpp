@@ -2,6 +2,4 @@
 
 #include "greeting.hpp"
 
-int main() {
-    std::printf("main: %s\n", greeting());
-}
+int main() { std::printf("main: %s\n", greeting()); }

@@ -13,7 +13,5 @@ unsigned checksum(const char* text) {
 #ifdef CUNO_TEST
 #include <cuno/test.h>
 
-cuno_test(checksum_of_nothing_is_zero) {
-    cuno_check_eq(checksum(""), 0u);
-}
+cuno_test(checksum_of_nothing_is_zero) { cuno_check_eq(checksum(""), 0u); }
 #endif

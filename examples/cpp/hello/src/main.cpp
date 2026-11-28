@@ -1,5 +1,3 @@
 #include <cstdio>
 
-int main() {
-    std::puts("hello from C++");
-}
+int main() { std::puts("hello from C++"); }
