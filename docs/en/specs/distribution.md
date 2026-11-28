@@ -1,4 +1,4 @@
-<!-- translated-from: docs/ja/specs/distribution.md @ blob b06640a1a4128414053e25f1e1e4a4c4ac5b275d -->
+<!-- translated-from: docs/ja/specs/distribution.md @ blob 014a6375997e8cb857337713590e8dad8b1d2081 -->
 
 # Distribution and Operation of cuno Itself
 
@@ -59,7 +59,7 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 - On failure, it removes the temporary directory, leaves any `cuno.exe` already there and `PATH` unchanged, prints the error and stops. A checksum that does not match puts nothing in place either.
 - A saved `install.ps1` takes arguments (`irm … | iex` cannot pass them).
   - `-Version <x.y.z>`: the version to install, skipping step 2.
-  - `-Releases <URL>`: where releases are fetched from, `https://github.com/itsakeyfut/cuno/releases` by default. The zip is fetched from `<URL>/download/v<version>/`. For a company mirror, or for testing the installer.
+  - `-Releases <URL>`: where releases are fetched from, `https://github.com/itsakeyfut/cuno/releases` by default. The zip is fetched from `<URL>/download/v<version>/`. For a company mirror, or for testing the installer. Anything but `https://` or `file://` is an error (the SHA-256 checked against comes from the same place, so `http://`, which can be rewritten on the way, is not accepted).
 - It downloads with `curl.exe`, as cuno does ([Downloads](#downloads)), and unpacks the zip with `tar.exe`, both the ones Windows includes, run from `%SystemRoot%\System32`.
   - Reason: in PowerShell 5.1, `curl` is an alias of `Invoke-WebRequest`, and a `PATH` with Git for Windows' tools first finds a GNU tar that cannot read a zip.
 

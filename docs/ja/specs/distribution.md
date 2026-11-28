@@ -57,7 +57,7 @@ powershell -c "irm https://github.com/itsakeyfut/cuno/releases/latest/download/i
 - 失敗したら、一時ディレクトリを消し、置いてあった `cuno.exe` と `PATH` は変えずに、エラーを表示して止まる。照合が合わないときも、何も置かない。
 - 保存した `install.ps1` を実行するときは、引数を渡せる（`irm … | iex` では渡せない）。
   - `-Version <x.y.z>`: 入れる版。手順 2 を飛ばす。
-  - `-Releases <URL>`: リリースを取得する場所。既定は `https://github.com/itsakeyfut/cuno/releases`。zip は `<URL>/download/v<version>/` から取得する。社内のミラーや、インストーラのテストに使う。
+  - `-Releases <URL>`: リリースを取得する場所。既定は `https://github.com/itsakeyfut/cuno/releases`。zip は `<URL>/download/v<version>/` から取得する。社内のミラーや、インストーラのテストに使う。`https://` か `file://` でなければエラー（照合する SHA-256 も同じ場所から取るので、途中で書き換えられうる `http://` は受け付けない）。
 - ダウンロードには cuno と同じく `curl.exe` を使い（[ダウンロード](#ダウンロード)）、zip は `tar.exe` で展開する。どちらも Windows に標準で入っているものを `%SystemRoot%\System32` から呼ぶ。
   - 理由: PowerShell 5.1 の `curl` は `Invoke-WebRequest` の別名で、`PATH` の先に Git for Windows のツールがあると、zip を読めない GNU tar が見つかる。
 
