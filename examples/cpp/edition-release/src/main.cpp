@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cstdio>
 #include <utility>
 
@@ -7,7 +8,7 @@ constexpr const char* profile = "release";
 constexpr const char* profile = "dev";
 #endif
 
-enum class Level : int { Low = 1, High = 2 };
+enum class Level : std::uint8_t { Low = 1, High = 2 };
 
 int main() {
     // std::to_underlying is C++23.
