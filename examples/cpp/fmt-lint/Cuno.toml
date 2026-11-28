@@ -1,0 +1,10 @@
+[package]
+name = "fmt-lint"
+version = "0.1.0"
+
+[fmt]
+exclude = ["src/vendor/**"]   # vendored code, kept as its authors wrote it
+
+[lint]
+deny = ["modernize-use-nullptr"]   # a finding of this check fails cuno lint
+exclude = ["src/vendor/**"]
