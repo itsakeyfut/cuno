@@ -1,7 +1,8 @@
-//! `cuno self update`: cuno updating itself to the latest release. How it
-//! was installed, the release and the replacement are `cuno_self`'s; this
-//! module only gathers the values and prints. See
-//! `docs/en/specs/commands.md`, "`cuno self update`".
+//! `cuno self update` and `cuno self uninstall`: cuno updating itself to the
+//! latest release, and removing itself. How it was installed, the release,
+//! the replacement and the removal are `cuno_self`'s; this module only
+//! gathers the values, asks and prints. See `docs/en/specs/commands.md`,
+//! "`cuno self update`" and "`cuno self uninstall`".
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +11,10 @@ use cuno_self::SelfError;
 use cuno_self::fetch::{Curl, Fetch};
 use cuno_self::install::{self, Method};
 use cuno_self::release::{self, Version};
+use cuno_self::uninstall::{self, RegistryPath, UserPath};
 use cuno_self::update::{self, Check};
+
+use crate::Input;
 
 /// The version of the running cuno.
 fn current() -> Version {
@@ -78,6 +82,87 @@ fn updated(
             update::install(exe, latest, fetch, release::RELEASES, temp, tar).map_err(boxed)?;
             shell.status("Updated", format!("cuno {current} -> {latest}"));
         }
+    }
+    Ok(0)
+}
+
+/// `cuno self uninstall`. The cuno home is checked to be cuno's own before
+/// anything is asked, and nothing is removed until the answer is yes (or
+/// `-y` was given).
+pub fn uninstall(
+    exe: &Result<PathBuf, String>,
+    env: &Env,
+    yes: bool,
+    input: Input<'_>,
+    shell: &mut Shell,
+) -> Result<i32, Box<dyn CunoError>> {
+    uninstall_with(
+        exe,
+        env,
+        yes,
+        input,
+        &RegistryPath { env: env.clone() },
+        shell,
+    )
+}
+
+/// [`uninstall()`] with the user's `PATH` given, so tests never touch the
+/// registry.
+fn uninstall_with(
+    exe: &Result<PathBuf, String>,
+    env: &Env,
+    yes: bool,
+    input: Input<'_>,
+    path: &dyn UserPath,
+    shell: &mut Shell,
+) -> Result<i32, Box<dyn CunoError>> {
+    let exe = exe.clone().map_err(|e| boxed(SelfError::Exe(e)))?;
+    let home = cuno_core::cuno_home(env).map_err(|e| Box::new(e) as Box<dyn CunoError>)?;
+    let method = method_of(&exe, env)?;
+    if !home.exists() {
+        shell.warning(format!(
+            "nothing to remove: {} does not exist",
+            home.display()
+        ));
+        return Ok(0);
+    }
+    uninstall::guard(&home, env).map_err(boxed)?;
+    let bin = home.join("bin");
+    if !yes {
+        if !input.is_terminal {
+            return Err(boxed(SelfError::NoAnswer));
+        }
+        let mut question = format!("This removes:\n  {}\n", home.display());
+        if method == Method::Installer {
+            question += &format!("  {} from PATH\n", bin.display());
+        }
+        question += "Continue? [y/N] ";
+        shell.raw(question.as_bytes());
+        let mut answer = String::new();
+        // An unreadable answer is no answer: nothing is removed.
+        let _ = input.stdin.read_line(&mut answer);
+        let answer = answer.trim();
+        if !(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")) {
+            return Ok(0);
+        }
+    }
+    let report = uninstall::uninstall(&home, &exe, method, path, env.case()).map_err(boxed)?;
+    if report.path_removed {
+        shell.status("Removed", format!("{} from PATH", bin.display()));
+    }
+    if report.exe_left {
+        uninstall::remove_after_exit(&home, std::process::id(), env).map_err(boxed)?;
+    }
+    shell.status("Removed", home.display());
+    match method {
+        Method::Installer => {}
+        Method::Cargo => shell.help(
+            "cuno itself was installed by cargo install; run cargo uninstall cuno to remove it",
+        ),
+        Method::Other => shell.help(format!(
+            "cuno itself is at {}; remove it yourself",
+            exe.display()
+        )),
     }
     Ok(0)
 }
@@ -303,6 +388,164 @@ mod tests {
         assert_eq!(
             method_of(Path::new(r"d:\C\BIN\cuno.exe"), &given).ok(),
             Some(Method::Installer)
+        );
+    }
+
+    /// A `PATH` that says it held the entry, and records the ask.
+    #[derive(Default)]
+    struct FakePath(std::cell::RefCell<Vec<PathBuf>>);
+
+    impl UserPath for FakePath {
+        fn remove(&self, dir: &Path) -> Result<bool, SelfError> {
+            self.0.borrow_mut().push(dir.to_owned());
+            Ok(true)
+        }
+    }
+
+    /// A cuno home holding `config.toml`, with a cuno placed by hand
+    /// outside it, so nothing is left running and no `PATH` is edited.
+    struct Setup {
+        dir: tempfile::TempDir,
+        env: Env,
+        exe: PathBuf,
+    }
+
+    impl Setup {
+        fn new() -> Setup {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path().join("home");
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(home.join("config.toml"), "").unwrap();
+            let user = dir.path().join("user");
+            let env = Env::from_pairs(
+                [
+                    ("CUNO_HOME".into(), home.into_os_string()),
+                    ("USERPROFILE".into(), user.into_os_string()),
+                    (
+                        "CARGO_HOME".into(),
+                        dir.path().join("cargo").into_os_string(),
+                    ),
+                ],
+                NameCase::Insensitive,
+            );
+            let exe = dir.path().join(r"tools\cuno.exe");
+            Setup { dir, env, exe }
+        }
+
+        fn home(&self) -> PathBuf {
+            self.dir.path().join("home")
+        }
+
+        /// Runs the uninstall with `answer` on a standard input that is a
+        /// terminal or not: the result's exit code, and what was printed.
+        fn run(&self, yes: bool, answer: &str, terminal: bool) -> (i32, String) {
+            let out = Captured::default();
+            let mut shell = Shell::new(Box::new(out.clone()), None, &self.env, false);
+            let mut stdin = std::io::Cursor::new(answer.as_bytes().to_vec());
+            let input = Input {
+                stdin: &mut stdin,
+                is_terminal: terminal,
+            };
+            let code = match uninstall_with(
+                &Ok(self.exe.clone()),
+                &self.env,
+                yes,
+                input,
+                &FakePath::default(),
+                &mut shell,
+            ) {
+                Ok(code) => code,
+                Err(e) => {
+                    shell.error(&e);
+                    if let Some(help) = e.help() {
+                        shell.help(help);
+                    }
+                    e.exit_class().code()
+                }
+            };
+            (code, out.text())
+        }
+    }
+
+    /// Without `-y`, nothing is removed until the answer is yes; with no
+    /// terminal to answer it is a usage error, asked of nobody.
+    ///
+    /// Mutation: take end of input or `n` as yes, remove before asking, or
+    /// wait on a standard input that is not a terminal; this test fails.
+    #[test]
+    fn nothing_is_removed_without_a_yes() {
+        let s = Setup::new();
+        let (code, out) = s.run(false, "", false);
+        assert_eq!(code, 2, "{out}");
+        assert_eq!(
+            out,
+            "error: cuno self uninstall asks before deleting, and standard input is not a terminal\nhelp: pass -y to remove without asking\n"
+        );
+        assert!(s.home().exists());
+
+        for answer in ["", "n\n", "no\n", "yess\n"] {
+            let (code, out) = s.run(false, answer, true);
+            assert_eq!(code, 0, "{answer:?}: {out}");
+            assert_eq!(
+                out,
+                format!("This removes:\n  {}\nContinue? [y/N] ", s.home().display())
+            );
+            assert!(s.home().exists(), "{answer:?}");
+        }
+
+        let (code, out) = s.run(false, "YES\n", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(!s.home().exists());
+        assert!(
+            out.ends_with(&format!(
+                "     Removed {}\nhelp: cuno itself is at {}; remove it yourself\n",
+                s.home().display(),
+                s.exe.display()
+            )),
+            "{out}"
+        );
+    }
+
+    /// `-y` removes without asking.
+    ///
+    /// Mutation: ask even with `-y`; this test fails.
+    #[test]
+    fn yes_removes_without_asking() {
+        let s = Setup::new();
+        let (code, out) = s.run(true, "", false);
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.contains("Continue?"), "{out}");
+        assert!(!s.home().exists());
+    }
+
+    /// A cuno home that is the user's own home is refused before anything
+    /// is asked or removed; no home at all is a warning.
+    ///
+    /// Mutation: skip the guard, or ask before it; this test fails.
+    #[test]
+    fn a_home_not_cunos_own_is_refused_and_a_missing_one_warned_of() {
+        let s = Setup::new();
+        let user = s.dir.path().join("user");
+        std::fs::create_dir_all(&user).unwrap();
+        let env = s.env.with("CUNO_HOME", user.clone().into_os_string());
+        let refused = Setup {
+            env,
+            ..Setup::new()
+        };
+        let (code, out) = refused.run(false, "y\n", true);
+        assert_eq!(code, 3, "{out}");
+        assert!(out.starts_with("error: refusing to remove "), "{out}");
+        assert!(!out.contains("Continue?"), "{out}");
+
+        std::fs::remove_dir_all(s.home()).unwrap();
+        let (code, out) = s.run(true, "", false);
+        assert_eq!(code, 0);
+        assert_eq!(
+            out,
+            format!(
+                "warning: nothing to remove: {} does not exist\n",
+                s.home().display()
+            )
         );
     }
 }

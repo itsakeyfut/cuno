@@ -27,6 +27,8 @@ fn main() {
         // unchanged.
         stdout: Box::new(AutoStream::always(std::io::stdout())),
         stderr: Box::new(AutoStream::always(std::io::stderr())),
+        stdin: Box::new(std::io::stdin().lock()),
+        stdin_is_terminal: std::io::stdin().is_terminal(),
     });
     if code != 0 {
         std::process::exit(code);

@@ -197,8 +197,10 @@ jobs:
   # install.ps1 as a user runs it (`irm | iex`, here from the checkout),
   # then again over it, over a PATH that already names the directory in
   # another spelling, against a wrong checksum and with a relative
-  # CUNO_HOME (docs/en/specs/distribution.md, "The PowerShell one-liner").
-  # The runner's user PATH is put back at the end.
+  # CUNO_HOME (docs/en/specs/distribution.md, "The PowerShell one-liner"),
+  # then `cuno self uninstall -y` from this branch's cuno put in its place
+  # (docs/en/specs/commands.md, "`cuno self uninstall`"). The runner's user
+  # PATH is put back at the end.
   installer:
     runs-on: windows-latest
     defaults:
@@ -206,7 +208,14 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v7
-      - name: Install, reinstall, and refuse a bad checksum or a relative home
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      # The released cuno the installer puts in place predates what this
+      # branch adds, so the uninstall step runs this build instead.
+      - run: cargo build --locked -p cuno
+      - name: Install, reinstall, refuse a bad checksum or a relative home, then uninstall
         run: |
           $ErrorActionPreference = 'Stop'
           $saved = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
@@ -271,6 +280,19 @@ jobs:
             $r = Invoke-Installer @('-Command', 'Get-Content -Raw install.ps1 | iex')
             if ($r.Code -eq 0 -or $r.Out -notmatch 'CUNO_HOME must be an absolute path') { throw 'a relative CUNO_HOME was not refused' }
             if (Test-Path 'relative') { throw 'a relative CUNO_HOME created something' }
+
+            # This branch's cuno, where the installer put the released one.
+            $env:CUNO_HOME = $home_
+            Copy-Item -Force target\debug\cuno.exe (Join-Path $bin 'cuno.exe')
+            $r = Invoke-Installer @('-Command', "& '$(Join-Path $bin 'cuno.exe')' self uninstall -y")
+            if ($r.Code -ne 0) { throw 'self uninstall failed' }
+            $gone = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              if (-not (Test-Path $home_)) { $gone = $true; break }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $gone) { throw "$home_ is still there after self uninstall" }
+            if ((Get-UserPath) -ne $other) { throw "PATH still names ${bin} after self uninstall: $(Get-UserPath)" }
           } finally {
             Set-ItemProperty HKCU:\Environment -Name Path -Value $saved -Type $savedKind
           }

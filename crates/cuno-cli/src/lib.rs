@@ -17,7 +17,7 @@ mod self_cmd;
 mod toolchain;
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
@@ -59,6 +59,10 @@ pub struct Process {
     pub stderr: Box<dyn Write>,
     /// Whether standard error is a terminal.
     pub stderr_is_terminal: bool,
+    /// Standard input: the answer to a question cuno asks.
+    pub stdin: Box<dyn BufRead>,
+    /// Whether standard input is a terminal; cuno only asks one that is.
+    pub stdin_is_terminal: bool,
 }
 
 /// The top-level command line. Subcommands are added with the milestones that
@@ -220,6 +224,12 @@ enum Command {
 enum SelfCommand {
     /// Update cuno to the latest release
     Update,
+    /// Remove cuno's home and, if its installer placed it, cuno itself
+    Uninstall {
+        /// Remove without asking
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 /// `cuno toolchain`'s commands (docs/en/specs/commands.md).
@@ -347,6 +357,8 @@ pub fn run(process: Process) -> i32 {
         stdout_is_terminal,
         mut stderr,
         stderr_is_terminal,
+        mut stdin,
+        stdin_is_terminal,
     } = process;
     // What clap prints itself is colored by cuno's rule, not clap's
     // (docs/en/specs/commands.md, "Available for all commands"): `--color`
@@ -388,7 +400,11 @@ pub fn run(process: Process) -> i32 {
         temp: &temp,
         cores,
     };
-    match dispatch(cli, given, &mut shell, stdout_color, &mut stdout) {
+    let input = Input {
+        stdin: stdin.as_mut(),
+        is_terminal: stdin_is_terminal,
+    };
+    match dispatch(cli, given, &mut shell, stdout_color, &mut stdout, input) {
         Ok(code) => code,
         Err(error) => report(&mut shell, &*error),
     }
@@ -487,6 +503,7 @@ fn dispatch(
     shell: &mut Shell,
     help_color: clap::ColorChoice,
     stdout: &mut Box<dyn Write>,
+    input: Input<'_>,
 ) -> Result<i32, Box<dyn CunoError>> {
     let env = given.env;
     // Destructured rather than ignored, so that adding a field to `Cli`
@@ -700,6 +717,9 @@ fn dispatch(
             .map_err(build::boxed)?;
             return match command {
                 SelfCommand::Update => self_cmd::update(given.exe, env, given.temp, shell),
+                SelfCommand::Uninstall { yes } => {
+                    self_cmd::uninstall(given.exe, env, yes, input, shell)
+                }
             };
         }
         None => {
@@ -738,6 +758,12 @@ fn dispatch(
         given.temp,
         shell,
     )
+}
+
+/// Standard input, for the one command that asks.
+pub(crate) struct Input<'a> {
+    pub(crate) stdin: &'a mut dyn BufRead,
+    pub(crate) is_terminal: bool,
 }
 
 /// The current directory cannot be read (deleted, or no permission).
@@ -904,6 +930,8 @@ mod tests {
             stdout_is_terminal: setup.stdout_is_terminal,
             stderr: Box::new(stderr.clone()),
             stderr_is_terminal: setup.stderr_is_terminal,
+            stdin: Box::new(std::io::empty()),
+            stdin_is_terminal: false,
         });
         (code, stdout.text(), stderr.text())
     }
